@@ -6,6 +6,7 @@
     "HOST_ADAPTER": "local mirror/routing over host capability",
     "HOST_DELEGATE": "actual authority belongs to ChatGPT host runtime",
     "HYBRID": "portable deterministic subset locally plus host-owned enforcement/orchestration",
+    "LOCAL_EXTENSION": "Chatbox/Codex Loop local extension with no upstream implementation or execution-authority claim",
     "LOCAL_RUNTIME_PORT": "cross-language deterministic runtime port",
     "MINIMAL_DERIVATIVE": "Small same-language/source-level derivative with explicit recorded changes.",
     "NON_AGENT_INFRASTRUCTURE": "not needed for agent execution",
@@ -324,7 +325,7 @@
       ]
     },
     {
-      "divergence": "SQLite task-local subset only: acceptance/steer evidence is generation-bound; validation uses exact argv plus actual cwd and one-time plans without persisting raw arguments; freshness waivers bind the current generation and exact opaque-path set; non-idempotent external actions use stable-identity deduplication and dispatch-boundary states; Git mutation authorization is scope-specific; process/external/checkpoint bookkeeping remains task-private; conversation/thread persistence and unfinished-turn suspension remain host-owned.",
+      "divergence": "SQLite task-local subset only: acceptance/steer evidence is generation-bound; validation uses exact argv plus actual cwd and one-time plans without persisting raw arguments; freshness waivers bind the current generation and exact opaque-path set; non-idempotent external actions use stable-identity deduplication and dispatch-boundary states; release receipts bind artifact SHA-256 to Git commit/tree and generation; Git mutation authorization is scope-specific; process/external/checkpoint bookkeeping remains task-private; conversation/thread persistence and unfinished-turn suspension remain host-owned.",
       "local": "scripts/codex_loop_runtime/state.py",
       "mode": "HYBRID",
       "scope": "portable_subset_only",
@@ -332,7 +333,8 @@
         "local": [
           "tests/compat/test_state_completion.py",
           "tests/compat/test_audit_boundaries.py",
-          "tests/compat/test_modified_design_reaudit.py"
+          "tests/compat/test_modified_design_reaudit.py",
+          "tests/compat/test_release_lineage.py"
         ],
         "upstream": []
       },
@@ -358,14 +360,15 @@
       ]
     },
     {
-      "divergence": "Deterministic local stop gate: acceptance and steer evidence, validation, and diff review are generation-fresh; unresolved external/process failures and unauthorized Git dimension changes block completion. It cannot force host model scheduling or implement Codex session turn suspension/recovery.",
+      "divergence": "Deterministic local stop gate plus Codex Loop local lineage invariant: acceptance and steer evidence, validation, diff review, unresolved external/process state, Git mutation scope, and canonical-workspace identity are checked locally. It cannot force host model scheduling, Git/network transport, or Codex session turn suspension/recovery.",
       "local": "scripts/codex_loop_runtime/completion.py",
-      "mode": "BEHAVIORAL_PORT",
+      "mode": "HYBRID",
       "tests": {
         "local": [
           "tests/compat/test_state_completion.py",
           "tests/compat/test_audit_boundaries.py",
-          "tests/compat/test_modified_design_reaudit.py"
+          "tests/compat/test_modified_design_reaudit.py",
+          "tests/compat/test_release_lineage.py"
         ],
         "upstream": []
       },
@@ -437,7 +440,8 @@
     "scripts/codex_loop_runtime/checkpoint.py": "BEHAVIORAL_PORT",
     "scripts/codex_loop_runtime/command_identity.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/command_safety.py": "HYBRID",
-    "scripts/codex_loop_runtime/completion.py": "BEHAVIORAL_PORT",
+    "scripts/codex_loop_runtime/completion.py": "HYBRID",
+    "scripts/codex_loop_runtime/delegation.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/environment.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/instructions.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/output_buffer.py": "LOCAL_RUNTIME_PORT",
@@ -453,6 +457,7 @@
     "scripts/codex_loop_runtime/validation.py": "HYBRID",
     "scripts/codex_loop_runtime/workspace.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/world_state.py": "LOCAL_RUNTIME_PORT",
-    "scripts/codex_loop_runtime/write_transaction.py": "LOCAL_RUNTIME_PORT"
+    "scripts/codex_loop_runtime/write_transaction.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/release_lineage.py": "LOCAL_EXTENSION"
   }
 }

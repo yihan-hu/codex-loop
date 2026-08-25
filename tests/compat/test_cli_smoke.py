@@ -46,6 +46,21 @@ class CliSmokeTests(unittest.TestCase):
       (root/'changed-after-validation.txt').write_text('later')
       out,p=call(root,'validation-record','--plan-id',pid,'--command-json','["pytest","-q"]','--generation',gen,'--exit-code','0','--evidence','host-visible pytest exited 0 before later edit',check=False)
       self.assertNotEqual(p.returncode,0); self.assertFalse(out['ok']); self.assertIn('stale',out['error']['message'])
+  def test_workspace_release_and_publish_facade(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); subprocess.run(['git','config','user.name','Test User'],cwd=root,check=True); subprocess.run(['git','config','user.email','test@example.com'],cwd=root,check=True)
+      (root/'a.txt').write_text('base'); subprocess.run(['git','add','a.txt'],cwd=root,check=True); subprocess.run(['git','commit','-qm','base'],cwd=root,check=True)
+      base=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(); base_tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=root,text=True).strip()
+      call(root,'bootstrap','--objective','release flow')
+      binding,_=call(root,'workspace-binding'); self.assertTrue(binding['data']['matches']); self.assertEqual(binding['data']['binding']['base_commit'],base)
+      (root/'a.txt').write_text('target'); subprocess.run(['git','add','a.txt'],cwd=root,check=True); subprocess.run(['git','commit','-qm','target'],cwd=root,check=True)
+      plan,_=call(root,'release-plan','--artifact-name','skill.zip','--archive-prefix','codex-loop'); target=plan['data']['source']['commit']; target_tree=plan['data']['source']['tree']; self.assertEqual(plan['data']['archive']['argv'][-1],target)
+      receipt,_=call(root,'release-record','--artifact-name','skill.zip','--artifact-sha256','a'*64,'--evidence','verified artifact bytes')
+      v,_=call(root,'validate','--','pytest','-q'); call(root,'validation-record','--command-json','["pytest","-q"]','--exit-code','0','--evidence','host pytest passed'); call(root,'changes','--review')
+      pub,_=call(root,'publish-plan','--repository','owner/repo','--branch','main','--remote-head',base,'--remote-tree',base_tree,'--release-id',receipt['data']['release_id']); action=pub['data']['action_id']; self.assertEqual(pub['data']['transport_order'],['git','github_object_api'])
+      call(root,'publish-dispatch','--action-id',action,'--transport','github_object_api')
+      out,_=call(root,'publish-record','--action-id',action,'--state','terminal_success','--transport','github_object_api','--remote-commit','1'*40,'--remote-tree',target_tree,'--remote-parent',base,'--evidence','remote tree and parent readback matched'); self.assertEqual(out['data']['state'],'terminal_success')
+
   def test_repeated_validate_reuses_unconsumed_plan_and_inference_stays_unambiguous(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','deduplicated plans')

@@ -311,14 +311,18 @@ class CancelledTaskBoundaryTests(unittest.TestCase):
 
 
 class ModifiedDesignBoundaryTests(unittest.TestCase):
-    def test_task_scoped_cli_requires_explicit_identity_unless_human_override(self):
+    def test_task_scoped_cli_inherits_active_identity_and_fails_without_binding(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
             boot,_=call(root,'bootstrap','--objective','identity','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=boot['data']['task_id']
-            proc=subprocess.run([sys.executable,str(CLI),'snapshot','--cwd',str(root)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-            out=json.loads(proc.stdout); self.assertNotEqual(proc.returncode,0); self.assertIn('explicit --task-id',out['error']['message'])
+            proc=subprocess.run([sys.executable,str(CLI),'snapshot','--cwd',str(root)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
+            inherited=json.loads(proc.stdout); self.assertTrue(inherited['ok']); self.assertEqual(inherited['data']['task_id'],tid)
             proc=subprocess.run([sys.executable,str(CLI),'snapshot','--cwd',str(root),'--task-id',tid],stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
             self.assertTrue(json.loads(proc.stdout)['ok'])
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
+            proc=subprocess.run([sys.executable,str(CLI),'snapshot','--cwd',str(root)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            out=json.loads(proc.stdout); self.assertNotEqual(proc.returncode,0); self.assertIn('no active codex-loop task',out['error']['message'])
 
     def test_windows_managed_session_capability_is_host_visible_fallback(self):
         from codex_loop_runtime.process_manager import managed_session_capability

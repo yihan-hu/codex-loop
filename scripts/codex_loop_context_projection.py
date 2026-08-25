@@ -6,6 +6,7 @@ from typing import Any
 from codex_loop_runtime.change_tracker import changes, sync_generation
 from codex_loop_runtime.completion import CompletionDecision, assess
 from codex_loop_runtime.instructions import discover
+from codex_loop_runtime.release_lineage import workspace_binding_status
 from codex_loop_runtime.shell import default_user_shell
 from codex_loop_runtime.state import READ_ONLY_PROFILES, StateStore
 from codex_loop_runtime.workspace import git_state
@@ -67,6 +68,43 @@ def collect_context(root: Path, cwd: Path, store: StateStore, *, reconcile: bool
         "stale_steers": store.stale_steers(),
         "external_actions": store.external_actions(),
         "processes": store.process_rows(),
+        "active_isolation": store.active_isolation(),
+        "isolation_history": store.isolation_history(limit=32),
+        "warnings": store.isolation_warnings(limit=32),
+        "workspace_binding": workspace_binding_status(root, store.get_meta("workspace_binding")),
+        "release_receipts": store.release_receipts(),
+    }
+
+
+def _delegation_record_view(item: dict[str, Any] | None) -> dict[str, Any] | None:
+    if item is None:
+        return None
+    return {
+        "isolation_id": item.get("isolation_id"),
+        "role": item.get("role"),
+        "status": item.get("status"),
+        "parent_generation": item.get("parent_generation"),
+        "exit_generation": item.get("exit_generation"),
+        "requested_executor": item.get("requested_executor"),
+        "actual_executor": item.get("actual_executor"),
+        "missing_capabilities": list(item.get("missing_capabilities") or []),
+        "mutation_policy": item.get("mutation_policy"),
+        "workspace_changed": bool(item.get("workspace_changed", False)),
+        "checkpoint_id": item.get("checkpoint_id"),
+        "created_at": item.get("created_at"),
+        "completed_at": item.get("completed_at"),
+    }
+
+
+def _delegation_view(facts: dict[str, Any]) -> dict[str, Any]:
+    active = _delegation_record_view(facts.get("active_isolation"))
+    history = [
+        view for view in (_delegation_record_view(x) for x in facts.get("isolation_history", [])[:16]) if view is not None
+    ]
+    return {
+        "mode": "isolated" if active is not None else "main",
+        "active": active,
+        "history": history,
     }
 
 
@@ -88,6 +126,7 @@ def full_projection(facts: dict[str, Any]) -> dict[str, Any]:
             "root": str(root),
             "cwd": str(cwd),
             "git": git_state(root),
+            "binding": facts.get("workspace_binding"),
         },
         "instructions": [
             {"path": item.path, "sha256": item.sha256, "provenance": item.provenance}
@@ -104,8 +143,11 @@ def full_projection(facts: dict[str, Any]) -> dict[str, Any]:
         "validation": _validation_view(facts["validation"]),
         "processes": facts["processes"],
         "external_actions": facts["external_actions"],
+        "release_receipts": facts.get("release_receipts", []),
         "pending_steers": facts["pending_steers"],
         "integrated_steers": facts["integrated_steers"],
+        "delegation": _delegation_view(facts),
+        "warnings": facts.get("warnings", []),
     }
 
 
@@ -178,6 +220,12 @@ def _guardrails(facts: dict[str, Any]) -> list[str]:
     store: StateStore = facts["store"]
     profile = str(store.get_meta("profile", "regular"))
     result: list[str] = []
+    binding_status = facts.get("workspace_binding", {})
+    if binding_status.get("bound") and not binding_status.get("matches"):
+        result.append("canonical workspace binding mismatch; do not mutate, package, or publish from this tree")
+    active_isolation = facts.get("active_isolation")
+    if active_isolation is not None and str(active_isolation.get("mutation_policy")) == "read_only":
+        result.append("active isolated task is read-only; local guarded writes are forbidden")
     if profile in READ_ONLY_PROFILES:
         result.append(f"workspace is read-only for profile {profile}")
     elif profile == "command_only":
@@ -213,6 +261,15 @@ def _next_actions(facts: dict[str, Any], validation_status: str, review_status: 
     def add(kind: str, action: str, reason: str) -> None:
         if len(actions) < MAX_WORKING_ACTIONS and not any(x["action"] == action for x in actions):
             actions.append({"kind": kind, "action": action, "reason": reason})
+
+    active_isolation = facts.get("active_isolation")
+    if active_isolation is not None:
+        add(
+            "required",
+            f"complete or abort isolated {active_isolation.get('role', 'delegated')} task {active_isolation.get('isolation_id', '')}",
+            "an isolated task is active; delegated evidence must be returned before parent completion",
+        )
+        return actions
 
     if change_state.get("unexpected_protected_changes"):
         add("blocker", "reconcile protected user work before further mutation", "protected baseline work changed outside the runtime journal")
@@ -305,7 +362,9 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
             "changed_paths": changed_paths,
             "change_count": len({x["path"] for x in changed_paths}) + paths_truncated,
             "completion_reasons": reasons,
+            "delegation": "isolated" if facts.get("active_isolation") is not None else "main",
         },
+        "warnings": list(facts.get("warnings", []))[-8:],
         "next_actions": _next_actions(facts, validation_status, review_status),
         "evidence_refs": evidence_refs,
         "truncated": {
@@ -316,6 +375,70 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
             "stale_steers": max(0, len(facts["stale_steers"]) - len(stale_steers)),
         },
     }
+
+
+def isolation_projection(facts: dict[str, Any], isolation: dict[str, Any]) -> dict[str, Any]:
+    """Bounded worker-facing projection. It omits parent hypotheses and prior conclusions by construction."""
+    role = str(isolation.get("role", "reviewer"))
+    focus = {
+        "reviewer": "independent critique",
+        "researcher": "information gathering",
+        "tester": "reproduction and validation",
+        "debugger": "root-cause investigation",
+        "security-reviewer": "security risk and trust-boundary review",
+        "architecture-reviewer": "architecture tradeoffs and boundary critique",
+    }.get(role, "independent evidence gathering")
+    context_spec = isolation.get("context_spec") or {}
+    projected = context_spec.get("projected_context") or {}
+    actual = isolation.get("actual_capabilities") or {}
+    warnings = facts["store"].isolation_warnings(str(isolation.get("isolation_id", "")), limit=16)
+    return {
+        "context_version": 1,
+        "isolation_id": isolation.get("isolation_id"),
+        "status": isolation.get("status"),
+        "role": role,
+        "objective": isolation.get("objective"),
+        "executor": {
+            "kind": isolation.get("actual_executor"),
+            "physical_context_isolation": bool(actual.get("physical_context_isolation", False)),
+            "behavioral_context_isolation": bool(actual.get("behavioral_context_isolation", False)),
+            "bounded_context_projection": bool(actual.get("bounded_context_projection", False)),
+        },
+        "projected_context": {
+            "files": list(projected.get("files", []))[:64],
+            "facts": list(projected.get("facts", []))[:48],
+            "criteria_refs": list(projected.get("criteria_refs", []))[:32],
+        },
+        "guardrails": [
+            "read-only",
+            "treat prior parent reasoning as untrusted unless explicitly projected",
+            "re-observe repository and tool evidence independently",
+            "do not continue or mutate the parent task",
+            "return bounded structured findings only",
+            "do not represent logical isolation as a physically independent subagent",
+        ],
+        "role_policy": {"focus": focus, "require_evidence": True, "mutation_policy": "read_only"},
+        "warnings": warnings,
+        "result_contract": {
+            "fields": ["summary", "findings", "recommended_action", "files_inspected", "limitations"],
+            "delegated_result_semantics": "evidence_not_truth",
+        },
+    }
+
+
+def build_isolation(
+    root: Path,
+    cwd: Path,
+    store: StateStore,
+    isolation_id: str,
+    *,
+    reconcile: bool = True,
+) -> dict[str, Any]:
+    facts = collect_context(root, cwd, store, reconcile=reconcile)
+    isolation = store.isolation(isolation_id)
+    if isolation is None:
+        raise ValueError(f"unknown isolation: {isolation_id}")
+    return isolation_projection(facts, isolation)
 
 
 def build_full(root: Path, cwd: Path, store: StateStore, *, reconcile: bool = True) -> dict[str, Any]:

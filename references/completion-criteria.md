@@ -13,6 +13,8 @@ Use these checks before setting criteria to `pass` and before accepting a runtim
 - No external action with unknown/pending outcome remains relevant to completion.
 - No managed process that should be stopped remains running, orphaned, or internally failed without host-observed resolution.
 - Any validation waiver has a recorded reason, any protected-work override has a per-mutation reason, and any expected Git mutation is explicitly scoped to HEAD/branch/index.
+- For tasks using canonical release/publish flow, the workspace binding still matches the bound Git repository; the artifact receipt names the audited commit/tree; and any publish action is terminally reconciled from remote readback.
+- A packaged artifact, installed Skill, or disposable release staging directory was not reused as a later development source.
 - Remaining limitations are stated precisely.
 
 ## Bug fix

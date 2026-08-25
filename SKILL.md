@@ -1,6 +1,6 @@
 ---
 name: codex-loop
-description: Apply a Codex-style coding-agent loop with a deterministic local runtime for repository inspection, task state, guarded writes, process execution, validation freshness, change tracking, checkpoints, steering, external-action bookkeeping, and completion gating. Use for end-to-end repository work such as implementing features, fixing bugs, repairing tests or CI, refactoring, investigation, review, or applying review feedback. Do not use merely to explain code when no repository action is needed, and never use it to launch or delegate to Codex CLI, Codex App Server, or another model runtime.
+description: Apply a Codex-style coding-agent loop with a deterministic local runtime for repository inspection, canonical Git workspace binding, task state, guarded writes, validation/review freshness, delegated review/research fallback, commit-bound release packaging, GitHub publishing with ordinary Git preferred and connector fallback, external-action bookkeeping, and completion gating. Use for end-to-end repository work such as implementing features, fixing bugs, repairing tests or CI, refactoring, investigation, review, release/package preparation, publishing repository changes, or workflows that request a reviewer/researcher/tester subagent. Do not use merely to explain code when no repository action is needed, and never use it to launch or delegate to Codex CLI, Codex App Server, or another model runtime.
 ---
 
 # Codex Loop
@@ -22,12 +22,27 @@ Use `scripts/codex_loop.py` as the stable local-runtime entry point. Run bundled
 
 Read `references/runtime-protocol.md` for exact command forms, `references/agent-loop.md` for recovery behavior, and `references/completion-criteria.md` before finalizing substantial work.
 
-
 ## Context projection
 
 Treat runtime state as the durable source of truth and model context as a bounded working set. `next` is the primary agent-facing projection: it exposes the effective objective/criteria, current freshness and completion reasons, changed-path ownership summaries, and a small set of legal next actions without surfacing task ids, generations, validation plan ids, or evidence-generation bookkeeping. `snapshot` remains the full debug/audit view. Checkpoints and world-state views must derive from the same context projector rather than rebuilding competing summaries.
 
 Use the pattern **summary -> evidence reference -> drill down**. Hide execution mechanics, not task semantics: code/test results, user constraints, acceptance conditions, failures, and meaningful diffs still belong in model context when they affect the next decision. Do not implement a second token/context manager in the local runtime; ChatGPT host context remains authoritative.
+
+## Canonical workspace and release lineage
+
+Bind every new task to the Git working tree resolved at bootstrap. Treat that working tree as the only mutable development baseline for the task. Do not continue development from an installed Skill directory, copied `final`/`publish` source folder, release staging directory, or unpacked artifact. For concurrent tasks on one repository, use separate Git branches/worktrees that share repository history rather than full-source copies.
+
+When the task includes packaging or publishing, read `references/release-lineage.md`. Use `workspace-binding` to inspect lineage. Commit source before `release-plan`; export/package from the planned Git HEAD into disposable staging; record the artifact with `release-record`. For publishing, observe the remote branch first and call `publish-plan`. Prefer normal host-visible `git push`; when unavailable, use the GitHub object API fallback from the Git-derived changed-object manifest. If the host can carry inline payloads efficiently, batch eligible bounded UTF-8 Git blobs as `content` entries in one `create_tree` call. If connector calls are serialized through the model and no file-backed/bulk connector action exists, use the deterministic `publish-transfer-*` model-dispatch queue instead: it emits bounded exact-base64 `create_blob` batches, verifies returned SHAs before advancing a resumable cursor, then emits exactly one final tree request. Do not probe tree existence between blobs and do not re-read the worktree. Keep deletions in the final tree request. Never let connector fallback rescan a directory to decide which source version wins. Mark the publish action `dispatched` before the first external write and reconcile it with `publish-record` from real remote readback. If connector fallback creates a different remote commit for the same audited tree, reconcile that observed commit into the canonical repository before planning another publish.
+
+The local runtime never owns credentials, network access, connector dispatch, or GitHub permissions. It owns lineage, preconditions, object manifests, release receipts, and external-action state only.
+
+## Delegation fallback
+
+When a workflow requests a subagent or delegated reviewer/researcher/tester, prefer a native host subagent only when the host actually provides one. If native delegated execution is unavailable, do not stop the task or ask for confirmation solely because of that limitation. Enter a logical isolated task instead, record requested versus actual capabilities, emit one concise degradation warning, and continue the workflow. Read `references/delegation.md` before using delegation.
+
+Logical isolation is behavioral, not physical: prior parent reasoning is treated as untrusted unless explicitly projected, the worker re-observes repository/tool evidence, and the result returns as bounded structured evidence. Never describe logical isolation as a fresh physical model context, independent model instance, parallel/background model execution, or independent security boundary. Delegated results are evidence, not truth, and never auto-pass acceptance criteria. Capability degradation is a warning dimension, not a completion blocker.
+
+The MVP supports one active read-only isolation per task with `isolate-enter`, `isolate-status`, `isolate-finish`, and `isolate-abort`. If nested/parallel/background delegation is requested but unavailable, flatten or serialize it at the host orchestration layer and record the appropriate warning rather than inventing nested local model runtimes.
 
 ## Task profiles
 

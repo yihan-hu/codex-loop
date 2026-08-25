@@ -17,3 +17,10 @@ The current audit added `session/turn_suspension` as a direct Session submodule 
 ## Fidelity rule
 
 Use the order `EXACT_VENDOR -> EXACT_EXTRACT -> THIN_WRAPPER -> MINIMAL_DERIVATIVE -> LOCAL_RUNTIME_PORT/BEHAVIORAL_PORT -> HOST_DELEGATE`. Never introduce Rust/Codex/App Server merely to increase copy percentage. A cross-language Python implementation is always a port, never a minimal patch. Keep intentional divergence explicit in `source-map.yaml` and back local ports with compatibility/regression tests.
+
+## Local delegation extension
+
+Delegation / Logical Isolation is a Codex Loop / Chatbox local extension, not an upstream Codex multi-agent port. It manages only local delegation lifecycle, bounded context projection metadata, warnings, checkpoint linkage, structured result persistence, and reconciliation. Actual model invocation and native multi-agent authority remain host-owned. The pinned source-map classifications for `spawn` and `multi_agents` remain `HOST_DELEGATE`; this extension does not reclassify them.
+## Local canonical workspace / release extension
+
+Canonical workspace binding, commit/tree-bound release receipts, Git-derived publish manifests, and the integrated Git/GitHub-object publish orchestration are Codex Loop local extensions. They do not claim to port Codex network, credential, GitHub, or connector authority. The runtime may inspect deterministic local Git identity/ancestry/object metadata, while actual Git mutation, network transport, connector calls, credentials, approvals, and remote-state observation remain host-owned. Connector fallback must consume the local Git object manifest and preserve the audited target tree rather than reconstructing source from directory copies.

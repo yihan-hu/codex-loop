@@ -19,9 +19,19 @@ from codex_loop_runtime.checkpoint import create as create_checkpoint, restore a
 from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
 from codex_loop_runtime.completion import CompletionStatus, assess as assess_completion
+from codex_loop_runtime.delegation import (
+    CAPABILITY_KEYS, MAX_RESULT_BYTES, abort_isolation, create_isolation,
+    finish_isolation, isolation_status,
+)
 from codex_loop_runtime.instructions import discover
 from codex_loop_runtime.process_manager import managed_session_capability, run_one_shot
 from codex_loop_runtime.protocol import emit_error, emit_ok
+from codex_loop_runtime.release_lineage import (
+    acknowledge_publish_model_dispatch_batch, acknowledge_publish_model_dispatch_tree,
+    capture_workspace_binding, dispatch_publish, publish_model_dispatch_status, publish_plan,
+    record_publish_outcome, start_publish_model_dispatch,
+    record_release_receipt, release_plan, workspace_binding_status,
+)
 from codex_loop_runtime.service import request as service_request, serve as service_serve, start as service_start
 from codex_loop_runtime.shell_snapshot import capture_plan as shell_snapshot_plan
 from codex_loop_runtime.state import (
@@ -68,6 +78,18 @@ def _command(raw: list[str]) -> list[str]:
     return values
 
 
+def _capability_flags(values: list[str] | None) -> dict[str, bool] | None:
+    if values is None:
+        return None
+    result: dict[str, bool] = {}
+    for raw in values:
+        key = str(raw)
+        if key not in CAPABILITY_KEYS:
+            raise ValueError(f"unknown delegation capability: {key}")
+        result[key] = True
+    return result
+
+
 def cmd_bootstrap(args: argparse.Namespace) -> None:
     cwd, root = _root(args)
     if args.task_id:
@@ -85,6 +107,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
             git_mutation_scope={"head": args.allow_git_head, "branch": args.allow_git_branch, "index": args.allow_git_index},
             no_validation_reason=args.no_validation_reason,
         )
+        store.set_meta("workspace_binding", capture_workspace_binding(root))
         count = capture_baseline(root, store)
         set_active_task(root, task_id)
     except Exception:
@@ -290,6 +313,67 @@ def cmd_external_resolve_failure(args: argparse.Namespace) -> None:
     emit_ok({"action_id": args.action_id, "failure_resolved": True})
 
 
+def cmd_workspace_binding(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(workspace_binding_status(root, store.get_meta("workspace_binding")))
+
+
+def cmd_release_plan(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(release_plan(root, store, artifact_name=args.artifact_name, archive_prefix=args.archive_prefix))
+
+
+def cmd_release_record(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(record_release_receipt(
+        root, store, artifact_name=args.artifact_name, artifact_sha256=args.artifact_sha256, evidence=args.evidence,
+    ))
+
+
+def cmd_publish_plan(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(publish_plan(
+        root, store, repository=args.repository, branch=args.branch, remote_head=args.remote_head,
+        remote_tree=args.remote_tree, remote=args.remote, release_id=args.release_id,
+    ))
+
+
+def cmd_publish_dispatch(args: argparse.Namespace) -> None:
+    _cwd_path, _root_path, store = _store(args)
+    emit_ok(dispatch_publish(store, action_id=args.action_id, transport=args.transport))
+
+
+def cmd_publish_record(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(record_publish_outcome(
+        root, store, action_id=args.action_id, state=args.state, transport=args.transport,
+        evidence=args.evidence, remote_commit=args.remote_commit, remote_tree=args.remote_tree, remote_parent=args.remote_parent,
+    ))
+
+
+def cmd_publish_transfer_start(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(start_publish_model_dispatch(root, store, action_id=args.action_id))
+
+
+def cmd_publish_transfer_status(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(publish_model_dispatch_status(root, store, action_id=args.action_id))
+
+
+def cmd_publish_transfer_ack(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    values = json.loads(args.returned_shas_json)
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        raise ValueError("--returned-shas-json must be a JSON array of SHA strings")
+    emit_ok(acknowledge_publish_model_dispatch_batch(root, store, action_id=args.action_id, returned_shas=values))
+
+
+def cmd_publish_transfer_tree_ack(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(acknowledge_publish_model_dispatch_tree(root, store, action_id=args.action_id, returned_tree=args.returned_tree))
+
+
 def cmd_git_authorize(args: argparse.Namespace) -> None:
     _cwd_path, _root_path, store = _store(args)
     store.authorize_git_mutation(
@@ -468,6 +552,47 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
     emit_ok({"cleaned": True, "task_id": task_id})
 
 
+def cmd_isolate_enter(args: argparse.Namespace) -> None:
+    cwd, root, store = _store(args)
+    requested_overrides = _capability_flags(args.request_capability)
+    actual_report = _capability_flags(args.actual_capability)
+    result = create_isolation(
+        root, cwd, store,
+        role=args.role,
+        objective=args.objective,
+        requested_executor=args.requested_executor,
+        actual_executor=args.actual_executor,
+        project_files=args.project_file or [],
+        facts=args.fact or [],
+        criteria_refs=args.criterion_ref or [],
+        requested_capability_overrides=requested_overrides,
+        actual_capability_report=actual_report,
+    )
+    emit_ok(result)
+
+
+def cmd_isolate_status(args: argparse.Namespace) -> None:
+    cwd, root, store = _store(args)
+    emit_ok(isolation_status(root, cwd, store))
+
+
+def cmd_isolate_finish(args: argparse.Namespace) -> None:
+    cwd, root, store = _store(args)
+    payload = sys.stdin.buffer.read(MAX_RESULT_BYTES + 1)
+    if len(payload) > MAX_RESULT_BYTES:
+        raise ValueError("isolated result JSON exceeds 64 KiB")
+    try:
+        result = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("isolated result stdin must be valid UTF-8 JSON") from exc
+    emit_ok(finish_isolation(root, cwd, store, args.isolation_id, result))
+
+
+def cmd_isolate_abort(args: argparse.Namespace) -> None:
+    cwd, root, store = _store(args)
+    emit_ok(abort_isolation(root, cwd, store, args.isolation_id, args.reason))
+
+
 def cmd_shell_snapshot(args: argparse.Namespace) -> None:
     cwd, _root_path, store = _store(args)
     store.ensure_active()
@@ -514,6 +639,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("steer-ack"); _add_scope(p); p.add_argument("--steer-id", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_steer_ack)
     p = sub.add_parser("external"); _add_scope(p); p.add_argument("--kind", required=True); p.add_argument("--state", required=True, choices=["planned","dispatched","terminal_success","terminal_failure","outcome_unknown","cancelled_before_dispatch"]); p.add_argument("--identity"); p.add_argument("--action-class", default="recheckable", choices=["read_only","recheckable","external_non_idempotent"]); p.add_argument("--action-id"); p.add_argument("--details-json"); p.set_defaults(func=cmd_external)
     p = sub.add_parser("git-authorize"); _add_scope(p); p.add_argument("--reason", required=True); p.add_argument("--head", action="store_true"); p.add_argument("--branch", action="store_true"); p.add_argument("--index", action="store_true"); p.set_defaults(func=cmd_git_authorize)
+    p = sub.add_parser("workspace-binding"); _add_scope(p); p.set_defaults(func=cmd_workspace_binding)
+    p = sub.add_parser("release-plan"); _add_scope(p); p.add_argument("--artifact-name", required=True); p.add_argument("--archive-prefix"); p.set_defaults(func=cmd_release_plan)
+    p = sub.add_parser("release-record"); _add_scope(p); p.add_argument("--artifact-name", required=True); p.add_argument("--artifact-sha256", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_release_record)
+    p = sub.add_parser("publish-plan"); _add_scope(p); p.add_argument("--repository", required=True); p.add_argument("--branch", required=True); p.add_argument("--remote-head", required=True); p.add_argument("--remote-tree"); p.add_argument("--remote", default="origin"); p.add_argument("--release-id"); p.set_defaults(func=cmd_publish_plan)
+    p = sub.add_parser("publish-dispatch"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--transport", required=True, choices=["git","github_object_api"]); p.set_defaults(func=cmd_publish_dispatch)
+    p = sub.add_parser("publish-record"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--state", required=True, choices=["terminal_success","terminal_failure","outcome_unknown"]); p.add_argument("--transport", required=True, choices=["git","github_object_api"]); p.add_argument("--remote-commit"); p.add_argument("--remote-tree"); p.add_argument("--remote-parent"); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_publish_record)
+    p = sub.add_parser("publish-transfer-start"); _add_scope(p); p.add_argument("--action-id", required=True); p.set_defaults(func=cmd_publish_transfer_start)
+    p = sub.add_parser("publish-transfer-status"); _add_scope(p); p.add_argument("--action-id", required=True); p.set_defaults(func=cmd_publish_transfer_status)
+    p = sub.add_parser("publish-transfer-ack"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--returned-shas-json", required=True); p.set_defaults(func=cmd_publish_transfer_ack)
+    p = sub.add_parser("publish-transfer-tree-ack"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--returned-tree", required=True); p.set_defaults(func=cmd_publish_transfer_tree_ack)
     for name, func in [("poll",cmd_poll),("stdin",cmd_stdin),("interrupt",cmd_interrupt),("terminate",cmd_terminate)]:
         p=sub.add_parser(name); _add_scope(p); p.add_argument("handle"); p.add_argument("--timeout",type=float,default=3.0)
         if name=="stdin": p.add_argument("data")
@@ -521,6 +656,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("process-resolve"); _add_scope(p); p.add_argument("--handle", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_process_resolve)
     p = sub.add_parser("checkpoint"); _add_scope(p); p.add_argument("--key-finding", action="append"); p.add_argument("--next-action"); p.set_defaults(func=cmd_checkpoint)
     p = sub.add_parser("cancel"); _add_scope(p); p.add_argument("--reason"); p.set_defaults(func=cmd_cancel)
+    p = sub.add_parser("isolate-enter"); _add_scope(p); p.add_argument("--role", required=True, choices=["reviewer","researcher","tester","debugger","security-reviewer","architecture-reviewer"]); p.add_argument("--objective", required=True); p.add_argument("--requested-executor", choices=["native_subagent","logical_isolation"], default="native_subagent"); p.add_argument("--actual-executor", choices=["native_subagent","logical_isolation"], default="logical_isolation"); p.add_argument("--project-file", action="append"); p.add_argument("--fact", action="append"); p.add_argument("--criterion-ref", action="append"); p.add_argument("--request-capability", action="append", choices=list(CAPABILITY_KEYS)); p.add_argument("--actual-capability", action="append", choices=list(CAPABILITY_KEYS)); p.set_defaults(func=cmd_isolate_enter)
+    p = sub.add_parser("isolate-status"); _add_scope(p); p.set_defaults(func=cmd_isolate_status)
+    p = sub.add_parser("isolate-finish"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.set_defaults(func=cmd_isolate_finish)
+    p = sub.add_parser("isolate-abort"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_isolate_abort)
     p = sub.add_parser("source-verify"); p.set_defaults(func=cmd_source_verify)
     p = sub.add_parser("_serve"); p.add_argument("--cwd", required=True); p.add_argument("--task-id", required=True); p.set_defaults(func=cmd_serve)
     return parser

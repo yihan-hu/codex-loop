@@ -1,3 +1,4 @@
+import contextlib
 import json
 import sqlite3
 import subprocess
@@ -97,7 +98,7 @@ class ModifiedDesignReauditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             store = self.make(root, requires_validation=True)
-            with sqlite3.connect(store.path) as db:
+            with contextlib.closing(sqlite3.connect(store.path)) as db, db:
                 db.execute(
                     "INSERT INTO validations(generation,command_json,cwd,exit_code,passed,source,evidence) VALUES(?,?,?,?,?,?,?)",
                     (0, json.dumps({"argv0": "pytest", "argc": 1, "sha256": "legacy"}), "", 0, 1, "host_observed", "legacy pass"),
@@ -183,7 +184,7 @@ class ModifiedDesignReauditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             store = self.make(root)
-            with sqlite3.connect(store.path) as db:
+            with contextlib.closing(sqlite3.connect(store.path)) as db, db:
                 db.execute(
                     "INSERT INTO external_actions(action_id,kind,identity,action_class,state) VALUES(?,?,?,?,?)",
                     ("legacy_a", "github_comment", "issue:1", "external_non_idempotent", "terminal_success"),

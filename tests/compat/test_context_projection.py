@@ -54,6 +54,7 @@ class ContextProjectionTests(unittest.TestCase):
             self.assertEqual(after['state']['validation'], 'stale')
             self.assertEqual(after['state']['review'], 'stale')
 
+
     def test_next_actions_include_pending_criteria_beyond_projection_cap(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -121,6 +121,11 @@ def guarded_write(
     protected_override_reason: str | None = None,
 ) -> WriteResult:
     store.ensure_active()
+    active_isolation = store.active_isolation()
+    if active_isolation is not None and str(active_isolation.get("mutation_policy")) == "read_only":
+        raise PermissionError(
+            f"active isolated task {active_isolation.get('isolation_id')} is read-only; local guarded writes are forbidden"
+        )
     if len(content) > MAX_LOCAL_WRITE_BYTES:
         raise ValueError("local guarded write payload exceeds 16 MiB; use a host-visible file operation")
     profile = str(store.get_meta("profile", "regular"))

@@ -115,6 +115,45 @@ CREATE TABLE IF NOT EXISTS steers (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS release_receipts (
+    release_id TEXT PRIMARY KEY,
+    generation INTEGER NOT NULL,
+    source_commit TEXT NOT NULL,
+    source_tree TEXT NOT NULL,
+    artifact_name TEXT NOT NULL,
+    artifact_sha256 TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS isolations (
+    isolation_id TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    status TEXT NOT NULL,
+    parent_generation INTEGER NOT NULL,
+    exit_generation INTEGER,
+    requested_executor TEXT NOT NULL,
+    actual_executor TEXT NOT NULL,
+    requested_capabilities_json TEXT NOT NULL,
+    actual_capabilities_json TEXT NOT NULL,
+    missing_capabilities_json TEXT NOT NULL,
+    mutation_policy TEXT NOT NULL,
+    context_spec_json TEXT NOT NULL,
+    result_json TEXT,
+    checkpoint_id INTEGER,
+    workspace_changed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_isolation ON isolations(status) WHERE status='active';
+CREATE TABLE IF NOT EXISTS isolation_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    isolation_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    details_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -140,6 +179,39 @@ def scrub_persisted_text(value: str | None, *, limit: int = 8192) -> str | None:
         text,
     )
     return text
+
+
+def scrub_persisted_value(value: Any, *, depth: int = 0) -> Any:
+    if depth > 6:
+        return "[truncated]"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return scrub_persisted_text(value, limit=4096) or ""
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in list(value.items())[:64]:
+            clean_key = (scrub_persisted_text(str(key), limit=256) or "").strip()
+            if clean_key:
+                result[clean_key] = scrub_persisted_value(item, depth=depth + 1)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [scrub_persisted_value(item, depth=depth + 1) for item in list(value)[:128]]
+    return scrub_persisted_text(str(value), limit=4096) or ""
+
+
+def _prune_isolation_events(db: sqlite3.Connection, *, keep_warnings: int = 64, keep_other: int = 448) -> None:
+    # Preserve a bounded warning history even if a long isolation emits many steer/progress events.
+    db.execute(
+        "DELETE FROM isolation_events WHERE kind='warning' AND id NOT IN "
+        "(SELECT id FROM isolation_events WHERE kind='warning' ORDER BY id DESC LIMIT ?)",
+        (int(keep_warnings),),
+    )
+    db.execute(
+        "DELETE FROM isolation_events WHERE kind<>'warning' AND id NOT IN "
+        "(SELECT id FROM isolation_events WHERE kind<>'warning' ORDER BY id DESC LIMIT ?)",
+        (int(keep_other),),
+    )
 
 
 def _chmod(path: Path, mode: int) -> None:
@@ -373,7 +445,7 @@ class StateStore:
         if not requires_validation and not (no_validation_reason and no_validation_reason.strip()):
             raise ValueError("disabling validation requires a concise reason")
         with self.connect() as db:
-            for table in ("criteria", "baseline", "mutations", "validation_plans", "validations", "external_actions", "checkpoints", "processes", "steers"):
+            for table in ("criteria", "baseline", "mutations", "validation_plans", "validations", "external_actions", "checkpoints", "processes", "steers", "release_receipts", "isolation_events", "isolations"):
                 db.execute(f"DELETE FROM {table}")
             db.execute("DELETE FROM metadata")
             db.executemany(
@@ -402,6 +474,21 @@ class StateStore:
             status = json.loads(row["value"]) if row is not None else "uninitialized"
             if str(status) != "active":
                 raise RuntimeError(f"task is not active: {status}")
+            generation_row = db.execute("SELECT value FROM metadata WHERE key='generation'").fetchone()
+            generation = int(json.loads(generation_row["value"])) if generation_row is not None else 0
+            active_iso = db.execute("SELECT isolation_id FROM isolations WHERE status='active' LIMIT 1").fetchone()
+            if active_iso is not None:
+                isolation_id = str(active_iso["isolation_id"])
+                db.execute(
+                    "UPDATE isolations SET status='aborted',exit_generation=?,completed_at=CURRENT_TIMESTAMP WHERE isolation_id=? AND status='active'",
+                    (generation, isolation_id),
+                )
+                db.execute(
+                    "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",
+                    (isolation_id, "aborted", generation, json.dumps({"reason": "parent_task_cancelled"}, ensure_ascii=True)),
+                )
+                _prune_isolation_events(db)
+
             # A merely planned action has not crossed the dispatch boundary, so cancellation can
             # close it deterministically. Dispatched/unknown actions remain unresolved until the
             # host observes a real terminal outcome.
@@ -622,6 +709,46 @@ class StateStore:
             "legacy_identity": legacy_identity,
         }
 
+    def record_release_receipt(
+        self,
+        *,
+        release_id: str,
+        generation: int,
+        source_commit: str,
+        source_tree: str,
+        artifact_name: str,
+        artifact_sha256: str,
+        evidence: str,
+    ) -> dict[str, Any]:
+        release_id = validate_task_id(release_id)
+        clean_name = (scrub_persisted_text(artifact_name, limit=512) or "").strip()
+        clean_evidence = (scrub_persisted_text(evidence, limit=4096) or "").strip()
+        if not clean_name or not clean_evidence:
+            raise ValueError("release receipt requires artifact name and evidence")
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO release_receipts(release_id,generation,source_commit,source_tree,artifact_name,artifact_sha256,evidence) VALUES(?,?,?,?,?,?,?)",
+                (release_id, int(generation), source_commit, source_tree, clean_name, artifact_sha256, clean_evidence),
+            )
+            row = db.execute("SELECT * FROM release_receipts WHERE release_id=?", (release_id,)).fetchone()
+        assert row is not None
+        return dict(row)
+
+    def release_receipt(self, release_id: str) -> dict[str, Any] | None:
+        release_id = validate_task_id(release_id)
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM release_receipts WHERE release_id=?", (release_id,)).fetchone()
+        return dict(row) if row is not None else None
+
+    def latest_release_receipt(self) -> dict[str, Any] | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM release_receipts ORDER BY created_at DESC, release_id DESC LIMIT 1").fetchone()
+        return dict(row) if row is not None else None
+
+    def release_receipts(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM release_receipts ORDER BY created_at,release_id")]
+
     def record_external(
         self,
         kind: str,
@@ -793,19 +920,227 @@ class StateStore:
     def mark_reviewed(self) -> None:
         self.set_meta("changes_reviewed_generation", self.generation())
 
-    def record_checkpoint(self, summary: Any) -> None:
+    def record_checkpoint(self, summary: Any) -> int:
         encoded = json.dumps(summary, ensure_ascii=True, sort_keys=True)
         if len(encoded.encode("utf-8")) > 256 * 1024:
             raise ValueError("checkpoint is too large")
         with self.connect() as db:
-            db.execute("INSERT INTO checkpoints(generation,summary_json) VALUES(?,?)", (self.generation(), encoded))
+            cur = db.execute("INSERT INTO checkpoints(generation,summary_json) VALUES(?,?)", (self.generation(), encoded))
+            return int(cur.lastrowid)
 
     def latest_checkpoint(self) -> dict[str, Any] | None:
         with self.connect() as db:
-            row = db.execute("SELECT generation,summary_json,created_at FROM checkpoints ORDER BY id DESC LIMIT 1").fetchone()
+            row = db.execute("SELECT id,generation,summary_json,created_at FROM checkpoints ORDER BY id DESC LIMIT 1").fetchone()
         if row is None:
             return None
-        return {"generation": int(row["generation"]), "summary": json.loads(row["summary_json"]), "created_at": row["created_at"]}
+        return {"id": int(row["id"]), "generation": int(row["generation"]), "summary": json.loads(row["summary_json"]), "created_at": row["created_at"]}
+
+    @staticmethod
+    def _decode_isolation_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        item = dict(row)
+        for source, target in (
+            ("requested_capabilities_json", "requested_capabilities"),
+            ("actual_capabilities_json", "actual_capabilities"),
+            ("missing_capabilities_json", "missing_capabilities"),
+            ("context_spec_json", "context_spec"),
+            ("result_json", "result"),
+        ):
+            raw = item.pop(source, None)
+            item[target] = None if raw is None else json.loads(raw)
+        item["workspace_changed"] = bool(item.get("workspace_changed", 0))
+        return item
+
+    def active_isolation(self) -> dict[str, Any] | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM isolations WHERE status='active' LIMIT 1").fetchone()
+        return self._decode_isolation_row(row)
+
+    def isolation(self, isolation_id: str) -> dict[str, Any] | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM isolations WHERE isolation_id=?", (str(isolation_id),)).fetchone()
+        return self._decode_isolation_row(row)
+
+    def isolation_history(self, *, limit: int = 32) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 128))
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM isolations ORDER BY created_at DESC, isolation_id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [self._decode_isolation_row(row) for row in rows if row is not None]
+
+    def create_isolation(
+        self,
+        *,
+        isolation_id: str,
+        role: str,
+        objective: str,
+        parent_generation: int,
+        requested_executor: str,
+        actual_executor: str,
+        requested_capabilities: dict[str, bool],
+        actual_capabilities: dict[str, bool],
+        missing_capabilities: list[str],
+        mutation_policy: str,
+        context_spec: dict[str, Any],
+        checkpoint_id: int | None,
+    ) -> dict[str, Any]:
+        self.ensure_active()
+        fields = {
+            "role": (scrub_persisted_text(role, limit=256) or "").strip(),
+            "objective": (scrub_persisted_text(objective, limit=8192) or "").strip(),
+            "requested_executor": (scrub_persisted_text(requested_executor, limit=256) or "").strip(),
+            "actual_executor": (scrub_persisted_text(actual_executor, limit=256) or "").strip(),
+            "mutation_policy": (scrub_persisted_text(mutation_policy, limit=256) or "").strip(),
+        }
+        if not all(fields.values()):
+            raise ValueError("isolation role/objective/executor/mutation policy must not be empty")
+        safe_context_spec = scrub_persisted_value(context_spec)
+        context_encoded = json.dumps(safe_context_spec, ensure_ascii=True, sort_keys=True)
+        if len(context_encoded.encode("utf-8")) > 256 * 1024:
+            raise ValueError("isolation context projection is too large")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM isolations WHERE status='active' LIMIT 1").fetchone() is not None:
+                raise RuntimeError("an isolated task is already active; nested isolation is not supported")
+            db.execute(
+                "INSERT INTO isolations(isolation_id,role,objective,status,parent_generation,requested_executor,actual_executor,"
+                "requested_capabilities_json,actual_capabilities_json,missing_capabilities_json,mutation_policy,context_spec_json,checkpoint_id) "
+                "VALUES(?,?,?,'active',?,?,?,?,?,?,?,?,?)",
+                (
+                    str(isolation_id), fields["role"], fields["objective"], int(parent_generation),
+                    fields["requested_executor"], fields["actual_executor"],
+                    json.dumps(requested_capabilities, ensure_ascii=True, sort_keys=True),
+                    json.dumps(actual_capabilities, ensure_ascii=True, sort_keys=True),
+                    json.dumps(list(missing_capabilities), ensure_ascii=True),
+                    fields["mutation_policy"], context_encoded, checkpoint_id,
+                ),
+            )
+            db.execute(
+                "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",
+                (str(isolation_id), "entered", int(parent_generation), json.dumps({"role": fields["role"]}, ensure_ascii=True)),
+            )
+            _prune_isolation_events(db)
+        created = self.isolation(isolation_id)
+        if created is None:
+            raise RuntimeError("failed to read isolation after creation")
+        return created
+
+    def record_isolation_event(self, isolation_id: str, kind: str, details: dict[str, Any] | None = None) -> int:
+        clean_kind = (scrub_persisted_text(kind, limit=128) or "").strip()
+        if not clean_kind:
+            raise ValueError("isolation event kind must not be empty")
+        safe_details = None if details is None else scrub_persisted_value(details)
+        encoded = None if safe_details is None else json.dumps(safe_details, ensure_ascii=True, sort_keys=True)
+        if encoded is not None and len(encoded.encode("utf-8")) > 64 * 1024:
+            raise ValueError("isolation event details are too large")
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM isolations WHERE isolation_id=?", (str(isolation_id),)).fetchone() is None:
+                raise ValueError(f"unknown isolation: {isolation_id}")
+            generation_row = db.execute("SELECT value FROM metadata WHERE key='generation'").fetchone()
+            generation = int(json.loads(generation_row["value"])) if generation_row is not None else 0
+            cur = db.execute(
+                "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",
+                (str(isolation_id), clean_kind, generation, encoded),
+            )
+            event_id = int(cur.lastrowid)
+            _prune_isolation_events(db)
+            return event_id
+
+    def isolation_events(self, isolation_id: str | None = None, *, kind: str | None = None, limit: int = 64) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 256))
+        clauses: list[str] = []
+        params: list[Any] = []
+        if isolation_id is not None:
+            clauses.append("isolation_id=?")
+            params.append(str(isolation_id))
+        if kind is not None:
+            clauses.append("kind=?")
+            params.append(str(kind))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        params.append(limit)
+        with self.connect() as db:
+            rows = db.execute(
+                f"SELECT id,isolation_id,kind,generation,details_json,created_at FROM isolation_events{where} ORDER BY id DESC LIMIT ?",
+                tuple(params),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            raw = item.pop("details_json", None)
+            item["details"] = None if raw is None else json.loads(raw)
+            result.append(item)
+        return result
+
+    def isolation_warnings(self, isolation_id: str | None = None, *, limit: int = 32) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for event in reversed(self.isolation_events(isolation_id, kind="warning", limit=limit)):
+            details = event.get("details") or {}
+            if isinstance(details, dict):
+                result.append(details)
+        return result
+
+    def finish_isolation(
+        self,
+        isolation_id: str,
+        *,
+        result: dict[str, Any],
+        exit_generation: int,
+        workspace_changed: bool,
+    ) -> dict[str, Any]:
+        safe_result = scrub_persisted_value(result)
+        if not isinstance(safe_result, dict):
+            raise ValueError("isolated result must be an object")
+        encoded = json.dumps(safe_result, ensure_ascii=True, sort_keys=True)
+        if len(encoded.encode("utf-8")) > 64 * 1024:
+            raise ValueError("isolated result is too large")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status FROM isolations WHERE isolation_id=?", (str(isolation_id),)).fetchone()
+            if row is None:
+                raise ValueError(f"unknown isolation: {isolation_id}")
+            if str(row["status"]) != "active":
+                raise RuntimeError(f"isolation is not active: {isolation_id}")
+            db.execute(
+                "UPDATE isolations SET status='finished',exit_generation=?,result_json=?,workspace_changed=?,completed_at=CURRENT_TIMESTAMP WHERE isolation_id=?",
+                (int(exit_generation), encoded, int(bool(workspace_changed)), str(isolation_id)),
+            )
+            db.execute(
+                "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",
+                (str(isolation_id), "finished", int(exit_generation), json.dumps({"workspace_changed": bool(workspace_changed)}, ensure_ascii=True)),
+            )
+            _prune_isolation_events(db)
+        item = self.isolation(isolation_id)
+        if item is None:
+            raise RuntimeError("failed to read finished isolation")
+        return item
+
+    def abort_isolation(self, isolation_id: str, *, reason: str, exit_generation: int | None = None) -> dict[str, Any]:
+        clean = (scrub_persisted_text(reason, limit=4096) or "").strip()
+        if not clean:
+            raise ValueError("aborting an isolated task requires a reason")
+        generation = self.generation() if exit_generation is None else int(exit_generation)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status FROM isolations WHERE isolation_id=?", (str(isolation_id),)).fetchone()
+            if row is None:
+                raise ValueError(f"unknown isolation: {isolation_id}")
+            if str(row["status"]) != "active":
+                raise RuntimeError(f"isolation is not active: {isolation_id}")
+            db.execute(
+                "UPDATE isolations SET status='aborted',exit_generation=?,completed_at=CURRENT_TIMESTAMP WHERE isolation_id=?",
+                (generation, str(isolation_id)),
+            )
+            db.execute(
+                "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",
+                (str(isolation_id), "aborted", generation, json.dumps({"reason": clean}, ensure_ascii=True)),
+            )
+            _prune_isolation_events(db)
+        item = self.isolation(isolation_id)
+        if item is None:
+            raise RuntimeError("failed to read aborted isolation")
+        return item
 
     def record_steer(self, text: str) -> str:
         clean = scrub_persisted_text(text, limit=4096) or ""

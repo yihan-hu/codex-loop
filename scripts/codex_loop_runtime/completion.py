@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .change_tracker import changes, sync_generation
+from .release_lineage import workspace_binding_status
 from .state import READ_ONLY_PROFILES, StateStore
 
 
@@ -34,6 +35,12 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
     reasons: list[str] = []
     blockers: list[str] = []
     generation = store.generation()
+    active_isolation = store.active_isolation()
+    if active_isolation is not None:
+        reasons.append(
+            f"active isolated task {active_isolation.get('isolation_id')} has not finished"
+        )
+    delegation_warnings = store.isolation_warnings(limit=32)
     criteria = store.criteria()
     if not criteria:
         blockers.append("task has no acceptance criterion")
@@ -83,6 +90,14 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
     unresolved_process_failures = store.unresolved_process_failure_count()
     if unresolved_process_failures:
         reasons.append(f"{unresolved_process_failures} managed process failure(s) are unresolved")
+
+    binding = store.get_meta("workspace_binding")
+    if binding is not None:
+        binding_status = workspace_binding_status(root, binding)
+        if not binding_status.get("matches"):
+            blockers.append("canonical workspace binding no longer matches the task's bound Git working tree")
+    else:
+        binding_status = {"bound": False, "matches": False, "reason": "legacy task without canonical workspace binding"}
 
     change_state = changes(root, store)
     opaque_paths = sorted(str(x) for x in change_state.get("ignored_watch", {}).get("opaque_paths", []))
@@ -147,5 +162,9 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
             "no_validation_reason": store.get_meta("no_validation_reason"),
             "changes": change_state,
             "freshness_waiver": freshness_waiver,
+            "active_isolation": active_isolation,
+            "warnings": delegation_warnings,
+            "workspace_binding": binding_status,
+            "latest_release": store.latest_release_receipt(),
         },
     )

@@ -17,7 +17,6 @@ If no criterion is supplied, bootstrap creates one from the objective; it still 
 
 Profiles: `regular`, `bug_fix`, `feature`, `refactor`, `test_repair`, `ci_repair`, `code_review`, `review_fix`, `command_only`, `investigation`.
 
-
 ## Bounded working context
 
 `next` is the normal agent-facing state view. It is generated from the same context projector that backs full world-state/checkpoint data, but it intentionally omits low-level task/generation/plan bookkeeping and caps criteria, changed paths, completion reasons, steers, and suggested actions. It returns:
@@ -142,6 +141,80 @@ python scripts/codex_loop.py git-authorize --cwd REPO --task-id TASK \
 ```
 
 Specify only the dimensions the task is expected to mutate: `--head`, `--branch`, and/or `--index`. This is completion bookkeeping, not permission. Host approval/sandbox policy remains authoritative.
+
+## Canonical workspace, release, and publish
+
+Every new task records a canonical workspace binding at bootstrap. Inspect it with:
+
+```bash
+python scripts/codex_loop.py workspace-binding --cwd REPO
+```
+
+The canonical root and shared Git repository identity must remain stable for the task. HEAD/branch may move only through the existing Git-mutation workflow. Use Git worktrees for concurrent tasks; installed Skills, copied full-source directories, disposable release staging, and unpacked artifacts are never later development baselines. See `references/release-lineage.md`.
+
+Commit source before packaging. Plan an export from the audited Git HEAD, build outside the canonical tree, then record the artifact hash:
+
+```bash
+python scripts/codex_loop.py release-plan --cwd REPO --artifact-name skill.zip --archive-prefix codex-loop
+python scripts/codex_loop.py release-record --cwd REPO --artifact-name skill.zip \
+  --artifact-sha256 SHA256 --evidence "artifact built from the planned commit archive and verified"
+```
+
+`release-plan` fails when tracked/staged source is uncommitted. Untracked paths are reported but excluded because export comes from `git archive` of the exact commit. A release receipt is bound to task generation plus source commit/tree and becomes stale after later observed workspace mutation.
+
+For repository publishing, first observe the destination branch's current commit (and tree if connector fallback may be needed), then plan against that observed state:
+
+```bash
+python scripts/codex_loop.py publish-plan --cwd REPO \
+  --repository OWNER/REPO --branch main \
+  --remote-head REMOTE_COMMIT --remote-tree REMOTE_TREE
+```
+
+`publish-plan` reuses the existing validation/review gates: required validation must pass at the current generation and current changes must be reviewed. If the observed remote head is not an ancestor of the audited release commit, integrate the remote change in the same canonical worktree before publishing. Do not force-update around this condition. The non-idempotent publish identity is repository + branch + source commit, not tree alone. The plan prefers ordinary host-visible `git push`. If that transport is unavailable, the fallback manifest and base tree are derived from locally known Git object ids/modes for the observed remote-head commit with `git diff-tree`; do not rescan a directory to reconstruct the source version. The connector manifest classifies eligible bounded UTF-8 blobs for one batched `create_tree(content=...)` request, while binary/non-UTF-8/oversized or over-budget blobs use explicit `create_blob`, and deletions stay in the same tree request. A separately observed remote tree, when supplied, is checked for consistency.
+
+Immediately before the first external write, mark the publish dispatched:
+
+```bash
+python scripts/codex_loop.py publish-dispatch --cwd REPO --action-id ACTION --transport git
+# or: --transport github_object_api
+```
+
+For a serialized connector host with no file-backed/bulk action, start the deterministic short-term dispatcher only after `github_object_api` dispatch:
+
+```bash
+python scripts/codex_loop.py publish-transfer-start --cwd REPO --action-id ACTION
+python scripts/codex_loop.py publish-transfer-status --cwd REPO --action-id ACTION
+python scripts/codex_loop.py publish-transfer-ack --cwd REPO --action-id ACTION \
+  --returned-shas-json '["SHA1","SHA2"]'
+python scripts/codex_loop.py publish-transfer-tree-ack --cwd REPO --action-id ACTION \
+  --returned-tree TREE_SHA
+```
+
+`publish-transfer-start/status` derive the queue only from the planned remote-head commit and audited source commit. They emit bounded base64 `create_blob` payload batches. Dispatch those connector calls in the returned order without intermediate tree probes or new source reads; pass the returned SHA list to `publish-transfer-ack`. The acknowledgement advances a persisted cursor only after exact SHA equality for the whole current batch. Repeating `start/status` resumes the current cursor safely; a connector success whose acknowledgement was lost may be uploaded again because Git blobs are content-addressed. When the cursor reaches the end, the runtime emits one final `create_tree` call; `publish-transfer-tree-ack` enforces exact equality with the audited target tree and then returns the one-commit parameters and exits the replay-safe dispatcher. Blob/tree calls may be safely replayed after a lost acknowledgement, but `create_commit` must remain under the normal non-idempotent outcome discipline and must not be blindly retried after an unknown result.
+
+After real remote readback, record the terminal outcome:
+
+```bash
+python scripts/codex_loop.py publish-record --cwd REPO --action-id ACTION \
+  --state terminal_success --transport git \
+  --remote-commit COMMIT --remote-tree TREE \
+  --evidence "remote ref/tree read back after publish"
+```
+
+Ordinary Git success requires the remote commit and tree to equal the audited local release. Connector fallback may create a different transport commit only when readback proves the remote tree equals the audited release tree and `--remote-parent` equals the planned remote head. If the connector creates a different commit, `publish-record` returns `requires_local_reconciliation: true`; import/integrate the observed remote commit into the same canonical repository before the next publish plan. Unsupported Git object types such as gitlinks/submodules make the connector fallback unavailable rather than flattening them. Ambiguous results must be recorded as `outcome_unknown` and reconciled from real remote observation rather than blindly retried.
+
+## Delegation / logical isolation
+
+Use delegation when a workflow requests an independent reviewer/researcher/tester/debugger pass. Native host execution is a preference; lack of native execution degrades to logical isolation with warnings rather than blocking the parent task. See `references/delegation.md` for the capability and context contract.
+
+```bash
+python scripts/codex_loop.py isolate-enter --cwd REPO --task-id TASK --role reviewer --objective "independent review" --requested-executor native_subagent --actual-executor logical_isolation --project-file src/a.py --fact "observed failure"
+python scripts/codex_loop.py isolate-status --cwd REPO --task-id TASK
+python scripts/codex_loop.py isolate-finish --cwd REPO --task-id TASK --isolation-id ISO_ID < result.json
+python scripts/codex_loop.py isolate-abort --cwd REPO --task-id TASK --isolation-id ISO_ID --reason "insufficient evidence"
+```
+
+Only one read-only isolation may be active. `isolate-enter` checkpoints Main state without creating a second truth source. `isolate-finish` reconciles the current generation and returns a fresh Main projection; it never restores old workspace reality or auto-passes criteria. Parent cancellation atomically aborts an active isolation.
 
 ## Checkpoint, completion, cancel, cleanup
 

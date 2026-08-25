@@ -8,7 +8,7 @@ Allow transitions back whenever evidence changes. A tool call is never a complet
 
 ## Orient
 
-Establish the requested outcome, repository root, local instructions, protected existing changes, acceptance criteria, and likely validation path. Bootstrap runtime state once, then use `next` as the bounded working-set projection. Use `snapshot` only when full debug/audit state is needed.
+Establish the requested outcome, repository root, local instructions, protected existing changes, acceptance criteria, and likely validation path. Bootstrap runtime state once; the task is bound to that canonical working tree and shared Git repository identity. Use `next` as the bounded working-set projection and `snapshot` only when full debug/audit state is needed. For concurrent work on one repository, use separate Git worktrees/branches instead of copied source directories.
 
 ## Observe
 
@@ -17,6 +17,10 @@ Prefer high-information evidence: exact failures, implementation around the fail
 ## Act
 
 Choose the smallest coherent mutation or command. Preserve unrelated work. Use guarded writes when a known preimage matters. Use host-specialized tools when they materially outperform local execution, then record/reconcile their effects.
+
+## Delegate when requested
+
+When the workflow asks for a second-opinion worker, enter a bounded read-only isolated task. Prefer native host delegation only when it is actually available; otherwise continue with logical isolation and record the degradation warning. Do not project Main hypotheses by default. The worker independently re-observes evidence and returns structured findings. Finish/abort the isolation before resuming Main; current workspace reality overrides the entry checkpoint. Nested local isolation is flattened/serialized by orchestration rather than treated as a parent-task blocker.
 
 ## Observe again
 
@@ -29,6 +33,10 @@ Run the smallest validation that demonstrates the requested behavior from the in
 ## Review
 
 Inspect the final change set for accidental edits, stale comments, debug code, incomplete TODOs, generated churn, and mismatch with repository conventions. Mark review freshness only after this inspection.
+
+## Release and publish when requested
+
+Commit the intended source in the same canonical working tree before packaging. Build release artifacts from the planned Git HEAD into disposable staging, record the commit/tree-bound artifact receipt, and never continue development from the staging directory or artifact. Before publishing, observe the remote branch. Prefer ordinary Git transport; if it is unavailable, use only the Git-derived connector object manifest. A remote head that is not an ancestor of the audited release must be integrated before publishing rather than overwritten. Record publish dispatch immediately before the external mutation and terminal state from remote readback.
 
 ## Gate
 
