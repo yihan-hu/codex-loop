@@ -1,20 +1,34 @@
 # codex-loop runtime protocol
 
-Use `python scripts/codex_loop.py ...`. Commands emit JSON. Runtime state is task-scoped under a private temp directory; it never writes `.codex-loop` state into the repository.
+Use `python scripts/codex_loop.py ...`. Commands emit JSON. Runtime state is task-scoped under a private temp directory; it never writes `.codex-loop` state into the repository. `bootstrap` binds the created task as the workspace's active task, so ordinary task-scoped commands may omit `--task-id`. Pass an explicit `--task-id` when deliberately addressing a non-active task or when low-level audit/debugging requires it. If no active task exists, task-scoped commands fail closed.
 
 ## Bootstrap and world state
 
 ```bash
 python scripts/codex_loop.py bootstrap --cwd REPO --objective "..." \
   --criterion "..." --profile bug_fix
-# Save the returned task_id as TASK and pass it explicitly from here on.
-python scripts/codex_loop.py snapshot --cwd REPO --task-id TASK
-python scripts/codex_loop.py instructions --cwd REPO --task-id TASK
+python scripts/codex_loop.py next --cwd REPO
+# Drill down only when needed:
+python scripts/codex_loop.py snapshot --cwd REPO
+python scripts/codex_loop.py instructions --cwd REPO
 ```
 
 If no criterion is supplied, bootstrap creates one from the objective; it still cannot pass without evidence. Use `--no-validation` only when the task genuinely has no meaningful executable validation, and always pair it with `--no-validation-reason "..."`. The waiver is task state and is surfaced by completion.
 
 Profiles: `regular`, `bug_fix`, `feature`, `refactor`, `test_repair`, `ci_repair`, `code_review`, `review_fix`, `command_only`, `investigation`.
+
+
+## Bounded working context
+
+`next` is the normal agent-facing state view. It is generated from the same context projector that backs full world-state/checkpoint data, but it intentionally omits low-level task/generation/plan bookkeeping and caps criteria, changed paths, completion reasons, steers, and suggested actions. It returns:
+
+- effective task objective/criteria plus runtime guardrails and unresolved user deltas;
+- derived validation/review freshness and current completion status;
+- bounded changed-path ownership (`agent`, `mixed`, `user`, or unexpected/unattributed);
+- legal/required next actions;
+- evidence references for explicit drill-down.
+
+Use `snapshot` as the full debug/audit view rather than as the default prompt payload. The local runtime does not compact or own ChatGPT conversation context.
 
 ## Command preflight and execution
 
@@ -54,19 +68,18 @@ The waiver is bound to the current generation and exact opaque-path set. A chang
 ## Validation
 
 ```bash
-python scripts/codex_loop.py validate --cwd REPO --task-id TASK -- pytest -q
+python scripts/codex_loop.py validate --cwd REPO -- pytest -q
 ```
 
-For normal test/build commands this returns a host-visible plan including the current generation. After running that exact command through the host:
+For normal test/build commands this returns a host-visible execution request without exposing plan/generation bookkeeping. After running that exact command through the host:
 
 ```bash
-python scripts/codex_loop.py validation-record --cwd REPO/package-a --task-id TASK \
-  --plan-id PLAN_FROM_VALIDATE --command-json '["pytest","-q"]' \
-  --generation 3 --exit-code 0 \
+python scripts/codex_loop.py validation-record --cwd REPO/package-a \
+  --command-json '["pytest","-q"]' --exit-code 0 \
   --evidence "host pytest completed with exit code 0 from REPO/package-a"
 ```
 
-The `plan_id` is a one-time host-validation capability bound to generation, cwd, and an exact-argv validation identity. Approval-cache shell canonicalization is deliberately not used for validation equivalence. It is consumed atomically when the host result is recorded. The generation is also a CAS token: if the workspace changed meanwhile, recording fails as stale. `--cwd` is part of validation identity, so record with the same cwd that `validate` planned and the host actually used. The repository root still determines workspace freshness. A failing validation may be made non-blocking only when it was actually observed at generation 0:
+The facade resolves the unique unconsumed plan matching the current generation, cwd, and exact argv identity, then consumes it through the original safety-kernel checks. Repeated planning of the same current generation/cwd/exact command reuses the existing unconsumed plan, so ordinary retries do not manufacture agent-visible ambiguity. Zero matches (no valid plan) and legacy/corrupt multiple matches both fail closed. The underlying `plan_id` remains a one-time host-validation capability bound to generation, cwd, and exact argv; workspace mutation still makes the result stale. For compatibility/audit debugging, `validate --debug-bookkeeping` exposes `plan_id`/generation and `validation-record` still accepts explicit `--plan-id`/`--generation`. Approval-cache shell canonicalization is deliberately not used for validation equivalence. A failing validation may be made non-blocking only when it was actually observed at generation 0:
 
 ```bash
 python scripts/codex_loop.py validation-resolve --cwd REPO --task-id TASK \

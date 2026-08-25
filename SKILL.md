@@ -11,16 +11,23 @@ Use `scripts/codex_loop.py` as the stable local-runtime entry point. Run bundled
 
 ## Core loop
 
-1. **Bootstrap.** Resolve the workspace, choose the task profile, turn the user request into concrete acceptance criteria, then run `bootstrap`. Capture the returned `task_id` and pass that exact `--task-id` on every subsequent task-scoped runtime command. Use `snapshot` and `instructions` to establish the current world state and active AGENTS hierarchy.
-2. **Observe.** Inspect only the relevant code, config, tests, failures, call sites, Git state, and tool results. Prefer repository evidence over assumptions.
+1. **Bootstrap.** Resolve the workspace, choose the task profile, turn the user request into concrete acceptance criteria, then run `bootstrap`. The runtime binds the new task as the workspace's active task; ordinary task-scoped commands inherit that binding, while explicit `--task-id` remains available for disambiguation/debugging. Call `next` for the bounded working set and `instructions`/`snapshot` only when deeper drill-down is needed.
+2. **Observe.** Start from `next`, then inspect only the relevant code, config, tests, failures, call sites, Git state, and evidence references. Prefer repository evidence over assumptions and drill down instead of loading full runtime state repeatedly.
 3. **Act.** Take the smallest useful next action. Use guarded `write` for a known file preimage. Keep arbitrary shell/Git/build/test commands host-visible; the local process layer intentionally runs only a tiny deterministic allowlist.
 4. **Integrate.** Treat every tool result, failure, external action, user steer, and workspace mutation as new evidence. Refresh `snapshot`/`changes` after host-side mutations.
-5. **Validate.** Call `validate -- <argv...>` from the intended working directory. If it returns `requires_host_visible_execution`, run that exact validation through the host tool path from the same `--cwd` and record it with `validation-record` using the one-time `plan_id` and generation returned by `validate`. Validation identity uses exact argv token boundaries plus cwd (separate from approval-cache canonicalization); a later observable mutation makes older validation stale. Opaque ignored inputs block completion unless an explicit current-generation freshness waiver records the uncertainty.
+5. **Validate.** Call `validate -- <argv...>` from the intended working directory. If it returns `requires_host_visible_execution`, run that exact validation through the host tool path from the same `--cwd`, then record the result with `validation-record --command-json ... --exit-code ... --evidence ...`. The agent-facing path infers the current generation and the unique unconsumed validation plan; ambiguity fails closed. The safety kernel still binds every host result to a one-time plan, exact argv token boundaries, cwd, and generation. A later observable mutation makes older validation stale. Opaque ignored inputs block completion unless an explicit current-generation freshness waiver records the uncertainty.
 6. **Review.** Inspect the actual final diff/change set. Only after inspection call `changes --review`; any later mutation invalidates review freshness.
 7. **Evidence.** Mark criteria `pass` only with concise observable evidence. Criterion-pass and steer-ack evidence is generation-bound: any later workspace mutation makes it stale and it must be re-evaluated. Record important host/external actions when their outcome matters to completion.
 8. **Gate.** Run `completion`. Continue on `CONTINUE`; report a genuine blocker on `BLOCKED`; finish only on `PASS`.
 
 Read `references/runtime-protocol.md` for exact command forms, `references/agent-loop.md` for recovery behavior, and `references/completion-criteria.md` before finalizing substantial work.
+
+
+## Context projection
+
+Treat runtime state as the durable source of truth and model context as a bounded working set. `next` is the primary agent-facing projection: it exposes the effective objective/criteria, current freshness and completion reasons, changed-path ownership summaries, and a small set of legal next actions without surfacing task ids, generations, validation plan ids, or evidence-generation bookkeeping. `snapshot` remains the full debug/audit view. Checkpoints and world-state views must derive from the same context projector rather than rebuilding competing summaries.
+
+Use the pattern **summary -> evidence reference -> drill down**. Hide execution mechanics, not task semantics: code/test results, user constraints, acceptance conditions, failures, and meaningful diffs still belong in model context when they affect the next decision. Do not implement a second token/context manager in the local runtime; ChatGPT host context remains authoritative.
 
 ## Task profiles
 
@@ -54,11 +61,10 @@ Git commands remain host-visible. `git-authorize` is bookkeeping, not permission
 For ordinary tests/builds/linters:
 
 1. Run `validate -- <exact argv...>`.
-2. Read its returned `generation` and host-visible execution plan.
-3. Run the exact command through the host tool path.
-4. Record exit status with `validation-record --cwd <same cwd> --plan-id <plan_id> --generation <same generation> --command-json ... --exit-code ... --evidence ...`.
+2. Run the exact command through the host tool path from the returned cwd.
+3. Record the result with `validation-record --cwd <same cwd> --command-json ... --exit-code ... --evidence ...`.
 
-If the workspace changed between steps 1 and 4, the record is rejected as stale. Only a failure actually observed at generation 0 can be marked `baseline_unrelated`.
+The runtime resolves the unique current unconsumed validation plan and then uses the same one-time plan/generation/cwd/exact-argv checks as before. If no unique matching plan exists, recording fails closed. `validate --debug-bookkeeping` and explicit `--plan-id`/`--generation` remain available for compatibility tests and low-level audit/debugging only. If the workspace changed between planning and recording, the record is rejected as stale. Only a failure actually observed at generation 0 can be marked `baseline_unrelated`.
 
 ## Interactive/background processes
 
