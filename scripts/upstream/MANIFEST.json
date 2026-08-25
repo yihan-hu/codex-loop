@@ -1,0 +1,60 @@
+{
+  "audit_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29",
+  "files": [
+    {
+      "classification": "EXACT_VENDOR",
+      "git_blob_sha1": "4606e72e042564097e8780d66c1d4dcb611869bd",
+      "local_path": "LICENSE",
+      "path": "LICENSE",
+      "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+      "source": "LICENSE",
+      "source_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29"
+    },
+    {
+      "classification": "EXACT_VENDOR",
+      "git_blob_sha1": "2805899d56d0332d175cfc613c67d45d6f006db7",
+      "local_path": "NOTICE",
+      "path": "NOTICE",
+      "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915",
+      "source": "NOTICE",
+      "source_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29"
+    },
+    {
+      "classification": "EXACT_VENDOR",
+      "git_blob_sha1": "92291e7c98467ed67dd386fbee0368a4b595ecd0",
+      "path": "powershell_parser.ps1",
+      "sha256": "2206f0ae5ffe4c507ec30700e94d9bda801c6ca27a94f3a7ae4fa44a73a85de7",
+      "source": "codex-rs/shell-command/src/command_safety/powershell_parser.ps1",
+      "source_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29"
+    },
+    {
+      "classification": "EXACT_EXTRACT",
+      "path": "shell_snapshot/bash_snapshot.sh",
+      "sha256": "cad0b4fd772f326cb1ce1490ff13050069b318207e5eebdd8e0a5e56fd3f5f75",
+      "source": "codex-rs/shell-command/src/shell_snapshot.rs#bash_snapshot_script",
+      "source_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29"
+    },
+    {
+      "classification": "EXACT_EXTRACT",
+      "path": "shell_snapshot/zsh_snapshot.sh",
+      "sha256": "dfd0b38d4e9d2db821595547d9f3a5db30116ad9736d329188fa3eaf1434eb12",
+      "source": "codex-rs/shell-command/src/shell_snapshot.rs#zsh_snapshot_script",
+      "source_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29"
+    },
+    {
+      "classification": "EXACT_EXTRACT",
+      "path": "shell_snapshot/sh_snapshot.sh",
+      "sha256": "330e3ab4ae51cbbf15063f54dccfc89688678202af6d70e5ae4e205185c6fc57",
+      "source": "codex-rs/shell-command/src/shell_snapshot.rs#sh_snapshot_script",
+      "source_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29"
+    },
+    {
+      "classification": "EXACT_EXTRACT",
+      "path": "shell_snapshot/powershell_snapshot.ps1",
+      "sha256": "6b9acf0fb64e43aa8bf5f51873fa9623b1caf91a5ff5e4fbccaea0720d8fca65",
+      "source": "codex-rs/shell-command/src/shell_snapshot.rs#powershell_snapshot_script",
+      "source_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29"
+    }
+  ],
+  "resource_source_commit": "275ef855fac71203ffff904d20c860a7717d6e8a"
+}

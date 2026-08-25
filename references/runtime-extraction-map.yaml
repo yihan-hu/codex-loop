@@ -1,0 +1,221 @@
+{
+  "host_boundaries": {},
+  "ports": [
+    {
+      "divergence": "Python bytes/deque implementation; preserves symmetric head/tail and omission accounting.",
+      "local": "scripts/codex_loop_runtime/output_buffer.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_output_buffer.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/unified_exec/head_tail_buffer_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/unified_exec/head_tail_buffer.rs#HeadTailBuffer"
+      ]
+    },
+    {
+      "divergence": "No Codex event protocol; only bounded UTF-8-safe delta framing.",
+      "local": "scripts/codex_loop_runtime/output_stream.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_output_buffer.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/unified_exec/async_watcher_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/unified_exec/async_watcher.rs"
+      ]
+    },
+    {
+      "divergence": "Narrow deterministic subset only: trusted-system safe-known commands, max 64 active processes, bounded one-shot duration/output/transcripts, task-private single-owner helper service; approval, arbitrary command execution, network and sandbox remain host-owned.",
+      "local": "scripts/codex_loop_runtime/process_manager.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_service_session.py",
+          "tests/compat/test_process_limits.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/unified_exec/process_manager_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/unified_exec/process.rs",
+        "codex-rs/core/src/unified_exec/process_manager.rs",
+        "codex-rs/core/src/unified_exec/process_state.rs"
+      ]
+    },
+    {
+      "divergence": "Uses Codex default 32 KiB project-doc budget and root-to-cwd precedence; rejects instruction symlink targets outside workspace because this local layer does not own Codex filesystem-sandbox enforcement.",
+      "local": "scripts/codex_loop_runtime/instructions.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_instructions.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/agents_md_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/agents_md.rs",
+        "codex-rs/core/src/agents_md_manager.rs"
+      ]
+    },
+    {
+      "divergence": "Conservative shell parser; complex scripts retain opaque script identity.",
+      "local": "scripts/codex_loop_runtime/command_identity.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_command_safety.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/command_canonicalization_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/command_canonicalization.rs#canonicalize_command_for_approval"
+      ]
+    },
+    {
+      "authority": "advisory_only",
+      "divergence": "Never authorizes host operations; unknown/opaque commands remain host-visible.",
+      "local": "scripts/codex_loop_runtime/command_safety.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_command_safety.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/safety.rs",
+        "codex-rs/core/src/exec_policy.rs",
+        "codex-rs/shell-command/src/command_safety"
+      ]
+    },
+    {
+      "divergence": "Uses filesystem/Git reconciliation plus local mutation journal instead of Codex patch delta objects.",
+      "local": "scripts/codex_loop_runtime/change_tracker.py",
+      "mode": "HYBRID",
+      "scope": "local_journal_plus_workspace_reconciliation",
+      "tests": {
+        "local": [
+          "tests/compat/test_state_completion.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/turn_diff_tracker.rs"
+      ]
+    },
+    {
+      "divergence": "SQLite task-local subset only: acceptance evidence, generations, validation CAS/disposition, steers, process/external terminal outcomes, checkpoints and completion bookkeeping; conversation/thread persistence remains host-owned.",
+      "local": "scripts/codex_loop_runtime/state.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "scope": "portable_subset_only",
+      "tests": {
+        "local": [
+          "tests/compat/test_state_completion.py",
+          "tests/compat/test_audit_boundaries.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/state",
+        "codex-rs/core/src/session/input_queue.rs",
+        "codex-rs/core/src/tasks/mod.rs"
+      ]
+    },
+    {
+      "divergence": "Checkpoint/re-entry protocol, not actual host context compaction.",
+      "local": "scripts/codex_loop_runtime/checkpoint.py",
+      "mode": "BEHAVIORAL_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_checkpoint.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/compact.rs",
+        "codex-rs/core/src/context_manager"
+      ]
+    },
+    {
+      "divergence": "Deterministic local stop gate; cannot force host model scheduling.",
+      "local": "scripts/codex_loop_runtime/completion.py",
+      "mode": "BEHAVIORAL_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_state_completion.py",
+          "tests/compat/test_audit_boundaries.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/session/turn.rs",
+        "codex-rs/core/src/hook_runtime.rs"
+      ]
+    },
+    {
+      "divergence": "Partial local port only: guarded full-file write transaction with preimage CAS, repeated symlink-parent checks, atomic replacement, protected-baseline awareness and a 16 MiB cap. Codex patch parsing/tool dispatch and sandbox enforcement are not reimplemented and remain host-visible/host-owned.",
+      "local": "scripts/codex_loop_runtime/write_transaction.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_write_transaction.py",
+          "tests/compat/test_special_files.py",
+          "tests/compat/test_audit_boundaries.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/apply_patch.rs",
+        "codex-rs/core/src/turn_diff_tracker.rs"
+      ]
+    },
+    {
+      "divergence": "Conservative default secret filtering; host environment/sandbox remain authoritative.",
+      "local": "scripts/codex_loop_runtime/environment.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_environment.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/exec_env.rs"
+      ]
+    },
+    {
+      "divergence": "Returns a host-visible capture plan and never runs shell startup code inside hidden local helper.",
+      "local": "scripts/codex_loop_runtime/shell_snapshot.py",
+      "mode": "HOST_ADAPTER",
+      "tests": {
+        "local": [
+          "tests/compat/test_shell_snapshot.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/shell_snapshot.rs"
+      ]
+    }
+  ],
+  "upstream": {
+    "audited_at": "2026-08-22",
+    "audited_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29",
+    "branch": "main",
+    "repository": "openai/codex"
+  }
+}

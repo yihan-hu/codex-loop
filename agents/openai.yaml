@@ -1,0 +1,14 @@
+interface:
+  display_name: Codex Loop
+  short_description: Execute coding tasks with a stateful inspect-act-verify runtime
+  default_prompt: Use $codex-loop to complete this coding task end to end with the
+    bundled deterministic runtime and the host tools available here.
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

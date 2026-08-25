@@ -1,0 +1,458 @@
+{
+  "classification_contract": {
+    "BEHAVIORAL_PORT": "Skill/control-plane semantic port",
+    "EXACT_EXTRACT": "byte-identical extracted upstream resource",
+    "EXACT_VENDOR": "byte-identical upstream file with runtime value",
+    "HOST_ADAPTER": "local mirror/routing over host capability",
+    "HOST_DELEGATE": "actual authority belongs to ChatGPT host runtime",
+    "HYBRID": "portable deterministic subset locally plus host-owned enforcement/orchestration",
+    "LOCAL_RUNTIME_PORT": "cross-language deterministic runtime port",
+    "MINIMAL_DERIVATIVE": "Small same-language/source-level derivative with explicit recorded changes.",
+    "NON_AGENT_INFRASTRUCTURE": "not needed for agent execution",
+    "OMIT": "Intentionally excluded nonessential behavior.",
+    "REFERENCE_ONLY": "maintenance evidence only",
+    "THIN_WRAPPER": "Exact upstream/resource implementation with only invocation/data plumbing adaptation."
+  },
+  "coverage_scopes": {
+    "core/src/lib.rs": {
+      "agent": "HOST_DELEGATE",
+      "agent_communication": "HOST_DELEGATE",
+      "agents_md": "LOCAL_RUNTIME_PORT",
+      "agents_md_manager": "LOCAL_RUNTIME_PORT",
+      "apply_patch": "HYBRID",
+      "apps": "HOST_DELEGATE",
+      "attestation": "HOST_DELEGATE",
+      "client": "HOST_DELEGATE",
+      "client_common": "HOST_DELEGATE",
+      "codex_delegate": "HOST_DELEGATE",
+      "codex_thread": "HOST_DELEGATE",
+      "command_canonicalization": "LOCAL_RUNTIME_PORT",
+      "compact": "HOST_DELEGATE",
+      "compact_model_fallback": "HOST_DELEGATE",
+      "compact_remote": "HOST_DELEGATE",
+      "compact_remote_history": "HOST_DELEGATE",
+      "compact_remote_v2": "HOST_DELEGATE",
+      "compact_token_budget": "HOST_DELEGATE",
+      "config": "HOST_DELEGATE",
+      "connectors": "HOST_DELEGATE",
+      "context": "HOST_DELEGATE",
+      "context_manager": "HYBRID",
+      "current_time": "HOST_DELEGATE",
+      "elicitation": "HOST_DELEGATE",
+      "environment_selection": "HOST_ADAPTER",
+      "event_mapping": "HOST_DELEGATE",
+      "exec": "HYBRID",
+      "exec_env": "LOCAL_RUNTIME_PORT",
+      "exec_policy": "HYBRID",
+      "function_tool": "HOST_DELEGATE",
+      "git_info_tests": "NON_AGENT_INFRASTRUCTURE",
+      "guardian": "HOST_DELEGATE",
+      "hook_mcp_executor": "HOST_DELEGATE",
+      "hook_runtime": "HYBRID",
+      "image_preparation": "HOST_DELEGATE",
+      "installation_id": "HOST_DELEGATE",
+      "mcp": "HOST_DELEGATE",
+      "mcp_openai_file": "HOST_DELEGATE",
+      "mcp_skill_dependencies": "HOST_DELEGATE",
+      "mcp_tool_approval_templates": "HOST_DELEGATE",
+      "mcp_tool_call": "HOST_DELEGATE",
+      "mcp_tool_exposure": "HOST_DELEGATE",
+      "memory_usage": "NON_AGENT_INFRASTRUCTURE",
+      "mention_syntax": "HOST_DELEGATE",
+      "network_policy_decision": "HOST_DELEGATE",
+      "original_image_detail": "HOST_DELEGATE",
+      "otel_init": "NON_AGENT_INFRASTRUCTURE",
+      "plugins": "HOST_DELEGATE",
+      "prompt_debug": "HOST_DELEGATE",
+      "realtime_context": "HOST_DELEGATE",
+      "realtime_conversation": "HOST_DELEGATE",
+      "realtime_prompt": "HOST_DELEGATE",
+      "responses_metadata": "HOST_DELEGATE",
+      "responses_retry": "HOST_DELEGATE",
+      "rollout": "HOST_DELEGATE",
+      "rollout_budget": "HOST_DELEGATE",
+      "safety": "HYBRID",
+      "sandbox_tags": "HOST_DELEGATE",
+      "sandboxing": "HOST_DELEGATE",
+      "session": "HOST_DELEGATE",
+      "session_prefix": "HOST_DELEGATE",
+      "session_rollout_init_error": "HOST_DELEGATE",
+      "session_startup_prewarm": "HOST_DELEGATE",
+      "shell": "LOCAL_RUNTIME_PORT",
+      "shell_snapshot": "HYBRID",
+      "skills": "HOST_DELEGATE",
+      "spawn": "HOST_DELEGATE",
+      "state": "HYBRID",
+      "state_db_bridge": "HOST_DELEGATE",
+      "stream_events_utils": "HOST_DELEGATE",
+      "tasks": "BEHAVIORAL_PORT",
+      "test_support": "NON_AGENT_INFRASTRUCTURE",
+      "thread_manager": "HOST_DELEGATE",
+      "thread_rollout_truncation": "HOST_DELEGATE",
+      "tools": "HOST_DELEGATE",
+      "turn_diff_tracker": "HYBRID",
+      "turn_metadata": "HOST_DELEGATE",
+      "turn_timing": "HOST_DELEGATE",
+      "unified_exec": "HYBRID",
+      "user_shell_command": "HOST_DELEGATE",
+      "util": "HOST_DELEGATE",
+      "utils": "HOST_DELEGATE",
+      "web_search": "HOST_DELEGATE",
+      "windows_sandbox": "HOST_DELEGATE",
+      "windows_sandbox_read_grants": "HOST_DELEGATE"
+    },
+    "core/src/session/mod.rs": {
+      "code_mode_warning": "HOST_DELEGATE",
+      "context_window": "HOST_DELEGATE",
+      "environment": "HOST_ADAPTER",
+      "extension_metrics": "NON_AGENT_INFRASTRUCTURE",
+      "handlers": "HOST_DELEGATE",
+      "inject": "HOST_DELEGATE",
+      "input_queue": "HYBRID",
+      "mcp": "HOST_DELEGATE",
+      "mcp_prewarm": "HOST_DELEGATE",
+      "mcp_refresh": "HOST_DELEGATE",
+      "mcp_runtime": "HOST_DELEGATE",
+      "multi_agents": "HOST_DELEGATE",
+      "review": "BEHAVIORAL_PORT",
+      "rollout_budget": "HOST_DELEGATE",
+      "rollout_reconstruction": "HOST_DELEGATE",
+      "rollout_reconstruction_tests": "NON_AGENT_INFRASTRUCTURE",
+      "session": "HOST_DELEGATE",
+      "step_context": "BEHAVIORAL_PORT",
+      "thread_settings": "HOST_DELEGATE",
+      "time_reminder": "HOST_DELEGATE",
+      "token_budget": "HOST_DELEGATE",
+      "turn": "BEHAVIORAL_PORT",
+      "turn_context": "HOST_ADAPTER",
+      "turn_input": "HOST_DELEGATE",
+      "turn_suspension": "HOST_DELEGATE",
+      "world_state": "LOCAL_RUNTIME_PORT"
+    },
+    "core/src/tasks/mod.rs": {
+      "compact": "BEHAVIORAL_PORT",
+      "lifecycle": "BEHAVIORAL_PORT",
+      "regular": "BEHAVIORAL_PORT",
+      "review": "BEHAVIORAL_PORT",
+      "user_shell": "HOST_DELEGATE"
+    },
+    "core/src/tools/mod.rs": {
+      "approvals": "HOST_DELEGATE",
+      "code_mode": "HOST_DELEGATE",
+      "context": "HOST_DELEGATE",
+      "control_tool_analytics": "NON_AGENT_INFRASTRUCTURE",
+      "events": "HOST_DELEGATE",
+      "executed_tool_calls": "HYBRID",
+      "handlers": "HOST_DELEGATE",
+      "hook_names": "HOST_DELEGATE",
+      "hosted_spec": "HOST_DELEGATE",
+      "lifecycle": "BEHAVIORAL_PORT",
+      "network_approval": "HOST_DELEGATE",
+      "orchestrator": "HOST_DELEGATE",
+      "parallel": "BEHAVIORAL_PORT",
+      "registry": "HOST_DELEGATE",
+      "router": "HOST_ADAPTER",
+      "runtimes": "HYBRID",
+      "sandboxing": "HOST_DELEGATE",
+      "spec_plan": "HOST_DELEGATE",
+      "tool_dispatch_trace": "HOST_DELEGATE",
+      "tool_namespaces_info": "HOST_DELEGATE"
+    },
+    "core/src/unified_exec/mod.rs": {
+      "async_watcher": "LOCAL_RUNTIME_PORT",
+      "errors": "LOCAL_RUNTIME_PORT",
+      "head_tail_buffer": "LOCAL_RUNTIME_PORT",
+      "process": "LOCAL_RUNTIME_PORT",
+      "process_manager": "HYBRID",
+      "process_state": "LOCAL_RUNTIME_PORT",
+      "shell_snapshot": "HYBRID"
+    }
+  },
+  "exact_resources": [
+    {
+      "git_blob_sha1": "4606e72e042564097e8780d66c1d4dcb611869bd",
+      "local": "LICENSE",
+      "mode": "EXACT_VENDOR",
+      "upstream": "LICENSE"
+    },
+    {
+      "git_blob_sha1": "2805899d56d0332d175cfc613c67d45d6f006db7",
+      "local": "NOTICE",
+      "mode": "EXACT_VENDOR",
+      "upstream": "NOTICE"
+    },
+    {
+      "git_blob_sha1": "92291e7c98467ed67dd386fbee0368a4b595ecd0",
+      "local": "scripts/upstream/powershell_parser.ps1",
+      "mode": "EXACT_VENDOR",
+      "upstream": "codex-rs/shell-command/src/command_safety/powershell_parser.ps1"
+    },
+    {
+      "local": "scripts/upstream/shell_snapshot/bash_snapshot.sh",
+      "mode": "EXACT_EXTRACT",
+      "upstream": "codex-rs/shell-command/src/shell_snapshot.rs#bash_snapshot_script"
+    },
+    {
+      "local": "scripts/upstream/shell_snapshot/zsh_snapshot.sh",
+      "mode": "EXACT_EXTRACT",
+      "upstream": "codex-rs/shell-command/src/shell_snapshot.rs#zsh_snapshot_script"
+    },
+    {
+      "local": "scripts/upstream/shell_snapshot/sh_snapshot.sh",
+      "mode": "EXACT_EXTRACT",
+      "upstream": "codex-rs/shell-command/src/shell_snapshot.rs#sh_snapshot_script"
+    },
+    {
+      "local": "scripts/upstream/shell_snapshot/powershell_snapshot.ps1",
+      "mode": "EXACT_EXTRACT",
+      "upstream": "codex-rs/shell-command/src/shell_snapshot.rs#powershell_snapshot_script"
+    }
+  ],
+  "ports": [
+    {
+      "divergence": "Python bytes/deque implementation; preserves symmetric head/tail and omission accounting.",
+      "local": "scripts/codex_loop_runtime/output_buffer.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_output_buffer.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/unified_exec/head_tail_buffer_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/unified_exec/head_tail_buffer.rs#HeadTailBuffer"
+      ]
+    },
+    {
+      "divergence": "Stateful 8 KiB UTF-8-safe delta framing preserves incomplete scalars across polls while aggregate output/transcripts remain independently bounded. The poll-driven adapter caps unpolled delta memory and preserves the earliest not-yet-delivered prefix, omitting later excess instead of evicting earlier frames.",
+      "local": "scripts/codex_loop_runtime/output_stream.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_output_buffer.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/unified_exec/async_watcher_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/unified_exec/async_watcher.rs"
+      ]
+    },
+    {
+      "divergence": "Narrow deterministic subset only: trusted-system safe-known commands, max 64 active processes, at most 64 lightweight completed summaries, bounded one-shot duration/output/transcripts, task-private single-owner helper service; approval, arbitrary command execution, network, sandbox, and host tool-cancellation tokens remain host-owned. Managed interactive sessions are POSIX-only; Windows session control falls back to host-visible execution until equivalent process-group/interrupt semantics are available.",
+      "local": "scripts/codex_loop_runtime/process_manager.py",
+      "mode": "HYBRID",
+      "tests": {
+        "local": [
+          "tests/compat/test_service_session.py",
+          "tests/compat/test_process_limits.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/unified_exec/process_manager_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/unified_exec/process.rs",
+        "codex-rs/core/src/unified_exec/process_manager.rs",
+        "codex-rs/core/src/unified_exec/process_state.rs"
+      ]
+    },
+    {
+      "divergence": "Local single-workspace deterministic subset: 32 KiB project-doc budget, Git-root-to-cwd precedence, fallback filenames, and workspace-contained symlink reads. Host trust decisions, host/user instructions, multi-environment assembly, and the full configurable project-root-marker policy remain host-owned.",
+      "local": "scripts/codex_loop_runtime/instructions.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_instructions.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/agents_md_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/agents_md.rs",
+        "codex-rs/core/src/agents_md_manager.rs"
+      ]
+    },
+    {
+      "divergence": "Conservative shell parser; complex scripts retain opaque script identity, shell trailing argv is preserved because it supplies $0/$1/..., and PowerShell token boundaries are never collapsed by string joining.",
+      "local": "scripts/codex_loop_runtime/command_identity.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_command_safety.py"
+        ],
+        "upstream": [
+          "codex-rs/core/src/command_canonicalization_tests.rs"
+        ]
+      },
+      "upstream": [
+        "codex-rs/core/src/command_canonicalization.rs#canonicalize_command_for_approval"
+      ]
+    },
+    {
+      "authority": "advisory_only",
+      "divergence": "Advisory deterministic subset only; it detects clearly dangerous/opaque forms but never authorizes host execution. Full Codex exec-policy, permission and patch-safety authority remain host-owned.",
+      "local": "scripts/codex_loop_runtime/command_safety.py",
+      "mode": "HYBRID",
+      "tests": {
+        "local": [
+          "tests/compat/test_command_safety.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/shell-command/src/command_safety"
+      ]
+    },
+    {
+      "divergence": "Uses filesystem/Git reconciliation plus local mutation journal instead of Codex patch delta objects. Small ignored inputs are bounded-content monitored/protected; oversized or unreadable ignored paths are surfaced explicitly as opaque and block completion unless a current-generation explicit freshness waiver accepts that uncertainty. Git probes force file-mode observation so core.filemode=false cannot hide chmod freshness changes.",
+      "local": "scripts/codex_loop_runtime/change_tracker.py",
+      "mode": "HYBRID",
+      "scope": "local_journal_plus_workspace_reconciliation",
+      "tests": {
+        "local": [
+          "tests/compat/test_state_completion.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/turn_diff_tracker.rs"
+      ]
+    },
+    {
+      "divergence": "SQLite task-local subset only: acceptance/steer evidence is generation-bound; validation uses exact argv plus actual cwd and one-time plans without persisting raw arguments; freshness waivers bind the current generation and exact opaque-path set; non-idempotent external actions use stable-identity deduplication and dispatch-boundary states; Git mutation authorization is scope-specific; process/external/checkpoint bookkeeping remains task-private; conversation/thread persistence and unfinished-turn suspension remain host-owned.",
+      "local": "scripts/codex_loop_runtime/state.py",
+      "mode": "HYBRID",
+      "scope": "portable_subset_only",
+      "tests": {
+        "local": [
+          "tests/compat/test_state_completion.py",
+          "tests/compat/test_audit_boundaries.py",
+          "tests/compat/test_modified_design_reaudit.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/state",
+        "codex-rs/core/src/session/input_queue.rs",
+        "codex-rs/core/src/tasks/mod.rs"
+      ]
+    },
+    {
+      "divergence": "Checkpoint/re-entry protocol, not actual host context compaction.",
+      "local": "scripts/codex_loop_runtime/checkpoint.py",
+      "mode": "BEHAVIORAL_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_checkpoint.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/compact.rs",
+        "codex-rs/core/src/context_manager"
+      ]
+    },
+    {
+      "divergence": "Deterministic local stop gate: acceptance and steer evidence, validation, and diff review are generation-fresh; unresolved external/process failures and unauthorized Git dimension changes block completion. It cannot force host model scheduling or implement Codex session turn suspension/recovery.",
+      "local": "scripts/codex_loop_runtime/completion.py",
+      "mode": "BEHAVIORAL_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_state_completion.py",
+          "tests/compat/test_audit_boundaries.py",
+          "tests/compat/test_modified_design_reaudit.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/session/turn.rs",
+        "codex-rs/core/src/hook_runtime.rs"
+      ]
+    },
+    {
+      "divergence": "Partial local port only: guarded full-file write with preimage SHA, repeated symlink-parent checks, commit-time atomic compare-exchange on supported POSIX filesystems, atomic rollback on concurrent change, recovery-file preservation if rollback itself fails, protected-baseline awareness, per-mutation protected-override reason, and a 16 MiB cap. Platforms/filesystems that cannot provide atomic CAS fail closed to host-visible file operations. Codex patch parsing/tool dispatch and sandbox enforcement remain host-owned.",
+      "local": "scripts/codex_loop_runtime/write_transaction.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_write_transaction.py",
+          "tests/compat/test_special_files.py",
+          "tests/compat/test_audit_boundaries.py",
+          "tests/compat/test_modified_design_reaudit.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/apply_patch.rs",
+        "codex-rs/core/src/turn_diff_tracker.rs"
+      ]
+    },
+    {
+      "divergence": "Conservative child-environment port: includes Codex non-inheritable/default secret filtering, broader credential/cookie filtering for the narrow local helper, and the deterministic C.UTF-8/noninteractive unified-exec environment; host environment/sandbox remain authoritative.",
+      "local": "scripts/codex_loop_runtime/environment.py",
+      "mode": "LOCAL_RUNTIME_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_environment.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/exec_env.rs",
+        "codex-rs/protocol/src/shell_environment.rs"
+      ]
+    },
+    {
+      "divergence": "Returns a structured host-visible capture/normalize/validate/storage plan only. Bash/Zsh/Sh use exact-extracted upstream scripts; PowerShell/Cmd remain disabled because the audited Codex core does not enable their snapshot runtime.",
+      "local": "scripts/codex_loop_runtime/shell_snapshot.py",
+      "mode": "HOST_ADAPTER",
+      "tests": {
+        "local": [
+          "tests/compat/test_shell_snapshot.py",
+          "tests/compat/test_modified_design_reaudit.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/shell_snapshot.rs"
+      ]
+    }
+  ],
+  "upstream": {
+    "audited_at": "2026-08-22",
+    "audited_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29",
+    "branch": "main",
+    "repository": "openai/codex",
+    "audited_date": "2026-08-23",
+    "previous_audited_commit": "4f39251a010a8bd7d692d25fb33832ff06f1635a",
+    "advance_summary": "Advanced 14 commits on 2026-08-23. Changes touching Codex Loop coverage are host/session/context/protocol metadata evolution, including Guardian review thread-source metadata; no exact vendored resources or direct command/shell/exec/unified-exec source inputs changed."
+  },
+  "runtime_modules": {
+    "scripts/codex_loop_runtime/change_tracker.py": "HYBRID",
+    "scripts/codex_loop_runtime/checkpoint.py": "BEHAVIORAL_PORT",
+    "scripts/codex_loop_runtime/command_identity.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/command_safety.py": "HYBRID",
+    "scripts/codex_loop_runtime/completion.py": "BEHAVIORAL_PORT",
+    "scripts/codex_loop_runtime/environment.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/instructions.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/output_buffer.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/output_stream.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/process_manager.py": "HYBRID",
+    "scripts/codex_loop_runtime/process_state.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/protocol.py": "BEHAVIORAL_PORT",
+    "scripts/codex_loop_runtime/service.py": "HYBRID",
+    "scripts/codex_loop_runtime/shell.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/shell_snapshot.py": "HOST_ADAPTER",
+    "scripts/codex_loop_runtime/state.py": "HYBRID",
+    "scripts/codex_loop_runtime/upstream_verify.py": "THIN_WRAPPER",
+    "scripts/codex_loop_runtime/validation.py": "HYBRID",
+    "scripts/codex_loop_runtime/workspace.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/world_state.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/write_transaction.py": "LOCAL_RUNTIME_PORT"
+  }
+}
