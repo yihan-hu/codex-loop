@@ -31,6 +31,20 @@ Report the stages independently. A useful user-facing status vocabulary is:
 
 These are reporting labels, not extra runtime state commands. Never report `DEPLOYED` from Git push or packaging evidence alone.
 
+## ChatGPT chatbox post-push handoff
+
+For this Skill's ChatGPT chatbox target, append a copy/paste handoff after every successful GitHub source push, after native-Git remote commit/tree readback succeeds. Generate it deterministically from the exact repository and full pushed commit SHA:
+
+```bash
+python3 scripts/codex_loop.py chatbox-handoff --repository OWNER/REPO --commit FULL_40_HEX_SHA
+```
+
+The command returns the exact GitHub commit archive URL plus `copy_prompt`. Put `copy_prompt` at the very end of the push report and tell the user to copy the entire prompt and send it as the next user message. Do not treat an assistant-authored URL as equivalent to that new user message: the purpose of this handoff is to make the exact archive URL explicit user-provided input for the next download attempt.
+
+The prompt is intentionally generic. It asks ChatGPT to download the commit-pinned ZIP into the current workspace, fail closed instead of switching transports, and, when the archive contains exactly one ChatGPT Skill (`SKILL.md` count equals one), validate/repackage it as `skill.zip` for Web UI upload. For a non-Skill repository it keeps the original archive. Never label this handoff `DEPLOYED`; before the user sends it, deployment remains whatever state the release/install evidence supports.
+
+Use only a full 40-hex commit SHA and exact `OWNER/REPO`. Do not generate the handoff from a branch name, short SHA, mutable `main` URL, search result, or inferred fork. If source push/readback did not reach terminal success, do not emit a handoff that implies that revision was published.
+
 ## Transfer boundary rule
 
 Distinguish file location from tool control. Remote Desktop Commander operates the user's remote Mac filesystem; a file that exists only in ChatGPT's conversation/sandbox storage is not automatically a Mac-local file. Likewise, a PiWork artifact is not automatically installed into ChatGPT.

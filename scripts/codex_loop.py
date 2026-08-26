@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -215,6 +216,41 @@ def _cmd_relay_receive(argv: list[str]) -> int:
     emit_ok(result)
     return 0
 
+_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_FULL_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+
+
+def _cmd_chatbox_handoff(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument('--repository', required=True)
+    p.add_argument('--commit', required=True)
+    args = p.parse_args(argv[1:])
+    repository = args.repository.strip()
+    commit = args.commit.strip().lower()
+    if not _REPOSITORY_RE.fullmatch(repository):
+        raise ValueError('--repository must be an exact GitHub OWNER/REPO name')
+    if not _FULL_COMMIT_RE.fullmatch(commit):
+        raise ValueError('--commit must be a full 40-hex Git commit SHA')
+    archive_url = f'https://github.com/{repository}/archive/{commit}.zip'
+    copy_prompt = (
+        '请把下面这个 GitHub 精确版本直接下载到当前 ChatGPT workspace。这个 URL 是我在本条用户消息中明确提供的下载源：\n\n'
+        f'Repository: {repository}\n'
+        f'Commit: {commit}\n'
+        f'Archive URL: {archive_url}\n\n'
+        '要求：直接从上面的 Archive URL 下载 ZIP 到 workspace，并验证 ZIP 可正常打开。不要改用 GitHub connector、Mac 本地文件、IDrive/Dropbox、model relay、base64 或逐文件重建。'
+        '如果归档中恰好只有一个 ChatGPT Skill（仅一个 SKILL.md），验证该 Skill，并重新打包为文件名严格为 skill.zip，然后把 skill.zip 作为会话附件给我用于 Web UI 安装；'
+        '如果不是单一 Skill，就保留原始 ZIP 并说明原因。任何一步失败都停止并报告具体失败点，不要猜测或切换传输方式。'
+    )
+    emit_ok({
+        'repository': repository,
+        'commit': commit,
+        'archive_url': archive_url,
+        'copy_prompt': copy_prompt,
+        'next_action': 'append copy_prompt verbatim after a successful GitHub push and ask the user to send it as their next chatbox message',
+    })
+    return 0
+
+
 def _delegate(argv: list[str]) -> int:
     args = list(argv)
     command = args[0] if args else ''
@@ -243,6 +279,8 @@ def main() -> int:
             return _cmd_validate(argv)
         if argv[0] == 'validation-record':
             return _cmd_validation_record(argv)
+        if argv[0] == 'chatbox-handoff':
+            return _cmd_chatbox_handoff(argv)
         if argv[0] == 'relay-frame':
             return _cmd_relay_frame(argv)
         if argv[0] == 'relay-receive':
