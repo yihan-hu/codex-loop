@@ -70,6 +70,31 @@ class ModifiedDesignReauditTests(unittest.TestCase):
             store.mark_reviewed()
             self.assertEqual(assess(root, store).status, CompletionStatus.PASS)
 
+    def test_reverted_workspace_change_does_not_require_final_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            target = root / "a.txt"
+            target.write_text("base")
+            store = self.make(root)
+            digest = hash_file(target)
+            guarded_write(
+                root, store, target, b"changed", expected_sha256=digest,
+                allow_protected=True,
+                protected_override_reason="test intentionally changes the protected baseline file",
+            )
+            self.assertEqual(assess(root, store).status, CompletionStatus.CONTINUE)
+            digest = hash_file(target)
+            guarded_write(
+                root, store, target, b"base", expected_sha256=digest,
+                allow_protected=True,
+                protected_override_reason="test intentionally restores the protected baseline file",
+            )
+            store.set_criterion(0, "pass", "current workspace is back at the observed baseline")
+            decision = assess(root, store)
+            self.assertEqual(decision.status, CompletionStatus.PASS)
+            self.assertFalse(any("reviewed" in reason for reason in decision.reasons))
+
     def test_validation_identity_includes_actual_cwd(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

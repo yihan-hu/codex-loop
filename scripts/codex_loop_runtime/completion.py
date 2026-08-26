@@ -136,7 +136,7 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
         blockers.append("Git mutation authorization is missing its reason")
 
     reviewed_generation = int(store.get_meta("changes_reviewed_generation", -1))
-    if generation > 0 and reviewed_generation != generation:
+    if changed_any and reviewed_generation != generation:
         reasons.append("final changes have not been reviewed at the current generation")
 
     if blockers:

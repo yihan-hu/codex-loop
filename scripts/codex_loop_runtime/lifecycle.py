@@ -40,6 +40,7 @@ def derive_capability_state(
     has_external_actions: bool,
     has_managed_processes: bool,
     has_repository_instructions: bool = False,
+    completion_status: str = "CONTINUE",
 ) -> dict[str, Any]:
     """Project lifecycle capability state from authoritative facts without creating new truth."""
     active = ["workspace_observation", "completion_audit"]
@@ -71,7 +72,9 @@ def derive_capability_state(
         "stale": "required",
     }.get(review_status, "required")
 
-    requirements = {"completion_audit": "required"}
+    requirements = {
+        "completion_audit": "satisfied" if completion_status == "PASS" else "required"
+    }
     if validation_status != "waived":
         requirements["validation"] = validation_requirement
     if review_status != "not-required":

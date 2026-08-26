@@ -262,9 +262,16 @@ def serve(cwd: Path, task_id: str, token: str) -> None:
             socket_st = None
         if socket_st is not None:
             raise RuntimeError("runtime socket path already exists; refusing to replace an endpoint from inside the helper")
-        server = socketserver.ThreadingUnixStreamServer(str(socket_path), _Handler)
-        os.chmod(socket_path, 0o600)
-        actual: dict[str, Any] = {"kind": "unix", "path": str(socket_path)}
+        try:
+            server = socketserver.ThreadingUnixStreamServer(str(socket_path), _Handler)
+            os.chmod(socket_path, 0o600)
+            actual: dict[str, Any] = {"kind": "unix", "path": str(socket_path)}
+        except OSError as exc:
+            if "AF_UNIX path too long" not in str(exc):
+                raise
+            server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _Handler)
+            host, port = server.server_address
+            actual = {"kind": "tcp", "host": host, "port": int(port), "fallback": "unix_path_too_long"}
     else:
         server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _Handler)
         host, port = server.server_address

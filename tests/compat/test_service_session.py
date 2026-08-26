@@ -80,6 +80,22 @@ class ServiceTests(unittest.TestCase):
     try: call(root,'service-stop')
     except Exception: pass
 
+ @unittest.skipIf(os.name=='nt','Unix socket fallback test')
+ def test_long_temp_root_falls_back_to_loopback_tcp(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
+   long_tmp=root/('x'*180); long_tmp.mkdir()
+   env=dict(os.environ); env['TMPDIR']=str(long_tmp)
+   def run(*parts):
+    proc=subprocess.run([sys.executable,str(CLI),*parts],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,check=True)
+    return json.loads(proc.stdout or b'{}')
+   boot=run('bootstrap','--cwd',str(root),'--objective','long socket fallback','--no-validation','--no-validation-reason','fixture')
+   tid=boot['data']['task_id']; run('service-start','--cwd',str(root),'--use-active-task')
+   try:
+    matches=list((long_tmp/'codex-loop').glob(f'*/tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
+    endpoint=json.loads(matches[0].read_text()); self.assertEqual(endpoint['kind'],'tcp'); self.assertEqual(endpoint['host'],'127.0.0.1'); self.assertEqual(endpoint.get('fallback'),'unix_path_too_long')
+   finally:
+    run('service-stop','--cwd',str(root),'--use-active-task')
 
 if __name__=='__main__': unittest.main()
 

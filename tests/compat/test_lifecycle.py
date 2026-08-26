@@ -66,6 +66,14 @@ class LifecycleTests(unittest.TestCase):
         self.assertNotIn("repository_instructions", absent["active_capabilities"])
         self.assertIn("repository_instructions", present["active_capabilities"])
 
+    def test_completion_audit_reports_satisfied_after_pass(self):
+        state = derive_capability_state(
+            generation=0, validation_status="waived", review_status="not-required",
+            active_isolation=False, has_external_actions=False, has_managed_processes=False,
+            completion_status="PASS",
+        )
+        self.assertEqual(state["requirements"]["completion_audit"], "satisfied")
+
     def test_lifecycle_assess_cli_is_pre_runtime_and_task_independent(self):
         cli = Path(__file__).resolve().parents[2] / "scripts" / "codex_loop.py"
         proc = subprocess.run(

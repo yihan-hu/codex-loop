@@ -209,10 +209,17 @@ def _validation_status(facts: dict[str, Any]) -> str:
     return "missing"
 
 
+def _has_substantive_changes(change_state: dict[str, Any]) -> bool:
+    return bool(
+        change_state.get("added") or change_state.get("modified")
+        or change_state.get("deleted") or change_state.get("renamed")
+    )
+
+
 def _review_status(facts: dict[str, Any]) -> str:
-    generation = int(facts["generation"])
-    if generation == 0:
+    if not _has_substantive_changes(facts["changes"]):
         return "not-required"
+    generation = int(facts["generation"])
     reviewed = int(facts["store"].get_meta("changes_reviewed_generation", -1))
     return "fresh" if reviewed == generation else "stale"
 
@@ -348,6 +355,7 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
         ),
         has_managed_processes=bool(store.running_process_count() or store.unresolved_process_failure_count()),
         has_repository_instructions=bool(facts.get("instructions")),
+        completion_status=decision.status.value,
     )
     evidence_refs: list[dict[str, str]] = [
         {"ref": "changes:current", "inspect_with": "changes"},

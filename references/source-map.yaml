@@ -243,7 +243,7 @@
       ]
     },
     {
-      "divergence": "Narrow deterministic subset only: trusted-system safe-known commands, max 64 active processes, at most 64 lightweight completed summaries, bounded one-shot duration/output/transcripts, task-private single-owner helper service; approval, arbitrary command execution, network, sandbox, and host tool-cancellation tokens remain host-owned. Managed interactive sessions are POSIX-only; Windows session control falls back to host-visible execution until equivalent process-group/interrupt semantics are available.",
+      "divergence": "Narrow deterministic subset only: trusted-system safe-known commands, max 64 active processes, at most 64 lightweight completed summaries, bounded one-shot duration/output/transcripts, task-private single-owner helper service; approval, arbitrary command execution, network, sandbox, and host tool-cancellation tokens remain host-owned. Managed interactive sessions are POSIX-only; Unix sockets remain the default local transport, with token-authenticated loopback TCP used only when the platform rejects an overlong AF_UNIX path. Windows session control falls back to host-visible execution until equivalent process-group/interrupt semantics are available.",
       "local": "scripts/codex_loop_runtime/process_manager.py",
       "mode": "HYBRID",
       "tests": {
@@ -345,9 +345,9 @@
       ]
     },
     {
-      "divergence": "Adaptive lifecycle is a behavior-level capability projection over existing deterministic state: pre-runtime durable-state assessment plus derived active capabilities/requirements. It does not port or claim an upstream adaptive FSM, model scheduler, planning engine, or host orchestration authority.",
+      "divergence": "Adaptive lifecycle is a Codex Loop local extension over existing deterministic state: pre-runtime durable-state assessment plus derived active capabilities/requirements. It does not port or claim an upstream adaptive FSM, model scheduler, planning engine, or host orchestration authority.",
       "local": "scripts/codex_loop_runtime/lifecycle.py",
-      "mode": "BEHAVIORAL_PORT",
+      "mode": "LOCAL_EXTENSION",
       "tests": {
         "local": [
           "tests/compat/test_lifecycle.py",
@@ -355,11 +355,7 @@
         ],
         "upstream": []
       },
-      "upstream": [
-        "codex-rs/core/src/tasks/mod.rs",
-        "codex-rs/core/src/tools/mod.rs",
-        "codex-rs/core/src/session/turn.rs"
-      ]
+      "upstream": []
     },
     {
       "divergence": "Checkpoint/re-entry protocol, not actual host context compaction.",
@@ -461,7 +457,7 @@
     "scripts/codex_loop_runtime/delegation.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/environment.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/instructions.py": "LOCAL_RUNTIME_PORT",
-    "scripts/codex_loop_runtime/lifecycle.py": "BEHAVIORAL_PORT",
+    "scripts/codex_loop_runtime/lifecycle.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/output_buffer.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/output_stream.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/process_manager.py": "HYBRID",
