@@ -201,11 +201,11 @@ After push, read back the remote ref and tree with native Git and call `publish-
 When a user explicitly authorizes a model-carried file transfer, frame and receive it with the deterministic helper described in `references/verified-model-relay.md`:
 
 ```bash
-python scripts/codex_loop.py relay-frame --input SOURCE --output ENVELOPE.txt
-python scripts/codex_loop.py relay-receive --envelope ENVELOPE.txt --output DESTINATION --expected-size N --expected-sha256 SHA256
+python scripts/codex_loop.py relay-frame --cwd AUTHORIZED_ROOT --input SOURCE --output ENVELOPE.txt
+python scripts/codex_loop.py relay-receive --cwd AUTHORIZED_ROOT --envelope ENVELOPE.txt --output DESTINATION --expected-size N --expected-sha256 SHA256
 ```
 
-These commands do not create standing transfer permission and do not store payload bytes in task state. `relay-receive` publishes only after strict Base64 decode plus exact size/SHA-256 verification. Integrity failures return a structured failure class and `VERIFIED_CHUNK_RELAY` fallback rather than guessing a repair. Actual cross-surface carriage of the envelope remains host-owned.
+These commands do not create standing transfer permission and do not store payload bytes in task state. `--cwd` is the authorized filesystem root for the relay command: every resolved input/envelope/output path, including symlink targets, must remain below it. `relay-receive` publishes only after strict Base64 decode plus exact size/SHA-256 verification. Integrity failures return a structured failure class and `VERIFIED_CHUNK_RELAY` fallback rather than guessing a repair. Actual cross-surface carriage of the envelope remains host-owned.
 
 ## Delegation / logical isolation
 

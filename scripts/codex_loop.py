@@ -159,8 +159,14 @@ def _cmd_validation_record(argv: list[str]) -> int:
 
 
 def _path_from(raw: str, cwd: Path) -> Path:
+    root = cwd.resolve()
     path = Path(raw)
-    return path.resolve() if path.is_absolute() else (cwd / path).resolve()
+    resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise PermissionError(f"relay path resolves outside --cwd root: {resolved}") from exc
+    return resolved
 
 
 def _cmd_relay_frame(argv: list[str]) -> int:

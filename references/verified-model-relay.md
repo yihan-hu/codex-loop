@@ -14,6 +14,7 @@ Frame a source file without putting file bytes in runtime state:
 
 ```bash
 python scripts/codex_loop.py relay-frame \
+  --cwd AUTHORIZED_ROOT \
   --input SOURCE --output ENVELOPE.txt \
   --transfer-id 0123456789abcdef0123456789abcdef
 ```
@@ -22,6 +23,7 @@ On the receiving host, verify and publish the destination atomically:
 
 ```bash
 python scripts/codex_loop.py relay-receive \
+  --cwd AUTHORIZED_ROOT \
   --envelope ENVELOPE.txt --output DESTINATION \
   --expected-size SOURCE_SIZE --expected-sha256 SOURCE_SHA256
 ```
@@ -92,4 +94,4 @@ The guard is diagnostic and sacrificial. A guard mismatch alone does not make a 
 
 This transport is allowed only for the specifically authorized file movement. It does not become standing permission for future model-carried transfers. It must not be used for normal Git publication, to replace native Git, to bypass a working binary bridge, or to promote a transferred artifact into a canonical source baseline without the normal workspace/lineage checks.
 
-On Remote Desktop Commander, envelope/partial/destination paths must remain under `/Users/yihanhu/PiWork` unless the user explicitly authorizes another narrow temporary root. The host remains responsible for actual tool dispatch, filesystem/network permissions, and carrying the envelope text between surfaces.
+For every relay command, pass `--cwd` as the exact authorized filesystem root. The CLI resolves input/envelope/output paths and rejects any effective target outside that root, including a symlink escape. On Remote Desktop Commander use `--cwd /Users/yihanhu/PiWork` unless the user explicitly authorizes another narrow temporary root. The host remains responsible for actual tool dispatch, filesystem/network permissions, and carrying the envelope text between surfaces.

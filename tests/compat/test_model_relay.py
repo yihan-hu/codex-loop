@@ -151,6 +151,30 @@ class ModelRelayTests(unittest.TestCase):
             self.assertEqual(caught.exception.failure_class, "MANIFEST_MISMATCH")
             self.assertFalse(output_path.exists())
 
+    def test_cli_rejects_absolute_path_outside_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); root = base / "root"; outside = base / "outside"
+            root.mkdir(); outside.mkdir(); source = outside / "source.bin"; source.write_bytes(payload())
+            proc = subprocess.run(
+                [sys.executable, str(CLI), "relay-frame", "--cwd", str(root), "--input", str(source), "--output", str(root / "relay.txt")],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("outside --cwd root", json.loads(proc.stdout)["error"]["message"])
+
+    @unittest.skipIf(sys.platform.startswith("win"), "symlink escape test requires POSIX symlinks")
+    def test_cli_rejects_symlink_escape_outside_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); root = base / "root"; outside = base / "outside"
+            root.mkdir(); outside.mkdir(); source = outside / "source.bin"; source.write_bytes(payload())
+            link = root / "source-link"; link.symlink_to(source)
+            proc = subprocess.run(
+                [sys.executable, str(CLI), "relay-frame", "--cwd", str(root), "--input", str(link), "--output", str(root / "relay.txt")],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("outside --cwd root", json.loads(proc.stdout)["error"]["message"])
+
     def test_cli_round_trip_and_failure_fallback_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -159,7 +183,7 @@ class ModelRelayTests(unittest.TestCase):
             output = root / "output.bin"
             source.write_bytes(payload())
             frame = subprocess.run(
-                [sys.executable, str(CLI), "relay-frame", "--input", str(source), "--output", str(envelope), "--transfer-id", TRANSFER_ID],
+                [sys.executable, str(CLI), "relay-frame", "--cwd", str(root), "--input", str(source), "--output", str(envelope), "--transfer-id", TRANSFER_ID],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=True,
@@ -168,7 +192,7 @@ class ModelRelayTests(unittest.TestCase):
             self.assertEqual(framed["data"]["status"], "FRAMED")
             receive = subprocess.run(
                 [
-                    sys.executable, str(CLI), "relay-receive",
+                    sys.executable, str(CLI), "relay-receive", "--cwd", str(root),
                     "--envelope", str(envelope), "--output", str(output),
                     "--expected-size", str(framed["data"]["raw_size"]),
                     "--expected-sha256", framed["data"]["raw_sha256"],
@@ -185,7 +209,7 @@ class ModelRelayTests(unittest.TestCase):
             bad_output = root / "bad.bin"
             bad.write_text(replace_payload_char(envelope.read_text()), encoding="utf-8")
             failed = subprocess.run(
-                [sys.executable, str(CLI), "relay-receive", "--envelope", str(bad), "--output", str(bad_output)],
+                [sys.executable, str(CLI), "relay-receive", "--cwd", str(root), "--envelope", str(bad), "--output", str(bad_output)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
