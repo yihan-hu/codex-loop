@@ -17,17 +17,24 @@ from codex_loop_runtime.release_lineage import (
     MODEL_DISPATCH_BATCH_MAX_RAW_BYTES,
     acknowledge_publish_model_dispatch_batch,
     acknowledge_publish_model_dispatch_tree,
+    acknowledge_publish_stable,
+    acknowledge_publish_stable_portable,
     capture_workspace_binding,
     classify_connector_manifest,
     current_release_receipt,
     diff_object_manifest,
     dispatch_publish,
+    export_publish_stable_portable_receipt,
     publish_model_dispatch_status,
     publish_plan,
+    publish_stable_status,
+    reconcile_publish_stable,
     record_publish_outcome,
     record_release_receipt,
     release_plan,
     start_publish_model_dispatch,
+    start_publish_stable,
+    start_publish_stable_portable,
     workspace_binding_status,
 )
 from codex_loop_runtime.state import create_store
@@ -245,6 +252,7 @@ class ReleaseLineageTests(unittest.TestCase):
             self.assertEqual(summary["tree_delete"]["count"], 1)
             self.assertEqual(summary["estimated_connector_writes_before_commit"], 1)
 
+    @unittest.skip("legacy connector publish transport is intentionally unsupported")
     def test_model_dispatch_queue_batches_exact_blobs_resumes_and_builds_one_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -328,7 +336,7 @@ class ReleaseLineageTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "github_object_api"):
                 start_publish_model_dispatch(root, store, action_id=plan["action_id"])
 
-    def test_publish_plan_prefers_git_and_builds_connector_manifest_from_remote_head(self):
+    def test_publish_plan_is_native_git_only_through_rdc(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base = init_repo(root)
@@ -344,28 +352,17 @@ class ReleaseLineageTests(unittest.TestCase):
             )
             git(root, "remote", "add", "origin", str(Path(tmp) / "unused.git"))
             plan = publish_plan(
-                root,
-                store,
-                repository="owner/repo",
-                branch="main",
-                remote_head=base,
-                remote_tree=base_tree,
+                root, store, repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree,
                 release_id=receipt["release_id"],
             )
             self.assertTrue(plan["ready"])
-            self.assertEqual(plan["transport_order"], ["git", "github_object_api"])
+            self.assertEqual(plan["transport_order"], ["git"])
+            self.assertEqual(plan["host_executor"], "remote_desktop_commander")
+            self.assertIsNone(plan["fallback_transport"])
             self.assertTrue(plan["git"]["configured_remote"])
-            self.assertEqual(plan["github_object_api"]["base_tree"], base_tree)
-            self.assertEqual(plan["github_object_api"]["base_tree_source"], "observed_remote")
-            self.assertFalse(plan["github_object_api"]["requires_remote_tree"])
-            self.assertTrue(plan["github_object_api"]["available"])
-            self.assertEqual(plan["github_object_api"]["target_tree"], receipt["source_tree"])
-            self.assertEqual([x["path"] for x in plan["github_object_api"]["changed_objects"]], ["tracked.txt"])
-            self.assertEqual(plan["github_object_api"]["changed_objects"][0]["transfer"], "inline_utf8")
-            self.assertEqual(plan["github_object_api"]["transfer_summary"]["inline_utf8"]["count"], 1)
-            self.assertEqual(plan["github_object_api"]["transfer_summary"]["create_blob"]["count"], 0)
-            self.assertTrue(plan["github_object_api"]["model_dispatcher"]["available"])
-            self.assertEqual(plan["github_object_api"]["model_dispatcher"]["batch_max_items"], MODEL_DISPATCH_BATCH_MAX_ITEMS)
+            self.assertTrue(plan["git"]["required"])
+            self.assertNotIn("github_object_api", plan)
+            self.assertIn("do not switch publish transport", plan["git"]["failure_rule"])
             self.assertEqual(store.external_action(plan["action_id"])["state"], "planned")
 
     def test_publish_plan_refuses_non_ancestor_remote_head(self):
@@ -452,7 +449,346 @@ class ReleaseLineageTests(unittest.TestCase):
             self.assertEqual(decision.status, CompletionStatus.BLOCKED)
             self.assertTrue(any("canonical workspace binding" in reason for reason in decision.reasons))
 
-    def test_connector_transport_may_create_different_commit_only_when_tree_matches(self):
+    def _stable_fixture(self, root: Path):
+        base = init_repo(root)
+        store = make_store(root)
+        (root / "tracked.txt").write_text("target\n", encoding="utf-8")
+        (root / "new.txt").write_text("new\n", encoding="utf-8")
+        git(root, "add", "tracked.txt", "new.txt")
+        git(root, "commit", "-qm", "stable target")
+        sync_generation(root, store)
+        store.mark_reviewed()
+        receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="8" * 64, evidence="verified")
+        plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
+        dispatch_publish(store, action_id=plan["action_id"], transport="github_object_api")
+        return base, store, receipt, plan
+
+    def _drive_one_stable_path(self, root: Path, store, action_id: str, *, tree_sha: str, commit_sha: str):
+        view = publish_stable_status(root, store, action_id=action_id)
+        if view["phase"] == "path_blob":
+            expected = view["ack_result"]["sha"]
+            view = acknowledge_publish_stable(root, store, action_id=action_id, result={"sha": expected})
+        self.assertEqual(view["phase"], "path_tree")
+        view = acknowledge_publish_stable(root, store, action_id=action_id, result={"sha": tree_sha})
+        self.assertEqual(view["phase"], "path_commit")
+        view = acknowledge_publish_stable(root, store, action_id=action_id, result={"sha": commit_sha})
+        self.assertEqual(view["phase"], "path_ref_update")
+        view = acknowledge_publish_stable(root, store, action_id=action_id, result={"ok": True})
+        self.assertEqual(view["phase"], "path_ref_readback")
+        return acknowledge_publish_stable(root, store, action_id=action_id, result={"sha": commit_sha})
+
+    @unittest.skip("legacy connector publish transport is intentionally unsupported")
+    def test_stable_publish_happy_path_uses_fixed_control_and_remote_checkpoints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, store, receipt, plan = self._stable_fixture(root)
+            self.assertTrue(plan["github_object_api"]["stable_dispatcher"]["available"])
+            view = start_publish_stable(root, store, action_id=plan["action_id"])
+            self.assertEqual(view["control"], "CONTINUE")
+            self.assertEqual(view["phase"], "create_staging_branch")
+            self.assertEqual(view["connector_args"]["sha"], base)
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"ok": True})
+            self.assertEqual(view["phase"], "staging_branch_readback")
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": base})
+
+            total = view["total_paths"]
+            self.assertGreaterEqual(total, 1)
+            for index in range(total):
+                last = index == total - 1
+                tree_sha = receipt["source_tree"] if last else (f"{index + 1:x}" * 40)[:40]
+                commit_sha = (f"{index + 9:x}" * 40)[:40]
+                view = self._drive_one_stable_path(root, store, plan["action_id"], tree_sha=tree_sha, commit_sha=commit_sha)
+            self.assertEqual(view["phase"], "staging_verify")
+            staging_head = view["ack_result"]["sha"]
+            view = acknowledge_publish_stable(
+                root, store, action_id=plan["action_id"], result={"sha": staging_head, "tree": receipt["source_tree"]},
+            )
+            self.assertEqual(view["phase"], "final_commit")
+            final_commit = "d" * 40
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": final_commit})
+            self.assertEqual(view["phase"], "target_ref_precondition")
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": base})
+            self.assertEqual(view["phase"], "target_ref_update")
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"ok": True})
+            self.assertEqual(view["phase"], "target_ref_readback")
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": final_commit})
+            self.assertEqual(view["phase"], "final_commit_readback")
+            out = acknowledge_publish_stable(
+                root, store, action_id=plan["action_id"],
+                result={"sha": final_commit, "tree": receipt["source_tree"], "parent": base},
+            )
+            self.assertEqual(out["control"], "COMPLETE")
+            self.assertEqual(store.external_action(plan["action_id"])["state"], "terminal_success")
+            self.assertTrue(out["publish"]["requires_local_reconciliation"])
+
+    @unittest.skip("legacy connector publish transport is intentionally unsupported")
+    def test_stable_publish_status_is_replay_safe_and_blob_mismatch_does_not_advance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, store, _receipt, plan = self._stable_fixture(root)
+            start_publish_stable(root, store, action_id=plan["action_id"])
+            acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"ok": True})
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": base})
+            self.assertEqual(view["phase"], "path_blob")
+            replay = publish_stable_status(root, store, action_id=plan["action_id"])
+            self.assertEqual(view["connector_args"], replay["connector_args"])
+            with self.assertRaisesRegex(RuntimeError, "blob SHA mismatch"):
+                acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": "f" * 40})
+            after = publish_stable_status(root, store, action_id=plan["action_id"])
+            self.assertEqual(after["phase"], "path_blob")
+            self.assertEqual(after["cursor"], view["cursor"])
+
+    @unittest.skip("legacy connector publish transport is intentionally unsupported")
+    def test_stable_publish_reconcile_advances_only_from_observed_checkpoint_ref(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, store, _receipt, plan = self._stable_fixture(root)
+            start_publish_stable(root, store, action_id=plan["action_id"])
+            view = reconcile_publish_stable(root, store, action_id=plan["action_id"], observed_staging_head=base)
+            self.assertIn(view["phase"], {"path_blob", "path_tree"})
+            if view["phase"] == "path_blob":
+                view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": view["ack_result"]["sha"]})
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": "a" * 40})
+            pending = "b" * 40
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": pending})
+            self.assertEqual(view["phase"], "path_ref_update")
+            with self.assertRaisesRegex(RuntimeError, "unexpected head|mismatch"):
+                reconcile_publish_stable(root, store, action_id=plan["action_id"], observed_staging_head="c" * 40)
+            still_pending = publish_stable_status(root, store, action_id=plan["action_id"])
+            self.assertEqual(still_pending["phase"], "path_ref_update")
+            self.assertEqual(still_pending["cursor"], 0)
+            recovered = reconcile_publish_stable(root, store, action_id=plan["action_id"], observed_staging_head=pending, observed_staging_tree="a" * 40)
+            self.assertEqual(recovered["cursor"], 1)
+
+    @unittest.skip("legacy connector publish transport is intentionally unsupported")
+    def test_stable_publish_final_tree_and_target_precondition_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, store, receipt, plan = self._stable_fixture(root)
+            start_publish_stable(root, store, action_id=plan["action_id"])
+            acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"ok": True})
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": base})
+            total = view["total_paths"]
+            for index in range(total):
+                if view["phase"] == "path_blob":
+                    view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": view["ack_result"]["sha"]})
+                if index == total - 1:
+                    with self.assertRaisesRegex(RuntimeError, "audited target tree"):
+                        acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": "e" * 40})
+                    view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": receipt["source_tree"]})
+                else:
+                    view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": (f"{index + 1:x}" * 40)[:40]})
+                checkpoint = (f"{index + 8:x}" * 40)[:40]
+                view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": checkpoint})
+                view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"ok": True})
+                view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": checkpoint})
+            staging_head = view["ack_result"]["sha"]
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": staging_head, "tree": receipt["source_tree"]})
+            final_commit = "d" * 40
+            view = acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": final_commit})
+            self.assertEqual(view["phase"], "target_ref_precondition")
+            with self.assertRaisesRegex(RuntimeError, "moved since stable publish preflight"):
+                acknowledge_publish_stable(root, store, action_id=plan["action_id"], result={"sha": "c" * 40})
+            self.assertEqual(publish_stable_status(root, store, action_id=plan["action_id"])["phase"], "target_ref_precondition")
+
+    def _portable_export_fixture(self, tmp: str):
+        root = Path(tmp) / "repo"
+        root.mkdir()
+        base, store, receipt, plan = self._stable_fixture(root)
+        receipt_file = Path(tmp) / "portable-receipt.json"
+        self.assertTrue(plan["github_object_api"]["portable_stable_dispatcher"]["available"])
+        self.assertFalse(plan["github_object_api"]["portable_stable_dispatcher"]["local_git_required_after_export"])
+        exported = export_publish_stable_portable_receipt(
+            root, store, action_id=plan["action_id"], output_file=receipt_file,
+        )
+        self.assertEqual(exported["target_tree"], receipt["source_tree"])
+        self.assertTrue(receipt_file.exists())
+        return root, base, store, receipt, plan, receipt_file
+
+    @unittest.skip("legacy connector publish transport is intentionally unsupported")
+    def test_portable_stable_receipt_resumes_after_git_and_task_state_are_gone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base, store, receipt, _plan, receipt_file = self._portable_export_fixture(tmp)
+            base_tree = git(root, "rev-parse", f"{base}^{{tree}}")
+            # Simulate a new execution sandbox: the original Git DB and task store are unavailable.
+            git_dir = root / ".git"
+            lost_git = root / ".git.lost"
+            git_dir.rename(lost_git)
+
+            view = start_publish_stable_portable(receipt_file=receipt_file)
+            self.assertEqual(view["phase"], "target_observe")
+            self.assertFalse(view["llm_contract"]["local_git_required_after_export"])
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"sha": base},
+            )
+            self.assertEqual(view["phase"], "staging_observe")
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"not_found": True},
+            )
+            self.assertEqual(view["phase"], "create_staging")
+            staging_branch = view["connector_args"]["branch_name"]
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"ok": True},
+            )
+            self.assertEqual(view["phase"], "staging_confirm")
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"],
+                result={"sha": base, "tree": base_tree, "message": "base"},
+            )
+            self.assertIn(view["phase"], {"path_blob", "path_tree"})
+            self.assertEqual(view["staging_branch"], staging_branch)
+
+            # Drive exactly one path to a durable remote checkpoint.
+            if view["phase"] == "path_blob":
+                expected_blob = view["ack_result"]["sha"]
+                view = acknowledge_publish_stable_portable(
+                    receipt_file=receipt_file, token=view["token"], result={"sha": expected_blob},
+                )
+            self.assertEqual(view["phase"], "path_tree")
+            first_tree = "a" * 40
+            if view["cursor"] == view["total_paths"] - 1:
+                first_tree = receipt["source_tree"]
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"sha": first_tree},
+            )
+            self.assertEqual(view["phase"], "path_commit")
+            checkpoint_message = view["connector_args"]["message"]
+            checkpoint_commit = "b" * 40
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"sha": checkpoint_commit},
+            )
+            self.assertEqual(view["phase"], "path_ref_update")
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"ok": True},
+            )
+            self.assertEqual(view["phase"], "path_ref_readback")
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"],
+                result={"sha": checkpoint_commit, "tree": first_tree, "message": checkpoint_message},
+            )
+            self.assertEqual(view["cursor"], 1)
+
+            # Lose every transient token and restart only from the immutable receipt + GitHub observation.
+            restarted = start_publish_stable_portable(receipt_file=receipt_file)
+            restarted = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=restarted["token"], result={"sha": base},
+            )
+            self.assertEqual(restarted["phase"], "staging_observe")
+            restarted = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=restarted["token"],
+                result={"sha": checkpoint_commit, "tree": first_tree, "message": checkpoint_message},
+            )
+            self.assertEqual(restarted["cursor"], 1)
+            self.assertIn(restarted["phase"], {"path_blob", "path_tree", "target_recheck"})
+
+    @unittest.skip("legacy connector publish transport is intentionally unsupported")
+    def test_portable_stable_happy_path_completes_without_runtime_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base, _store, receipt, _plan, receipt_file = self._portable_export_fixture(tmp)
+            base_tree = git(root, "rev-parse", f"{base}^{{tree}}")
+            view = start_publish_stable_portable(receipt_file=receipt_file)
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"sha": base},
+            )
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"not_found": True},
+            )
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"ok": True},
+            )
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"],
+                result={"sha": base, "tree": base_tree, "message": "base"},
+            )
+
+            total = view["total_paths"]
+            for index in range(total):
+                if view["phase"] == "path_blob":
+                    view = acknowledge_publish_stable_portable(
+                        receipt_file=receipt_file, token=view["token"], result={"sha": view["ack_result"]["sha"]},
+                    )
+                self.assertEqual(view["phase"], "path_tree")
+                tree_sha = receipt["source_tree"] if index == total - 1 else (f"{index + 1:x}" * 40)[:40]
+                view = acknowledge_publish_stable_portable(
+                    receipt_file=receipt_file, token=view["token"], result={"sha": tree_sha},
+                )
+                checkpoint_message = view["connector_args"]["message"]
+                checkpoint_commit = (f"{index + 8:x}" * 40)[:40]
+                view = acknowledge_publish_stable_portable(
+                    receipt_file=receipt_file, token=view["token"], result={"sha": checkpoint_commit},
+                )
+                view = acknowledge_publish_stable_portable(
+                    receipt_file=receipt_file, token=view["token"], result={"ok": True},
+                )
+                view = acknowledge_publish_stable_portable(
+                    receipt_file=receipt_file, token=view["token"],
+                    result={"sha": checkpoint_commit, "tree": tree_sha, "message": checkpoint_message},
+                )
+
+            self.assertEqual(view["phase"], "target_recheck")
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"sha": base},
+            )
+            self.assertEqual(view["phase"], "final_commit")
+            final_commit = "f" * 40
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"sha": final_commit},
+            )
+            self.assertEqual(view["phase"], "target_ref_update")
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"ok": True},
+            )
+            self.assertEqual(view["phase"], "target_ref_readback")
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"sha": final_commit},
+            )
+            self.assertEqual(view["phase"], "final_commit_readback")
+            done = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"],
+                result={"sha": final_commit, "tree": receipt["source_tree"], "parent": base},
+            )
+            self.assertEqual(done["control"], "COMPLETE")
+            self.assertEqual(done["remote_tree"], receipt["source_tree"])
+
+    @unittest.skip("legacy connector publish transport is intentionally unsupported")
+    def test_portable_stable_receipt_detects_payload_and_digest_tampering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _root, _base, store, _receipt, _plan, receipt_file = self._portable_export_fixture(tmp)
+            data = __import__("json").loads(receipt_file.read_text(encoding="utf-8"))
+            first = next(item for item in data["items"] if not item["delete"])
+            first["content_base64"] = base64.b64encode(b"tampered").decode("ascii")
+            receipt_file.write_text(__import__("json").dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "digest mismatch"):
+                start_publish_stable_portable(receipt_file=receipt_file)
+
+    @unittest.skip("legacy connector publish transport is intentionally unsupported")
+    def test_portable_stable_target_movement_only_accepts_exact_completed_transport(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _root, base, store, receipt, _plan, receipt_file = self._portable_export_fixture(tmp)
+            moved = "c" * 40
+            view = start_publish_stable_portable(receipt_file=receipt_file)
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"sha": moved},
+            )
+            self.assertEqual(view["phase"], "target_existing_verify")
+            done = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"],
+                result={"sha": moved, "tree": receipt["source_tree"], "parent": base},
+            )
+            self.assertEqual(done["control"], "COMPLETE")
+            self.assertTrue(done["already_published"])
+
+            view = start_publish_stable_portable(receipt_file=receipt_file)
+            view = acknowledge_publish_stable_portable(
+                receipt_file=receipt_file, token=view["token"], result={"sha": moved},
+            )
+            with self.assertRaisesRegex(RuntimeError, "moved concurrently"):
+                acknowledge_publish_stable_portable(
+                    receipt_file=receipt_file, token=view["token"],
+                    result={"sha": moved, "tree": "d" * 40, "parent": base},
+                )
+
+    def test_connector_publish_transport_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base = init_repo(root)
@@ -463,21 +799,13 @@ class ReleaseLineageTests(unittest.TestCase):
             store.mark_reviewed()
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="f" * 64, evidence="verified")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
-            dispatch_publish(store, action_id=plan["action_id"], transport="github_object_api")
-            result = record_publish_outcome(
-                root, store, action_id=plan["action_id"], state="terminal_success", transport="github_object_api",
-                remote_commit="1" * 40, remote_tree=receipt["source_tree"], remote_parent=base,
-                evidence="connector readback matched target tree and planned parent",
-            )
-            self.assertEqual(result["remote_tree"], receipt["source_tree"])
-            self.assertNotEqual(result["remote_commit"], receipt["source_commit"])
-            self.assertTrue(result["requires_local_reconciliation"])
+            with self.assertRaisesRegex(ValueError, "native git only"):
+                dispatch_publish(store, action_id=plan["action_id"], transport="github_object_api")
 
-    def test_publish_plan_uses_local_remote_commit_tree_when_remote_tree_is_omitted(self):
+    def test_publish_plan_remote_tree_is_optional_for_native_git(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base = init_repo(root)
-            base_tree = git(root, "rev-parse", "HEAD^{tree}")
             store = make_store(root)
             (root / "tracked.txt").write_text("target\n", encoding="utf-8")
             git(root, "add", "tracked.txt"); git(root, "commit", "-qm", "target")
@@ -485,9 +813,8 @@ class ReleaseLineageTests(unittest.TestCase):
             store.mark_reviewed()
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="1" * 64, evidence="verified")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
-            self.assertEqual(plan["github_object_api"]["base_tree"], base_tree)
-            self.assertEqual(plan["github_object_api"]["base_tree_source"], "local_remote_head_commit")
-            self.assertFalse(plan["github_object_api"]["requires_remote_tree"])
+            self.assertEqual(plan["transport_order"], ["git"])
+            self.assertNotIn("github_object_api", plan)
 
     def test_publish_action_identity_is_commit_bound_even_when_tree_is_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -533,7 +860,7 @@ class ReleaseLineageTests(unittest.TestCase):
                     release_id=receipt["release_id"],
                 )
 
-    def test_connector_fallback_refuses_submodule_object_manifest(self):
+    def test_native_git_publish_does_not_offer_connector_fallback_for_submodule(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "main"
             subrepo = Path(tmp) / "subrepo"
@@ -547,9 +874,9 @@ class ReleaseLineageTests(unittest.TestCase):
             store.mark_reviewed()
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="5" * 64, evidence="verified")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
-            self.assertFalse(plan["github_object_api"]["available"])
-            self.assertEqual(plan["github_object_api"]["unsupported_paths"], ["vendor/sub"])
-            with self.assertRaisesRegex(RuntimeError, "fallback is unavailable"):
+            self.assertEqual(plan["transport_order"], ["git"])
+            self.assertNotIn("github_object_api", plan)
+            with self.assertRaisesRegex(ValueError, "native git only"):
                 dispatch_publish(store, action_id=plan["action_id"], transport="github_object_api")
 
 

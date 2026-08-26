@@ -27,9 +27,10 @@ from codex_loop_runtime.instructions import discover
 from codex_loop_runtime.process_manager import managed_session_capability, run_one_shot
 from codex_loop_runtime.protocol import emit_error, emit_ok
 from codex_loop_runtime.release_lineage import (
-    acknowledge_publish_model_dispatch_batch, acknowledge_publish_model_dispatch_tree,
-    capture_workspace_binding, dispatch_publish, publish_model_dispatch_status, publish_plan,
-    record_publish_outcome, start_publish_model_dispatch,
+    acknowledge_publish_model_dispatch_batch, acknowledge_publish_model_dispatch_tree, acknowledge_publish_stable,
+    acknowledge_publish_stable_portable, capture_workspace_binding, dispatch_publish, export_publish_stable_portable_receipt,
+    publish_model_dispatch_status, publish_plan, publish_stable_next, publish_stable_status, reconcile_publish_stable,
+    record_publish_outcome, start_publish_model_dispatch, start_publish_stable, start_publish_stable_portable,
     record_release_receipt, release_plan, workspace_binding_status,
 )
 from codex_loop_runtime.service import request as service_request, serve as service_serve, start as service_start
@@ -374,6 +375,57 @@ def cmd_publish_transfer_tree_ack(args: argparse.Namespace) -> None:
     emit_ok(acknowledge_publish_model_dispatch_tree(root, store, action_id=args.action_id, returned_tree=args.returned_tree))
 
 
+def cmd_publish_stable_start(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(start_publish_stable(root, store, action_id=args.action_id))
+
+
+def cmd_publish_stable_next(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(publish_stable_next(root, store, action_id=args.action_id))
+
+
+def cmd_publish_stable_status(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(publish_stable_status(root, store, action_id=args.action_id))
+
+
+def cmd_publish_stable_ack(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    result = json.loads(args.result_json)
+    if not isinstance(result, dict):
+        raise ValueError("--result-json must be a JSON object")
+    emit_ok(acknowledge_publish_stable(root, store, action_id=args.action_id, result=result))
+
+
+def cmd_publish_stable_export(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(export_publish_stable_portable_receipt(
+        root, store, action_id=args.action_id, output_file=args.output_file,
+    ))
+
+
+def cmd_publish_stable_portable_start(args: argparse.Namespace) -> None:
+    emit_ok(start_publish_stable_portable(receipt_file=args.receipt_file))
+
+
+def cmd_publish_stable_portable_ack(args: argparse.Namespace) -> None:
+    result = json.loads(args.result_json)
+    if not isinstance(result, dict):
+        raise ValueError("--result-json must be a JSON object")
+    emit_ok(acknowledge_publish_stable_portable(
+        receipt_file=args.receipt_file, token=args.token, result=result,
+    ))
+
+
+def cmd_publish_stable_reconcile(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(reconcile_publish_stable(
+        root, store, action_id=args.action_id, observed_staging_head=args.observed_staging_head,
+        observed_staging_tree=args.observed_staging_tree, observed_target_head=args.observed_target_head,
+    ))
+
+
 def cmd_git_authorize(args: argparse.Namespace) -> None:
     _cwd_path, _root_path, store = _store(args)
     store.authorize_git_mutation(
@@ -643,12 +695,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("release-plan"); _add_scope(p); p.add_argument("--artifact-name", required=True); p.add_argument("--archive-prefix"); p.set_defaults(func=cmd_release_plan)
     p = sub.add_parser("release-record"); _add_scope(p); p.add_argument("--artifact-name", required=True); p.add_argument("--artifact-sha256", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_release_record)
     p = sub.add_parser("publish-plan"); _add_scope(p); p.add_argument("--repository", required=True); p.add_argument("--branch", required=True); p.add_argument("--remote-head", required=True); p.add_argument("--remote-tree"); p.add_argument("--remote", default="origin"); p.add_argument("--release-id"); p.set_defaults(func=cmd_publish_plan)
-    p = sub.add_parser("publish-dispatch"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--transport", required=True, choices=["git","github_object_api"]); p.set_defaults(func=cmd_publish_dispatch)
-    p = sub.add_parser("publish-record"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--state", required=True, choices=["terminal_success","terminal_failure","outcome_unknown"]); p.add_argument("--transport", required=True, choices=["git","github_object_api"]); p.add_argument("--remote-commit"); p.add_argument("--remote-tree"); p.add_argument("--remote-parent"); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_publish_record)
-    p = sub.add_parser("publish-transfer-start"); _add_scope(p); p.add_argument("--action-id", required=True); p.set_defaults(func=cmd_publish_transfer_start)
-    p = sub.add_parser("publish-transfer-status"); _add_scope(p); p.add_argument("--action-id", required=True); p.set_defaults(func=cmd_publish_transfer_status)
-    p = sub.add_parser("publish-transfer-ack"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--returned-shas-json", required=True); p.set_defaults(func=cmd_publish_transfer_ack)
-    p = sub.add_parser("publish-transfer-tree-ack"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--returned-tree", required=True); p.set_defaults(func=cmd_publish_transfer_tree_ack)
+    p = sub.add_parser("publish-dispatch"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--transport", required=True, choices=["git"]); p.set_defaults(func=cmd_publish_dispatch)
+    p = sub.add_parser("publish-record"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--state", required=True, choices=["terminal_success","terminal_failure","outcome_unknown"]); p.add_argument("--transport", required=True, choices=["git"]); p.add_argument("--remote-commit"); p.add_argument("--remote-tree"); p.add_argument("--remote-parent"); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_publish_record)
     for name, func in [("poll",cmd_poll),("stdin",cmd_stdin),("interrupt",cmd_interrupt),("terminate",cmd_terminate)]:
         p=sub.add_parser(name); _add_scope(p); p.add_argument("handle"); p.add_argument("--timeout",type=float,default=3.0)
         if name=="stdin": p.add_argument("data")

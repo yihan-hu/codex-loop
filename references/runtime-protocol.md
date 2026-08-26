@@ -162,7 +162,7 @@ python scripts/codex_loop.py release-record --cwd REPO --artifact-name skill.zip
 
 `release-plan` fails when tracked/staged source is uncommitted. Untracked paths are reported but excluded because export comes from `git archive` of the exact commit. A release receipt is bound to task generation plus source commit/tree and becomes stale after later observed workspace mutation.
 
-For repository publishing, first observe the destination branch's current commit (and tree if connector fallback may be needed), then plan against that observed state:
+For repository publishing, use only native Git through Remote Desktop Commander on the persistent canonical repo under `/Users/yihanhu/PiWork`. Observe the destination branch with native Git, then plan against that state:
 
 ```bash
 python scripts/codex_loop.py publish-plan --cwd REPO \
@@ -170,38 +170,11 @@ python scripts/codex_loop.py publish-plan --cwd REPO \
   --remote-head REMOTE_COMMIT --remote-tree REMOTE_TREE
 ```
 
-`publish-plan` reuses the existing validation/review gates: required validation must pass at the current generation and current changes must be reviewed. If the observed remote head is not an ancestor of the audited release commit, integrate the remote change in the same canonical worktree before publishing. Do not force-update around this condition. The non-idempotent publish identity is repository + branch + source commit, not tree alone. The plan prefers ordinary host-visible `git push`. If that transport is unavailable, the fallback manifest and base tree are derived from locally known Git object ids/modes for the observed remote-head commit with `git diff-tree`; do not rescan a directory to reconstruct the source version. The connector manifest classifies eligible bounded UTF-8 blobs for one batched `create_tree(content=...)` request, while binary/non-UTF-8/oversized or over-budget blobs use explicit `create_blob`, and deletions stay in the same tree request. A separately observed remote tree, when supplied, is checked for consistency.
+`publish-plan` reuses validation/review/release gates and returns only the `git` transport. If the observed remote head is not an ancestor of the audited release commit, integrate the remote change in the same canonical worktree and re-run the gates. Do not force-update around this condition.
 
-Immediately before the first external write, mark the publish dispatched:
+Before pushing, record dispatch with `publish-dispatch --transport git`, then execute the returned `git push --porcelain ...` through Remote Desktop Commander from the canonical worktree. Repository source bytes must stay in Git's data plane; do not move them through GitHub object/contents APIs, connector payloads, model-carried text/base64, copied source trees, or release archives. If native Git fails or is unavailable, stop and report the exact blocker rather than switching transports.
 
-```bash
-python scripts/codex_loop.py publish-dispatch --cwd REPO --action-id ACTION --transport git
-# or: --transport github_object_api
-```
-
-For a serialized connector host with no file-backed/bulk action, start the deterministic short-term dispatcher only after `github_object_api` dispatch:
-
-```bash
-python scripts/codex_loop.py publish-transfer-start --cwd REPO --action-id ACTION
-python scripts/codex_loop.py publish-transfer-status --cwd REPO --action-id ACTION
-python scripts/codex_loop.py publish-transfer-ack --cwd REPO --action-id ACTION \
-  --returned-shas-json '["SHA1","SHA2"]'
-python scripts/codex_loop.py publish-transfer-tree-ack --cwd REPO --action-id ACTION \
-  --returned-tree TREE_SHA
-```
-
-`publish-transfer-start/status` derive the queue only from the planned remote-head commit and audited source commit. They emit bounded base64 `create_blob` payload batches. Dispatch those connector calls in the returned order without intermediate tree probes or new source reads; pass the returned SHA list to `publish-transfer-ack`. The acknowledgement advances a persisted cursor only after exact SHA equality for the whole current batch. Repeating `start/status` resumes the current cursor safely; a connector success whose acknowledgement was lost may be uploaded again because Git blobs are content-addressed. When the cursor reaches the end, the runtime emits one final `create_tree` call; `publish-transfer-tree-ack` enforces exact equality with the audited target tree and then returns the one-commit parameters and exits the replay-safe dispatcher. Blob/tree calls may be safely replayed after a lost acknowledgement, but `create_commit` must remain under the normal non-idempotent outcome discipline and must not be blindly retried after an unknown result.
-
-After real remote readback, record the terminal outcome:
-
-```bash
-python scripts/codex_loop.py publish-record --cwd REPO --action-id ACTION \
-  --state terminal_success --transport git \
-  --remote-commit COMMIT --remote-tree TREE \
-  --evidence "remote ref/tree read back after publish"
-```
-
-Ordinary Git success requires the remote commit and tree to equal the audited local release. Connector fallback may create a different transport commit only when readback proves the remote tree equals the audited release tree and `--remote-parent` equals the planned remote head. If the connector creates a different commit, `publish-record` returns `requires_local_reconciliation: true`; import/integrate the observed remote commit into the same canonical repository before the next publish plan. Unsupported Git object types such as gitlinks/submodules make the connector fallback unavailable rather than flattening them. Ambiguous results must be recorded as `outcome_unknown` and reconciled from real remote observation rather than blindly retried.
+After push, read back the remote ref and tree with native Git and call `publish-record --transport git`. Terminal success requires the exact audited local commit and tree. For an ambiguous outcome, inspect the real remote state before any retry.
 
 ## Delegation / logical isolation
 

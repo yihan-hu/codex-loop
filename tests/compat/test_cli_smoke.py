@@ -57,9 +57,18 @@ class CliSmokeTests(unittest.TestCase):
       plan,_=call(root,'release-plan','--artifact-name','skill.zip','--archive-prefix','codex-loop'); target=plan['data']['source']['commit']; target_tree=plan['data']['source']['tree']; self.assertEqual(plan['data']['archive']['argv'][-1],target)
       receipt,_=call(root,'release-record','--artifact-name','skill.zip','--artifact-sha256','a'*64,'--evidence','verified artifact bytes')
       v,_=call(root,'validate','--','pytest','-q'); call(root,'validation-record','--command-json','["pytest","-q"]','--exit-code','0','--evidence','host pytest passed'); call(root,'changes','--review')
-      pub,_=call(root,'publish-plan','--repository','owner/repo','--branch','main','--remote-head',base,'--remote-tree',base_tree,'--release-id',receipt['data']['release_id']); action=pub['data']['action_id']; self.assertEqual(pub['data']['transport_order'],['git','github_object_api'])
-      call(root,'publish-dispatch','--action-id',action,'--transport','github_object_api')
-      out,_=call(root,'publish-record','--action-id',action,'--state','terminal_success','--transport','github_object_api','--remote-commit','1'*40,'--remote-tree',target_tree,'--remote-parent',base,'--evidence','remote tree and parent readback matched'); self.assertEqual(out['data']['state'],'terminal_success')
+      pub,_=call(root,'publish-plan','--repository','owner/repo','--branch','main','--remote-head',base,'--remote-tree',base_tree,'--release-id',receipt['data']['release_id']); action=pub['data']['action_id']; self.assertEqual(pub['data']['transport_order'],['git']); self.assertEqual(pub['data']['host_executor'],'remote_desktop_commander'); self.assertIsNone(pub['data']['fallback_transport'])
+      call(root,'publish-dispatch','--action-id',action,'--transport','git')
+      out,_=call(root,'publish-record','--action-id',action,'--state','terminal_success','--transport','git','--remote-commit',target,'--remote-tree',target_tree,'--evidence','native git remote commit/tree readback matched'); self.assertEqual(out['data']['state'],'terminal_success')
+
+  def test_connector_publish_commands_are_not_exposed(self):
+    for command in (
+      "publish-transfer-start", "publish-transfer-status", "publish-transfer-ack", "publish-transfer-tree-ack",
+      "publish-stable-start", "publish-stable-next", "publish-stable-status", "publish-stable-ack", "publish-stable-reconcile",
+      "publish-stable-export", "publish-stable-portable-start", "publish-stable-portable-ack",
+    ):
+      p=subprocess.run([sys.executable,str(CLI),command,"--help"],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+      self.assertNotEqual(p.returncode,0,command)
 
   def test_repeated_validate_reuses_unconsumed_plan_and_inference_stays_unambiguous(self):
     with tempfile.TemporaryDirectory() as tmp:
