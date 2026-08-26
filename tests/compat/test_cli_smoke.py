@@ -22,6 +22,16 @@ class CliSmokeTests(unittest.TestCase):
       self.assertTrue(recorded['data']['bookkeeping_inferred'])
       call(root,'changes','--review')
       done,_=call(root,'completion'); self.assertEqual(done['data']['status'],'PASS'); self.assertEqual(tid,done['data']['details']['changes']['generation'] and tid)
+  @unittest.skipIf(sys.platform.startswith('win'),'workspace alias test requires symlinks')
+  def test_content_file_accepts_workspace_alias_without_losing_symlink_checks(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      parent=Path(tmp); root=parent/'repo'; root.mkdir(); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a.txt').write_text('a')
+      alias=parent/'repo-alias'; alias.symlink_to(root,target_is_directory=True)
+      call(alias,'bootstrap','--objective','alias write','--criterion','a is b')
+      h,_=call(alias,'hash','--path','a.txt'); payload=alias/'payload'; payload.write_text('b')
+      call(alias,'write','--path','a.txt','--content-file',str(payload),'--expected-sha256',h['data']['sha256'],'--allow-protected','--protected-override-reason','test intentionally changes the baseline file')
+      self.assertEqual((root/'a.txt').read_text(),'b')
+
   def test_unknown_exec_is_not_nested(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','inspect')

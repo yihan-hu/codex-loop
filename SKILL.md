@@ -9,9 +9,19 @@ Act as the coding agent. Use ChatGPT for reasoning and the bundled deterministic
 
 Use `scripts/codex_loop.py` as the stable local-runtime entry point. Run bundled code directly rather than reimplementing its bookkeeping inline. Runtime state belongs in the private system temp directory, never in the repository.
 
+## Adaptive lifecycle
+
+Preserve lifecycle invariants, not ceremony. Before creating durable task state, assess concrete capability needs rather than assigning a static complexity class. If the request does not need repository/workspace observation, mutation, executable validation, multiple dependent tool steps, durable evidence, delegation, external-action bookkeeping, or managed processes, use the direct path and do not bootstrap Codex Loop. A trivial conversational or code-explanation request that is fully answerable from the current conversation should remain trivial.
+
+Use `lifecycle-assess` when a deterministic pre-runtime record is useful; pass only observed/required signals. A capability existing does not mean it must execute. Planning remains a host/model execution aid: activate it only for meaningfully multi-step, dependency-sensitive, ambiguous, or large work. Do not persist a second mutable planning truth source merely to label the task.
+
+Once durable runtime state exists, derive lifecycle obligations from current evidence. Mutation raises obligations by advancing generation and making generation-bound validation, criterion, steer, and review evidence stale. Validation is required only when meaningful executable evidence exists; otherwise bootstrap with an explicit `--no-validation --no-validation-reason ...`. Change review is required only for a substantive current-generation changed set. Delegation, managed processes, checkpoints, and external-action bookkeeping activate only when actually useful or requested. Completion reasoning always remains active and `PASS` still requires every currently required obligation to be satisfied. Capability degradation is a warning dimension, not automatically a completion blocker.
+
+`next` includes a bounded `lifecycle` projection derived from authoritative runtime facts. It may expose active capabilities and current requirements, but must not dump inactive capability history or create duplicate mutable state. Current workspace reality always wins.
+
 ## Core loop
 
-1. **Bootstrap.** Resolve the workspace, choose the task profile, turn the user request into concrete acceptance criteria, then run `bootstrap`. The runtime binds the new task as the workspace's active task; ordinary task-scoped commands inherit that binding, while explicit `--task-id` remains available for disambiguation/debugging. Call `next` for the bounded working set and `instructions`/`snapshot` only when deeper drill-down is needed.
+1. **Assess / Bootstrap.** First decide whether durable runtime is needed. For direct-path work, answer completely without bootstrap. Otherwise resolve the workspace, choose the task profile, turn the user request into concrete acceptance criteria, then run `bootstrap`. The runtime binds the new task as the workspace's active task; ordinary task-scoped commands inherit that binding, while explicit `--task-id` remains available for disambiguation/debugging. Call `next` for the bounded working set and `instructions`/`snapshot` only when deeper drill-down is needed.
 2. **Observe.** Start from `next`, then inspect only the relevant code, config, tests, failures, call sites, Git state, and evidence references. Prefer repository evidence over assumptions and drill down instead of loading full runtime state repeatedly.
 3. **Act.** Take the smallest useful next action. Use guarded `write` for a known file preimage. Keep arbitrary shell/Git/build/test commands host-visible; the local process layer intentionally runs only a tiny deterministic allowlist.
 4. **Integrate.** Treat every tool result, failure, external action, user steer, and workspace mutation as new evidence. Refresh `snapshot`/`changes` after host-side mutations.

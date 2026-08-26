@@ -2,6 +2,26 @@
 
 Use `python scripts/codex_loop.py ...`. Commands emit JSON. Runtime state is task-scoped under a private temp directory; it never writes `.codex-loop` state into the repository. `bootstrap` binds the created task as the workspace's active task, so ordinary task-scoped commands may omit `--task-id`. Pass an explicit `--task-id` when deliberately addressing a non-active task or when low-level audit/debugging requires it. If no active task exists, task-scoped commands fail closed.
 
+## Adaptive pre-runtime assessment
+
+Before bootstrap, the host/Skill may deterministically record whether durable runtime is needed from concrete capability signals:
+
+```bash
+python scripts/codex_loop.py lifecycle-assess \
+  --workspace-observation \
+  --workspace-mutation \
+  --executable-validation \
+  --multiple-dependent-steps \
+  --durable-evidence \
+  --delegation \
+  --external-actions \
+  --managed-processes
+```
+
+All flags are optional. With no signals the result is `mode: direct` and no task state is created. Any supplied signal yields `mode: durable` plus the concrete activation reasons. This is deliberately not a task-complexity classifier. The host may reason about the signals directly and skip this command when no deterministic record is useful.
+
+For durable tasks, `next` exposes a bounded `lifecycle` view derived from authoritative generation, validation/review freshness, isolation, external-action, and process state. It does not persist a parallel capability FSM.
+
 ## Bootstrap and world state
 
 ```bash

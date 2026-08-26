@@ -4,18 +4,20 @@ import ctypes
 import errno
 import os
 import stat
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from .state import NO_WRITE_PROFILES, StateStore
-from .workspace import ensure_inside_workspace, hash_bytes, hash_file, workspace_fingerprint
+from .workspace import hash_bytes, hash_file, workspace_fingerprint, workspace_lexical_path
 
 MAX_LOCAL_WRITE_BYTES = 16 * 1024 * 1024
 
 
 _AT_FDCWD = -100
 _RENAME_EXCHANGE = 2
+_RENAME_SWAP = 2
 
 
 def _renameat2_exchange(left: str | Path, right: str | Path) -> None:
@@ -34,6 +36,33 @@ def _renameat2_exchange(left: str | Path, right: str | Path) -> None:
         if err in {errno.ENOSYS, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
             raise NotImplementedError("filesystem does not support atomic rename exchange")
         raise OSError(err, os.strerror(err), str(left), str(right))
+
+
+def _renamex_np_exchange(left: str | Path, right: str | Path) -> None:
+    """Atomically swap two pathnames on macOS using renamex_np(RENAME_SWAP)."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    func = getattr(libc, "renamex_np", None)
+    if func is None:
+        raise NotImplementedError("renamex_np is unavailable on this platform")
+    func.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    func.restype = ctypes.c_int
+    rc = func(os.fsencode(left), os.fsencode(right), _RENAME_SWAP)
+    if rc != 0:
+        err = ctypes.get_errno()
+        if err in {errno.ENOSYS, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+            raise NotImplementedError("filesystem does not support atomic rename swap")
+        raise OSError(err, os.strerror(err), str(left), str(right))
+
+
+def _atomic_exchange(left: str | Path, right: str | Path) -> None:
+    """Use the platform-native atomic pathname exchange primitive, or fail closed."""
+    if sys.platform == "darwin":
+        _renamex_np_exchange(left, right)
+        return
+    if sys.platform.startswith("linux"):
+        _renameat2_exchange(left, right)
+        return
+    raise NotImplementedError(f"atomic rename exchange is unavailable on platform {sys.platform}")
 
 
 def _commit_new_no_replace(temp_name: str, path: Path) -> None:
@@ -57,7 +86,7 @@ def _commit_existing_exchange(temp_name: str, path: Path, pre_hash: str, pre_mod
     preimage is deliberately preserved there.
     """
     try:
-        _renameat2_exchange(temp_name, path)
+        _atomic_exchange(temp_name, path)
     except (NotImplementedError, OSError) as exc:
         raise RuntimeError(
             f"filesystem cannot provide atomic compare-exchange for {path}; use a host-visible file operation"
@@ -72,7 +101,7 @@ def _commit_existing_exchange(temp_name: str, path: Path, pre_hash: str, pre_mod
 
     # The object at target changed after the last observation. Restore it atomically.
     try:
-        _renameat2_exchange(temp_name, path)
+        _atomic_exchange(temp_name, path)
     except Exception as rollback_exc:
         recovery = Path(temp_name).with_name(f".{path.name}.codex-loop-recovery-{os.getpid()}-{next(tempfile._get_candidate_names())}")
         try:
@@ -132,16 +161,8 @@ def guarded_write(
     if profile in NO_WRITE_PROFILES:
         raise PermissionError(f"task profile {profile} does not permit local writes")
     root = root.resolve()
-    lexical = Path(target)
-    if not lexical.is_absolute():
-        lexical = root / lexical
-    lexical = Path(os.path.abspath(lexical))
-    try:
-        lexical.relative_to(root)
-    except ValueError as exc:
-        raise PermissionError(f"write target is outside workspace: {lexical}") from exc
-    _reject_symlink_components(root, lexical)
-    path = lexical
+    path = workspace_lexical_path(root, Path(target))
+    _reject_symlink_components(root, path)
 
     exists = path.exists()
     if exists:

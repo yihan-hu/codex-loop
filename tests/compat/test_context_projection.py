@@ -1,4 +1,4 @@
-import subprocess, sys, tempfile, unittest
+import json, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
@@ -34,6 +34,10 @@ class ContextProjectionTests(unittest.TestCase):
             self.assertEqual(view['truncated']['criteria'], 6)
             self.assertLessEqual(len(view['next_actions']), 8)
             self.assertTrue(any('acceptance criteria' in x['action'] for x in view['next_actions']))
+            self.assertLess(len(json.dumps(view, ensure_ascii=False).encode('utf-8')), 32768)
+            self.assertNotIn('repository_instructions', view['lifecycle']['active_capabilities'])
+            self.assertNotIn('validation', view['lifecycle']['requirements'])
+            self.assertNotIn('change_review', view['lifecycle']['requirements'])
 
     def test_working_projection_derives_freshness_without_exposing_evidence_generation(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -53,6 +57,10 @@ class ContextProjectionTests(unittest.TestCase):
             self.assertNotIn('evidence_generation', criterion)
             self.assertEqual(after['state']['validation'], 'stale')
             self.assertEqual(after['state']['review'], 'stale')
+            self.assertEqual(after['lifecycle']['mode'], 'durable')
+            self.assertIn('mutation_tracking', after['lifecycle']['active_capabilities'])
+            self.assertEqual(after['lifecycle']['requirements']['validation'], 'required')
+            self.assertEqual(after['lifecycle']['requirements']['change_review'], 'required')
 
 
     def test_next_actions_include_pending_criteria_beyond_projection_cap(self):

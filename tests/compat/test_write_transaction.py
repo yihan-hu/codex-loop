@@ -56,13 +56,13 @@ class AtomicCompareExchangeTests(unittest.TestCase):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); target=root/'a.txt'; target.write_text('base')
       s=WriteTests().setup(root); expected=hash_file(target)
-      original=wt._renameat2_exchange; calls={'n':0}
+      original=wt._atomic_exchange; calls={'n':0}
       def racing_exchange(left,right):
         calls['n']+=1
         if calls['n']==1:
           Path(right).write_text('concurrent-user-content')
         return original(left,right)
-      with mock.patch.object(wt,'_renameat2_exchange',side_effect=racing_exchange):
+      with mock.patch.object(wt,'_atomic_exchange',side_effect=racing_exchange):
         with self.assertRaisesRegex(RuntimeError,'concurrent modification'):
           guarded_write(root,s,target,b'agent-content',expected_sha256=expected)
       self.assertEqual(target.read_text(),'concurrent-user-content')
@@ -75,14 +75,14 @@ class AtomicCompareExchangeTests(unittest.TestCase):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); target=root/'a.txt'; target.write_text('base')
       s=WriteTests().setup(root); expected=hash_file(target)
-      original=wt._renameat2_exchange; calls={'n':0}
+      original=wt._atomic_exchange; calls={'n':0}
       def failing_rollback(left,right):
         calls['n']+=1
         if calls['n']==1:
           Path(right).write_text('concurrent-user-content')
           return original(left,right)
         raise OSError('simulated rollback failure')
-      with mock.patch.object(wt,'_renameat2_exchange',side_effect=failing_rollback):
+      with mock.patch.object(wt,'_atomic_exchange',side_effect=failing_rollback):
         with self.assertRaisesRegex(RuntimeError,'preserved at') as ctx:
           guarded_write(root,s,target,b'agent-content',expected_sha256=expected)
       match=re.search(r'preserved at (.+)$',str(ctx.exception))
@@ -90,3 +90,26 @@ class AtomicCompareExchangeTests(unittest.TestCase):
       recovery=Path(match.group(1))
       self.assertTrue(recovery.exists())
       self.assertEqual(recovery.read_text(),'concurrent-user-content')
+
+class AtomicExchangeBackendTests(unittest.TestCase):
+  def test_platform_dispatches_to_darwin_backend(self):
+    from unittest import mock
+    import codex_loop_runtime.write_transaction as wt
+    with mock.patch.object(wt.sys,'platform','darwin'), mock.patch.object(wt,'_renamex_np_exchange') as darwin, mock.patch.object(wt,'_renameat2_exchange') as linux:
+      wt._atomic_exchange('left','right')
+      darwin.assert_called_once_with('left','right'); linux.assert_not_called()
+
+  def test_platform_dispatches_to_linux_backend(self):
+    from unittest import mock
+    import codex_loop_runtime.write_transaction as wt
+    with mock.patch.object(wt.sys,'platform','linux'), mock.patch.object(wt,'_renamex_np_exchange') as darwin, mock.patch.object(wt,'_renameat2_exchange') as linux:
+      wt._atomic_exchange('left','right')
+      linux.assert_called_once_with('left','right'); darwin.assert_not_called()
+
+  @unittest.skipUnless(sys.platform=='darwin','real renamex_np swap requires macOS')
+  def test_darwin_backend_swaps_real_files_atomically(self):
+    import codex_loop_runtime.write_transaction as wt
+    with tempfile.TemporaryDirectory() as tmp:
+      root=Path(tmp); left=root/'left'; right=root/'right'; left.write_text('left'); right.write_text('right')
+      wt._renamex_np_exchange(left,right)
+      self.assertEqual(left.read_text(),'right'); self.assertEqual(right.read_text(),'left')

@@ -18,6 +18,7 @@ from codex_loop_context_projection import build_working
 from codex_loop_runtime.change_tracker import sync_generation
 from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
+from codex_loop_runtime.lifecycle import DURABLE_SIGNAL_KEYS, assess_runtime_need
 from codex_loop_runtime.protocol import emit_error, emit_ok
 from codex_loop_runtime.state import active_task_id, open_store
 from codex_loop_runtime.workspace import repo_root
@@ -65,6 +66,16 @@ def _resolve_plan(store, generation: int, command: list[str], cwd: Path) -> dict
     if len(rows) > 1:
         raise RuntimeError('multiple unconsumed validation plans match the current generation/cwd/command; use an explicit plan id for low-level recovery')
     return {'plan_id': str(rows[0]['plan_id']), 'generation': int(generation), 'cwd': cwd_norm, 'identity': rec['sha256']}
+
+
+def _cmd_lifecycle_assess(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(add_help=False)
+    for key in DURABLE_SIGNAL_KEYS:
+        p.add_argument("--" + key.replace("_", "-"), action="store_true")
+    args = p.parse_args(argv[1:])
+    signals = {key: bool(getattr(args, key)) for key in DURABLE_SIGNAL_KEYS}
+    emit_ok(assess_runtime_need(signals))
+    return 0
 
 
 def _cmd_next(argv: list[str]) -> int:
@@ -141,7 +152,7 @@ def _cmd_validation_record(argv: list[str]) -> int:
 def _delegate(argv: list[str]) -> int:
     args = list(argv)
     command = args[0] if args else ''
-    task_scoped = command not in {'bootstrap', 'command-check', 'source-verify', '_serve'}
+    task_scoped = command not in {'bootstrap', 'lifecycle-assess', 'command-check', 'source-verify', '_serve'}
     if task_scoped and '--task-id' not in args and '--use-active-task' not in args:
         insert = args.index('--') if '--' in args else len(args)
         args.insert(insert, '--use-active-task')
@@ -158,6 +169,8 @@ def main() -> int:
     try:
         if not argv:
             return _delegate(argv)
+        if argv[0] == 'lifecycle-assess':
+            return _cmd_lifecycle_assess(argv)
         if argv[0] == 'next':
             return _cmd_next(argv)
         if argv[0] == 'validate':

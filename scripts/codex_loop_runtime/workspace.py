@@ -588,10 +588,26 @@ def ensure_inside_workspace(root: Path, target: Path) -> Path:
 
 def workspace_lexical_path(root: Path, target: Path) -> Path:
     root = root.resolve()
-    lexical = Path(target)
-    if not lexical.is_absolute():
-        lexical = root / lexical
-    lexical = Path(os.path.abspath(lexical))
+    raw = Path(target)
+    if not raw.is_absolute():
+        lexical = Path(os.path.abspath(root / raw))
+    else:
+        raw = Path(os.path.abspath(raw))
+        try:
+            raw.relative_to(root)
+            lexical = raw
+        except ValueError:
+            relative = None
+            for ancestor in raw.parents:
+                try:
+                    if ancestor.resolve(strict=False) == root:
+                        relative = raw.relative_to(ancestor)
+                        break
+                except (OSError, RuntimeError, ValueError):
+                    continue
+            if relative is None:
+                raise PermissionError(f"path is outside workspace: {raw}")
+            lexical = root / relative
     try:
         lexical.relative_to(root)
     except ValueError as exc:

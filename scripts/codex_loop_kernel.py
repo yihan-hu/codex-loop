@@ -41,7 +41,7 @@ from codex_loop_runtime.state import (
 )
 from codex_loop_runtime.upstream_verify import verify as verify_upstream
 from codex_loop_runtime.validation import validate
-from codex_loop_runtime.workspace import hash_file, hash_workspace_path, repo_root
+from codex_loop_runtime.workspace import hash_file, hash_workspace_path, repo_root, workspace_lexical_path
 from codex_loop_runtime.world_state import build as build_world_state
 from codex_loop_runtime.write_transaction import MAX_LOCAL_WRITE_BYTES, guarded_write
 
@@ -209,14 +209,10 @@ def cmd_validation_resolve(args: argparse.Namespace) -> None:
 
 
 def _read_local_content_file(root: Path, store, raw: str) -> bytes:
-    candidate = Path(raw)
-    if not candidate.is_absolute():
-        candidate = root / candidate
-    candidate = Path(os.path.abspath(candidate))
     base = root.resolve()
     try:
-        candidate.relative_to(base)
-    except ValueError as exc:
+        candidate = workspace_lexical_path(base, Path(raw))
+    except PermissionError as exc:
         raise PermissionError("--content-file must be inside the workspace; use stdin for external or runtime-private payloads") from exc
     cur = base
     for part in candidate.relative_to(base).parts:

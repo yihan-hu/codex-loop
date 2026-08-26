@@ -345,6 +345,23 @@
       ]
     },
     {
+      "divergence": "Adaptive lifecycle is a behavior-level capability projection over existing deterministic state: pre-runtime durable-state assessment plus derived active capabilities/requirements. It does not port or claim an upstream adaptive FSM, model scheduler, planning engine, or host orchestration authority.",
+      "local": "scripts/codex_loop_runtime/lifecycle.py",
+      "mode": "BEHAVIORAL_PORT",
+      "tests": {
+        "local": [
+          "tests/compat/test_lifecycle.py",
+          "tests/compat/test_context_projection.py"
+        ],
+        "upstream": []
+      },
+      "upstream": [
+        "codex-rs/core/src/tasks/mod.rs",
+        "codex-rs/core/src/tools/mod.rs",
+        "codex-rs/core/src/session/turn.rs"
+      ]
+    },
+    {
       "divergence": "Checkpoint/re-entry protocol, not actual host context compaction.",
       "local": "scripts/codex_loop_runtime/checkpoint.py",
       "mode": "BEHAVIORAL_PORT",
@@ -444,6 +461,7 @@
     "scripts/codex_loop_runtime/delegation.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/environment.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/instructions.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/lifecycle.py": "BEHAVIORAL_PORT",
     "scripts/codex_loop_runtime/output_buffer.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/output_stream.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/process_manager.py": "HYBRID",

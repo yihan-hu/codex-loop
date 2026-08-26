@@ -6,6 +6,7 @@ from typing import Any
 from codex_loop_runtime.change_tracker import changes, sync_generation
 from codex_loop_runtime.completion import CompletionDecision, assess
 from codex_loop_runtime.instructions import discover
+from codex_loop_runtime.lifecycle import derive_capability_state
 from codex_loop_runtime.release_lineage import workspace_binding_status
 from codex_loop_runtime.shell import default_user_shell
 from codex_loop_runtime.state import READ_ONLY_PROFILES, StateStore
@@ -335,6 +336,19 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
         for x in facts["stale_steers"][:MAX_WORKING_STEERS]
     ]
     reasons = list(decision.reasons)[:MAX_WORKING_REASONS]
+    lifecycle = derive_capability_state(
+        generation=int(facts["generation"]),
+        validation_status=validation_status,
+        review_status=review_status,
+        active_isolation=facts.get("active_isolation") is not None,
+        has_external_actions=bool(
+            store.unresolved_external_count()
+            or store.unresolved_external_failure_count()
+            or store.ambiguous_non_idempotent_identity_count()
+        ),
+        has_managed_processes=bool(store.running_process_count() or store.unresolved_process_failure_count()),
+        has_repository_instructions=bool(facts.get("instructions")),
+    )
     evidence_refs: list[dict[str, str]] = [
         {"ref": "changes:current", "inspect_with": "changes"},
         {"ref": "validation:current", "inspect_with": "snapshot"},
@@ -364,6 +378,7 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
             "completion_reasons": reasons,
             "delegation": "isolated" if facts.get("active_isolation") is not None else "main",
         },
+        "lifecycle": lifecycle,
         "warnings": list(facts.get("warnings", []))[-8:],
         "next_actions": _next_actions(facts, validation_status, review_status),
         "evidence_refs": evidence_refs,
