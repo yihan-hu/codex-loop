@@ -36,6 +36,20 @@ Do not create `final`, `publish`, `package-src`, or similar full-source copies a
 
 When the canonical workspace is accessed through Remote Desktop Commander, apply `remote-desktop-boundary.md` first. Keep the canonical repository and every Git worktree inside the task-scoped allowed roots. Do not search outside those roots for another checkout, credential file, release artifact, or package cache. Place disposable release staging, exported receipts, and artifacts only in an explicitly authorized scratch/artifact root.
 
+## Source-only push fast path
+
+When the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then plan with:
+
+```bash
+python3 scripts/codex_loop.py publish-plan --cwd REPO \
+  --repository OWNER/REPO --branch main \
+  --remote-head REMOTE_COMMIT --remote-tree REMOTE_TREE --source-only
+```
+
+`--source-only` publishes the current clean committed HEAD/tree directly after the normal validation/review and workspace-binding gates. It does not require `release-plan`, `skill.zip`, or `release-record`. Keep packaging/deployment as a later independent stage if the user asks for it.
+
+Freshness is content-addressed. A commit that merely records the already-reviewed Git index while preserving index/worktree/untracked/monitored-ignored content does not invalidate validation or review. A checkout/reset/content change still changes the content fingerprint and stales that evidence.
+
 ## Commit-bound release
 
 Release planning requires tracked/staged source to be committed. Untracked files are reported but excluded because export comes from the Git commit, not from a recursive directory copy.

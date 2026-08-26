@@ -22,9 +22,9 @@ git config --local --add credential.https://github.com.helper \
 
 ## Verified push sequence
 
-1. Validate and review the intended final change set in the canonical worktree.
-2. Commit the source and record the local commit/tree identity.
-3. Run `git fetch origin main` and observe the current remote commit/tree. If lineage diverged, integrate it locally and revalidate; never force around it.
+1. Validate and review the intended final content in the canonical worktree.
+2. Commit the source and record the local commit/tree identity. If the commit only records the already-reviewed content, the content-addressed freshness fingerprint remains unchanged; do not rerun validation/review solely because the commit SHA changed.
+3. Run `git fetch origin main` and observe the current remote commit/tree. For source-only push requests, use `publish-plan --source-only`; do not package a Skill or create a release receipt first. If lineage diverged, integrate it locally and revalidate; never force around it.
 4. Push with native Git from the canonical worktree, for example `GIT_TERMINAL_PROMPT=0 git push --porcelain origin main:main` with the PiWork `GH_CONFIG_DIR` exported when that helper is used.
 5. Run native `git fetch origin main` after the push.
 6. Require both `git rev-parse HEAD == git rev-parse origin/main` and `git rev-parse HEAD^{tree} == git rev-parse origin/main^{tree}` before recording success.

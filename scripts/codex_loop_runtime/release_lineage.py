@@ -437,12 +437,34 @@ def publish_plan(
     remote_tree: str | None = None,
     remote: str = "origin",
     release_id: str | None = None,
+    source_only: bool = False,
 ) -> dict[str, Any]:
+    from .change_tracker import sync_generation
+
+    root = root.resolve()
     store.ensure_active()
-    receipt = current_release_receipt(root, store, release_id)
+    sync_generation(root, store)
     _require_publish_audit_readiness(store)
-    if not receipt.get("current"):
-        raise RuntimeError("release receipt is stale; rebuild/re-record from the current canonical Git HEAD before publishing")
+
+    release_ref: str | None = None
+    if source_only:
+        binding = require_workspace_binding(root, store)
+        if not binding.get("is_git"):
+            raise RuntimeError("source publishing requires a Git working tree")
+        if _tracked_dirty(root):
+            raise RuntimeError("tracked or staged changes are not committed; source publish target must be the bound Git HEAD")
+        target_commit = git_head(root)
+        if not target_commit:
+            raise RuntimeError("source publish target has no Git HEAD commit")
+        target_tree = _commit_tree(root, target_commit)
+    else:
+        receipt = current_release_receipt(root, store, release_id)
+        if not receipt.get("current"):
+            raise RuntimeError("release receipt is stale; rebuild/re-record from the current canonical Git HEAD before publishing")
+        release_ref = str(receipt["release_id"])
+        target_commit = str(receipt["source_commit"])
+        target_tree = str(receipt["source_tree"])
+
     repo_name = str(repository).strip()
     branch_name = str(branch).strip()
     remote_name = str(remote).strip() or "origin"
@@ -450,8 +472,6 @@ def publish_plan(
         raise ValueError("repository and branch are required")
     observed_head = _validate_sha(remote_head, field="remote head")
     observed_tree = _validate_sha(remote_tree, field="remote tree") if remote_tree else None
-    target_commit = str(receipt["source_commit"])
-    target_tree = str(receipt["source_tree"])
     if observed_head == target_commit:
         if observed_tree and observed_tree != target_tree:
             raise RuntimeError("observed remote tree conflicts with the audited target commit")
@@ -463,46 +483,51 @@ def publish_plan(
             "remote_head": observed_head,
             "target_commit": target_commit,
             "target_tree": target_tree,
+            "source_only": bool(source_only),
         }
     if not _ancestor_status(root, observed_head, target_commit):
         return {
             "ready": False,
             "requires_integration": True,
-            "reason": "observed remote head is not an ancestor of the audited local release; fetch/integrate remote changes in this canonical worktree before publishing",
+            "reason": "observed remote head is not an ancestor of the audited local source; fetch/integrate remote changes in this canonical worktree before publishing",
             "repository": repo_name,
             "branch": branch_name,
             "remote_head": observed_head,
             "target_commit": target_commit,
             "target_tree": target_tree,
+            "source_only": bool(source_only),
         }
     local_remote_tree = _commit_tree(root, observed_head)
     if observed_tree and observed_tree != local_remote_tree:
         raise RuntimeError("observed remote tree does not match the locally known remote-head commit")
     configured = _git_text(root, ["remote", "get-url", remote_name], required=False) is not None
     action_identity = f"{repo_name}#{branch_name}@{target_commit}"
+    details = {
+        "repository": repo_name,
+        "branch": branch_name,
+        "source_commit": target_commit,
+        "source_tree": target_tree,
+        "expected_remote_head": observed_head,
+        "required_transport": "git",
+        "host_executor": "remote_desktop_commander",
+        "source_only": bool(source_only),
+    }
+    if release_ref:
+        details["release_id"] = release_ref
     action_id = store.record_external(
         "repository_publish",
         "planned",
         action_identity,
-        {
-            "repository": repo_name,
-            "branch": branch_name,
-            "release_id": receipt["release_id"],
-            "source_commit": target_commit,
-            "source_tree": target_tree,
-            "expected_remote_head": observed_head,
-            "required_transport": "git",
-            "host_executor": "remote_desktop_commander",
-        },
+        details,
         action_class="external_non_idempotent",
     )
-    return {
+    result = {
         "ready": True,
         "already_published": False,
         "action_id": action_id,
-        "release_id": receipt["release_id"],
         "repository": repo_name,
         "branch": branch_name,
+        "source_only": bool(source_only),
         "precondition": {"remote_head_must_remain": observed_head},
         "target": {"commit": target_commit, "tree": target_tree},
         "transport_order": ["git"],
@@ -512,12 +537,15 @@ def publish_plan(
             "required": True,
             "configured_remote": configured,
             "requires_host_visible_execution": True,
-            "cwd": str(root.resolve()),
+            "cwd": str(root),
             "argv": ["git", "push", "--porcelain", remote_name, f"{target_commit}:refs/heads/{branch_name}"],
-            "success_requirement": "read back the remote ref and tree with native Git and require remote commit/tree == audited local release commit/tree",
+            "success_requirement": "read back the remote ref and tree with native Git and require remote commit/tree == audited local source commit/tree",
             "failure_rule": "fail closed and report the native Git/network/authentication blocker; do not switch publish transport",
         },
     }
+    if release_ref:
+        result["release_id"] = release_ref
+    return result
 
 
 def _model_dispatch_queue_metadata(root: Path, base_commit: str, target_commit: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
@@ -2096,23 +2124,31 @@ def record_publish_outcome(
         raise ValueError("publish transport does not match the dispatched transport")
     release_id = details.get("release_id")
     receipt = store.release_receipt(str(release_id)) if release_id else None
-    if receipt is None:
-        raise RuntimeError("publish action does not reference a valid release receipt")
+    if receipt is not None:
+        source_commit = str(receipt["source_commit"])
+        source_tree = str(receipt["source_tree"])
+    else:
+        source_commit = _validate_sha(str(details.get("source_commit") or ""), field="source commit")
+        source_tree = _validate_sha(str(details.get("source_tree") or ""), field="source tree")
+        if not bool(details.get("source_only")):
+            raise RuntimeError("publish action does not reference a valid release receipt or an audited source-only target")
     result_details: dict[str, Any] = {
         "transport": transport,
-        "release_id": receipt["release_id"],
-        "source_commit": receipt["source_commit"],
-        "source_tree": receipt["source_tree"],
+        "source_commit": source_commit,
+        "source_tree": source_tree,
+        "source_only": bool(details.get("source_only")),
         "evidence": clean_evidence,
     }
+    if receipt is not None:
+        result_details["release_id"] = receipt["release_id"]
     if state == "terminal_success":
         if not remote_commit or not remote_tree:
             raise ValueError("successful publish requires observed remote commit and tree")
         observed_commit = _validate_sha(remote_commit, field="remote commit")
         observed_tree = _validate_sha(remote_tree, field="remote tree")
-        if observed_tree != receipt["source_tree"]:
-            raise RuntimeError("remote tree does not equal the audited release tree")
-        if observed_commit != receipt["source_commit"]:
+        if observed_tree != source_tree:
+            raise RuntimeError("remote tree does not equal the audited source tree")
+        if observed_commit != source_commit:
             raise RuntimeError("native git push did not publish the audited local commit")
         result_details.update({"remote_commit": observed_commit, "remote_tree": observed_tree})
     else:

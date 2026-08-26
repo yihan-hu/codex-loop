@@ -541,22 +541,28 @@ def workspace_fingerprint(root: Path) -> str:
     repo_probe = git_repo_probe(root)
     if repo_probe is True:
         h = hashlib.sha256()
-        head, head_failed = _git_head_probe(root)
         branch, branch_failed = _git_branch_probe(root)
-        h.update((head or "").encode())
-        h.update(b"\0")
         h.update((branch or "").encode())
         h.update(b"\0")
-        if head_failed or branch_failed:
+        if branch_failed:
             h.update(b"<git-identity-probe-failed>")
         status_raw = git_status_porcelain_z(root)
-        if status_raw is None:
-            h.update(b"<git-status-probe-failed>")
-        else:
-            h.update(status_raw)
-        staged = _git_output_sha256(root, ["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv"])
+        index_state = _git_output_sha256(root, ["ls-files", "--stage", "-z"])
         worktree = _git_output_sha256(root, ["diff", "--binary", "--no-ext-diff", "--no-textconv"])
-        if status_raw is None or staged is None or worktree is None or head_failed or branch_failed:
+        worktree_status = None
+        if status_raw is not None:
+            status_hash = hashlib.sha256()
+            for entry in parse_status_porcelain_z(status_raw):
+                if entry.get("kind") == "untracked":
+                    continue
+                code = str(entry.get("worktree", " "))
+                if code in {" ", "?"}:
+                    continue
+                status_hash.update(code.encode()); status_hash.update(b"\0")
+                status_hash.update(str(entry.get("path", "")).encode("utf-8", errors="surrogateescape")); status_hash.update(b"\0")
+                status_hash.update(str(entry.get("old_path", "")).encode("utf-8", errors="surrogateescape")); status_hash.update(b"\0")
+            worktree_status = status_hash.hexdigest()
+        if status_raw is None or index_state is None or worktree is None or worktree_status is None or branch_failed:
             # Fail closed: a broken/slow Git probe must never make stale validation look fresh.
             h.update(b"\0DEGRADED_FULL_FILE_FINGERPRINT\0")
             for item in snapshot_files(root):
@@ -564,8 +570,14 @@ def workspace_fingerprint(root: Path) -> str:
                 h.update(item.sha256.encode()); h.update(b"\0")
                 h.update(str(item.mode).encode()); h.update(b"\0")
         else:
-            h.update(b"\0INDEX\0"); h.update(staged.encode())
+            # Freshness is content-addressed, not commit-addressed. The index state is
+            # identical immediately before and after a commit that merely records the
+            # already-reviewed content, so that commit does not stale validation/review.
+            # A checkout/reset/content change still changes index_state/worktree and
+            # therefore advances the generation.
+            h.update(b"\0INDEX_STATE\0"); h.update(index_state.encode())
             h.update(b"\0WORKTREE\0"); h.update(worktree.encode())
+            h.update(b"\0WORKTREE_STATUS\0"); h.update(worktree_status.encode())
         h.update(b"\0UNTRACKED\0")
         h.update(_untracked_content_fingerprint(root))
         h.update(b"\0IGNORED_WATCH\0")
