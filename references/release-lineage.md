@@ -58,7 +58,7 @@ The receipt is bound to task generation, source commit, source tree, artifact na
 
 ## Integrated publish flow
 
-Codex Loop uses one verified publish transport only: native Git executed through Remote Desktop Commander on the persistent canonical repository under `/Users/yihanhu/PiWork`. GitHub connector/object-API source upload is not a supported fallback.
+Codex Loop uses one verified publish transport only: native Git executed through Remote Desktop Commander on the persistent canonical repository under `/Users/yihanhu/PiWork`. GitHub connector/object-API source upload is not a supported fallback. Read `verified-native-git.md` for the end-to-end verified host authentication, native push, and commit/tree readback sequence.
 
 First use native Git in the canonical worktree to fetch/observe the destination branch, then call:
 
