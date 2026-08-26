@@ -21,6 +21,7 @@ Use Remote Desktop Commander only inside the persistent authorized root `/Users/
 - Do not read credential material directly. Let Git, SSH, the OS credential helper, or the host-owned connector consume credentials through their normal interfaces.
 - Do not weaken Desktop Commander host configuration such as `allowedDirectories` during an ordinary coding task. If the host already enforces a narrower boundary, respect it. Treat host enforcement and this Skill's allowlist as cumulative; the narrower boundary wins.
 - Do not use Remote Desktop Commander text/file-write primitives to reconstruct a session-only archive or source tree from model-carried chunks, base64, heredocs, or repeated writes merely because a direct binary transfer bridge is missing. Explain the boundary and ask the user to place the real file under PiWork or explicitly authorize a specific alternate transfer method.
+- When the user explicitly authorizes `GUARDED_SINGLE_SHOT_RELAY`, keep its envelope, partial file, and verified destination under an authorized root; decode only the uniquely framed payload, require exact size/SHA-256, and atomically rename only after verification. Guard damage may be diagnostic, but payload integrity failure must remain a failure.
 
 ## Establishing a workspace
 

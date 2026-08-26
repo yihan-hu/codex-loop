@@ -45,6 +45,8 @@ When no verified binary transfer bridge exists between the current source and de
 
 If the user explicitly authorizes an alternate transfer method, scope that authorization to the named transfer, preserve checksums when practical, verify the destination bytes/tree before treating the transfer as successful, and never promote a transferred artifact into the canonical source baseline.
 
+For an explicitly authorized model-carried transfer, use `references/verified-model-relay.md`: try `GUARDED_SINGLE_SHOT_RELAY` before chunking, treat prefix/suffix guards as sacrificial framing, normalize only ASCII whitespace inside the Base64 interval, and require exact decoded size plus full SHA-256 before publishing the destination. A failed single-shot attempt may surface `VERIFIED_CHUNK_RELAY` as fallback; never heuristically repair unknown interior corruption.
+
 ## Similar-problem user guidance
 
 When a user asks why a local repo change is not visible in ChatGPT, explain the source/release/deployment separation before trying tools. Tell them that Git push updates GitHub, packaging creates the installable release artifact, and the installed ChatGPT Skill still requires an explicit supported deployment step unless a real synchronization mechanism is available.

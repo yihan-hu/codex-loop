@@ -48,6 +48,8 @@ When the task includes packaging or publishing, read `references/release-lineage
 
 Treat source publication, Skill packaging, and ChatGPT deployment as separate stages. Read `references/skill-deployment.md` whenever a task installs/updates a Skill, moves artifacts between ChatGPT and PiWork, or raises a synchronization question. Keep the PiWork Git repository as source of truth, GitHub as the durable remote, `skill.zip` as a release artifact, and the installed ChatGPT Skill as a deployed copy. Never assume Git push or local packaging automatically updates the installed Skill. If a required binary transfer bridge is unavailable, explain the exact boundary to the user and request real file placement/transfer or explicit authorization for a specific alternate data plane. Do not simulate missing file transfer by chunking source/archive bytes through model text, base64, heredocs, repeated remote writes, or connector payloads unless the user explicitly authorizes that exact method after the limitation is disclosed.
 
+After the user explicitly authorizes a model-carried transfer as that alternate data plane, read `references/verified-model-relay.md`. Prefer the guarded single-shot envelope first to absorb edge/framing contamination without weakening integrity; accept success only after exact decoded size and SHA-256 verification, and use the verified chunk relay only as the declared fallback.
+
 The local runtime never owns credentials, network access, connector dispatch, or GitHub permissions. It owns lineage, preconditions, object manifests, release receipts, and external-action state only.
 
 ## Delegation fallback

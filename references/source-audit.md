@@ -24,3 +24,7 @@ Delegation / Logical Isolation is a Codex Loop / Chatbox local extension, not an
 ## Local canonical workspace / release extension
 
 Canonical workspace binding, commit/tree-bound release receipts, and native-Git publish orchestration are Codex Loop local extensions. They do not claim to port Codex network, credential, or GitHub authority. Publishing is intentionally restricted to native Git executed by the host through Remote Desktop Commander on the persistent PiWork workspace; GitHub connector/object-API source upload is not a supported transport.
+
+## Local guarded model-relay extension
+
+`GUARDED_SINGLE_SHOT_RELAY` is a Codex Loop local extension for a user-explicit alternate data plane. It supplies deterministic framing, narrow ASCII-whitespace normalization, strict Base64 decode, size/SHA-256 verification, and atomic destination publication. The ChatGPT host still owns model/tool dispatch and cross-surface carriage; the extension does not claim an upstream Codex file-transfer primitive or host network authority.
