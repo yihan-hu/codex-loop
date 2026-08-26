@@ -458,6 +458,7 @@
     "scripts/codex_loop_runtime/environment.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/instructions.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/lifecycle.py": "LOCAL_EXTENSION",
+    "scripts/codex_loop_runtime/model_relay.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/output_buffer.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/output_stream.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/process_manager.py": "HYBRID",

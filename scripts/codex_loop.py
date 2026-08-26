@@ -19,6 +19,14 @@ from codex_loop_runtime.change_tracker import sync_generation
 from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
 from codex_loop_runtime.lifecycle import DURABLE_SIGNAL_KEYS, assess_runtime_need
+from codex_loop_runtime.model_relay import (
+    DEFAULT_GUARD_BYTES,
+    DEFAULT_LINE_WIDTH,
+    RelayError,
+    failure_result,
+    frame_file,
+    receive_file,
+)
 from codex_loop_runtime.protocol import emit_error, emit_ok
 from codex_loop_runtime.state import active_task_id, open_store
 from codex_loop_runtime.workspace import repo_root
@@ -149,6 +157,58 @@ def _cmd_validation_record(argv: list[str]) -> int:
     return 0
 
 
+
+def _path_from(raw: str, cwd: Path) -> Path:
+    path = Path(raw)
+    return path.resolve() if path.is_absolute() else (cwd / path).resolve()
+
+
+def _cmd_relay_frame(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument('--cwd')
+    p.add_argument('--input', required=True)
+    p.add_argument('--output', required=True)
+    p.add_argument('--transfer-id')
+    p.add_argument('--guard-bytes', type=int, default=DEFAULT_GUARD_BYTES)
+    p.add_argument('--line-width', type=int, default=DEFAULT_LINE_WIDTH)
+    p.add_argument('--overwrite', action='store_true')
+    args = p.parse_args(argv[1:])
+    cwd = _cwd(args.cwd)
+    emit_ok(frame_file(
+        _path_from(args.input, cwd),
+        _path_from(args.output, cwd),
+        transfer_id=args.transfer_id,
+        guard_bytes=args.guard_bytes,
+        line_width=args.line_width,
+        overwrite=args.overwrite,
+    ))
+    return 0
+
+
+def _cmd_relay_receive(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument('--cwd')
+    p.add_argument('--envelope', required=True)
+    p.add_argument('--output', required=True)
+    p.add_argument('--expected-size', type=int)
+    p.add_argument('--expected-sha256')
+    p.add_argument('--overwrite', action='store_true')
+    args = p.parse_args(argv[1:])
+    cwd = _cwd(args.cwd)
+    try:
+        result = receive_file(
+            _path_from(args.envelope, cwd),
+            _path_from(args.output, cwd),
+            overwrite=args.overwrite,
+            expected_size=args.expected_size,
+            expected_sha256=args.expected_sha256,
+        )
+    except RelayError as exc:
+        emit_ok(failure_result(exc))
+        return 2
+    emit_ok(result)
+    return 0
+
 def _delegate(argv: list[str]) -> int:
     args = list(argv)
     command = args[0] if args else ''
@@ -177,6 +237,10 @@ def main() -> int:
             return _cmd_validate(argv)
         if argv[0] == 'validation-record':
             return _cmd_validation_record(argv)
+        if argv[0] == 'relay-frame':
+            return _cmd_relay_frame(argv)
+        if argv[0] == 'relay-receive':
+            return _cmd_relay_receive(argv)
         return _delegate(argv)
     except Exception as exc:
         emit_error(exc)
