@@ -125,11 +125,65 @@ ChatGPT workspace
   -> delete the temporary Drive archive
 ```
 
-One-time setup requires a connected Google Drive, a dedicated `ChatGPT-GitHub-Staging` folder shared as **Anyone with the link -> Viewer**, GitHub Actions enabled on the target repository, workflow permissions set to read/write, and the audited workspace-import workflow. For an empty repository, Codex Loop may bootstrap only that small trusted workflow through the GitHub Connector before the first source import.
+### One-time Web-mode setup
 
-The Drive archive is temporarily anyone-with-link readable. Use this path only for source that can tolerate that temporary exposure, and keep the staging folder dedicated to publication artifacts. GitHub Connector writes are control plane only; repository source bytes do not travel through connector-created blobs/trees, model text, or Base64.
+This path does **not** require Remote Desktop Commander, a local checkout, local Git, or your computer to stay online. The ChatGPT workspace remains the source of truth and the transfer is completed by connected cloud services.
+
+#### 1. Connect Google Drive to ChatGPT
+
+Connect Google Drive with permission to upload and delete files. In Drive, create a dedicated folder named `ChatGPT-GitHub-Staging` (or another explicitly configured name), then set **Share -> General access -> Anyone with the link -> Viewer**. Keep this folder dedicated to temporary publication archives.
+
+Codex Loop does not hard-code your Drive folder ID. It resolves the configured folder by name or by a folder URL/ID supplied in the conversation, verifies that the folder is `anyone: reader`, uploads the real workspace archive through the connector's binary `file_uri` input, and reads metadata back to confirm the parent folder and byte size.
+
+#### 2. Connect GitHub to ChatGPT
+
+The GitHub connection must have access to the target repository and permission to create or update the small control-plane files used by the importer. Web-mode publication does not require a local `gh` login, a local Git credential helper, or the OAuth `workflow` scope used by Local-mode native Git.
+
+#### 3. Configure GitHub Actions for each target repository
+
+Open **Repository -> Settings -> Actions -> General** and check the following:
+
+- **Actions permissions:** allow GitHub Actions to run for the repository. `Allow all actions and reusable workflows` is the simplest compatible setting unless your organization has a stricter approved policy.
+- **Workflow permissions:** select **Read and write permissions** so the import workflow's `GITHUB_TOKEN` can create the verified source commit.
+- **Branch rules:** the destination branch must permit the workflow's normal non-force push. Codex Loop never disables branch protection or force-pushes around it. If organization policy blocks the workflow, change the repository/organization policy rather than weakening the importer.
+
+The repository also needs the audited `.github/workflows/workspace-import.yml`. On first use, if it is absent, Codex Loop may bootstrap that small trusted workflow through the GitHub Connector. In an empty repository this control-plane bootstrap can be the first commit; source files themselves must still arrive through Drive -> Actions, not through GitHub contents/blob APIs.
+
+#### 4. What happens on the first and later pushes
+
+When you ask Codex Loop to push a Web-mode workspace, it will:
+
+1. build one deterministic `tar.gz` with exactly one top-level source directory;
+2. record the archive byte size and SHA-256;
+3. upload the binary archive to the dedicated Drive staging folder and verify inherited public-read metadata;
+4. observe the exact GitHub branch head and create one small import-request JSON bound to that base commit, target branch, Drive file ID, size, and SHA-256;
+5. wait for the audited Actions workflow to download the archive, verify size/SHA-256, reject unsafe archive entries, and perform a non-force source commit/push;
+6. verify the workflow receipt and independently read back the target GitHub branch commit/tree;
+7. delete the temporary Drive archive after verified success.
+
+A workflow conclusion of `success` alone is not enough: Codex Loop requires the receipt-bound commit/tree to match the actual target branch before reporting `SOURCE_PUSHED`.
+
+### Web-mode setup checklist
+
+Before the first push to a repository, confirm:
+
+- [ ] Google Drive is connected to ChatGPT with file upload/delete capability.
+- [ ] `ChatGPT-GitHub-Staging` exists and is **Anyone with the link -> Viewer**.
+- [ ] GitHub is connected to ChatGPT and can write the target repository's small control-plane files.
+- [ ] GitHub Actions is enabled for the repository.
+- [ ] Workflow permissions are **Read and write permissions**.
+- [ ] Branch rules allow the audited workflow's ordinary non-force push.
+- [ ] The source can tolerate temporary anyone-with-link readability while staged.
+
+The Drive archive is temporarily anyone-with-link readable. Do not use this path for credentials, private keys, secrets, or source that cannot tolerate that temporary exposure. GitHub Connector writes are control plane only; repository source bytes do not travel through connector-created blobs/trees, model text, or Base64.
 
 A Web-mode `push` does not switch the conversation into Local mode. If the prerequisites are missing or the staging trust boundary is unacceptable, Codex Loop reports the blocker and preserves the Web workspace.
+
+Example prompt:
+
+```text
+Use Codex Loop in Web mode to update this repository, test it, and push the current workspace to OWNER/REPO main.
+```
 
 ## Publishing from Local mode
 
