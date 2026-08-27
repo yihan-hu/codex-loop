@@ -57,6 +57,27 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("head_sha", deployment)
         self.assertIn("download_workflow_artifact", deployment)
 
+    def test_development_location_is_mandatory_pre_tool_gate(self):
+        skill = (ROOT / "SKILL.md").read_text()
+        deployment = (ROOT / "references" / "skill-deployment.md").read_text()
+        local_setup = (ROOT / "references" / "local-mode-setup.md").read_text()
+        readme = (ROOT / "README.md").read_text()
+
+        self.assertIn("Mandatory pre-tool routing gate", skill)
+        self.assertIn("Before the first repository/filesystem observation or discovery", skill)
+        self.assertIn("Fail-closed Web rule", skill)
+        self.assertIn("RDC availability", skill)
+        self.assertIn("absence of an obvious Web-mode mutation/publish bridge", skill)
+        self.assertIn("Web-push then Mac-sync sequencing", skill)
+        self.assertIn("downstream destination of the exact pushed commit", skill)
+
+        self.assertIn("Development mode is a pre-tool gate", deployment)
+        self.assertIn("Web mode fails closed", deployment)
+        self.assertIn("do not inspect the Mac before publication", deployment)
+        self.assertIn("Development-location resolution must happen before any RDC/local-filesystem discovery", local_setup)
+        self.assertIn("pre-tool routing gate", readme)
+        self.assertIn("Web edit/validate/review -> verified Web publish", readme)
+
     def test_public_readme_and_configurable_local_root_contract(self):
         readme = (ROOT / "README.md").read_text()
         local_setup = (ROOT / "references" / "local-mode-setup.md").read_text()

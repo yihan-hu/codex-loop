@@ -21,6 +21,10 @@ Do not infer a root from the repository author's home directory, a stale prior c
 
 A new conversation starts in Web mode. Selecting Local mode activates the resolved `LOCAL_ROOT` for later repository tasks in that same conversation until the user explicitly switches back to Web mode.
 
+Development-location resolution must happen before any RDC/local-filesystem discovery or repository operation. Do not use RDC to look for a local checkout first and then infer that the conversation is in Local mode. An explicit request to synchronize a verified Web-mode push to the Mac permits a downstream local synchronization phase only after Web publication has completed; the local repository must be updated from the exact verified remote commit rather than consulted as a competing development baseline.
+
+If the current ChatGPT/Web workspace lacks an obvious write or publication bridge, that absence does not resolve `LOCAL_ROOT` and does not authorize Local mode. Stay in Web mode and surface the missing capability instead of probing the Mac.
+
 The development-location choice is conversation-scoped, but each durable runtime task still binds independently to one canonical Git working tree under `LOCAL_ROOT`. Sibling repositories and worktrees do not become interchangeable source baselines.
 
 A new conversation does not inherit Local mode merely because RDC remains connected or the same local repository still exists. Local mode must be explicitly selected again; the local root can then be resolved from the new conversation and host authorization state.

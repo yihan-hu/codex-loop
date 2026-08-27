@@ -106,6 +106,10 @@ new conversation
 
 A generic `push` request does not silently move a Web-mode task onto your computer. Local mode must have been explicitly selected in the current conversation first.
 
+Codex Loop treats development-mode selection as a **pre-tool routing gate**. Before it searches a repository, mutates files, packages a release, runs Git, transfers/synchronizes source, or invokes RDC for a repository/Skill-development task, it resolves whether the conversation is still in Web mode or has explicitly entered Local mode. A connected Mac, a visible local checkout, or the absence of an obvious Web write bridge is never enough to switch modes. If Web-mode capability is missing, Codex Loop fails closed and reports that boundary instead of probing the Mac as a fallback.
+
+If you explicitly ask to fix something in the current ChatGPT workspace, push it, **then** sync the pushed result to your Mac, the ordering is fixed: Web edit/validate/review -> verified Web publish -> resolve authorized `LOCAL_ROOT` -> update the Mac repository from the exact pushed commit. The Mac checkout is downstream synchronization state, not the source baseline for that already-audited Web change.
+
 Each durable runtime task still has its own repository/worktree binding even though the development-location choice persists for the conversation.
 
 ## Publishing from Web mode
