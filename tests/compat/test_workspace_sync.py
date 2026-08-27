@@ -40,11 +40,16 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("OWNER/REPO", proc.stdout + proc.stderr)
 
-    def test_docs_make_web_default_and_local_sync_opt_in(self):
+    def test_docs_make_web_new_conversation_default_and_local_mode_conversation_persistent(self):
         skill = (ROOT / "SKILL.md").read_text()
         deployment = (ROOT / "references" / "skill-deployment.md").read_text()
-        self.assertIn("Default to **web mode**", skill)
-        self.assertIn("Enter **local mode** only", skill)
+        verified_git = (ROOT / "references" / "verified-native-git.md").read_text()
+        self.assertIn("A new conversation starts in **web mode**", skill)
+        self.assertIn("later repository tasks in the same conversation inherit local mode", skill)
+        self.assertIn("A new conversation resets to web mode", skill)
+        self.assertIn("Local mode is explicit once per conversation", deployment)
+        self.assertIn("local-mode state does not persist across conversations", deployment)
+        self.assertIn("without requiring the user to repeat the mode selection", verified_git)
         self.assertIn("workspace-sync-offer", skill)
         self.assertNotIn("chatbox-handoff", skill)
         self.assertIn("Local post-push workspace synchronization", deployment)

@@ -1,6 +1,6 @@
 # Canonical workspace and release lineage
 
-Use Git identity to keep source, audit, packaging, and publishing on one lineage after a task has explicitly selected local/PiWork mode. This is a Codex Loop local extension; network access, GitHub credentials, connector dispatch, and approval remain host-owned.
+Use Git identity to keep source, audit, packaging, and publishing on one lineage when the current conversation has entered local/PiWork mode. This is a Codex Loop local extension; network access, GitHub credentials, connector dispatch, and approval remain host-owned.
 
 ## Invariants
 

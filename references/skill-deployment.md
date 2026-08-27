@@ -4,9 +4,10 @@ Keep development location, source lineage, workspace synchronization, and ChatGP
 
 ## Development modes
 
-- **Web mode is the default.** The current ChatGPT/web workspace is the task mutable source baseline. Make edits and validations there and return generated files with normal workspace download links. Do not enter PiWork or use Remote Desktop Commander merely because those capabilities are available.
-- **Local mode is explicit.** Enter it only when the user asks for local/PiWork/Remote Desktop Commander development or an equivalent persistent-Mac workflow. In that mode `/Users/yihanhu/PiWork/<repo>` is the authoritative mutable source workspace and GitHub is its durable remote.
-- A generic `push` request does not silently convert a web-mode task into local mode. If the only verified publish path requires PiWork, preserve the web result and surface that requirement instead of migrating source without authorization.
+- **A new conversation starts in web mode.** The current ChatGPT/web workspace is the mutable source baseline. Make edits and validations there and return generated files with normal workspace download links. Do not enter PiWork or use Remote Desktop Commander merely because those capabilities are available.
+- **Local mode is explicit once per conversation.** Enter it when the user asks for local/PiWork/Remote Desktop Commander development or an equivalent persistent-Mac workflow and the conversation has not already entered local mode. Once selected, keep local mode for later repository tasks in that same conversation unless the user explicitly switches back to web mode. In local mode `/Users/yihanhu/PiWork/<repo>` is the authoritative mutable source workspace and GitHub is its durable remote.
+- A generic `push` request does not silently convert a conversation that is still in web mode into local mode. If the only verified publish path requires PiWork, preserve the web result and surface that requirement instead of migrating source without authorization.
+- **Conversation reset.** A new conversation starts in web mode again; local-mode state does not persist across conversations.
 - `skill.zip` is a release/install artifact, not a development baseline in either mode. The installed ChatGPT Skill is a deployed copy and never becomes source-of-truth merely because installation succeeded.
 
 ## Stage separation
@@ -14,14 +15,14 @@ Keep development location, source lineage, workspace synchronization, and ChatGP
 Use these conceptual flows:
 
 ```text
-Web mode (default)
+Web mode (default at conversation start)
   current ChatGPT workspace
   -> edit / validate / review
   -> return downloadable files/links
   -> if this is a Skill and installation is requested: validate/package skill.zip
   -> explicit ChatGPT install/update action
 
-Local mode (explicit only)
+Local mode (after explicit selection; persists for this conversation)
   PiWork canonical repo
   -> edit / validate / review
   -> git commit
@@ -44,7 +45,7 @@ These are reporting labels, not extra runtime state commands. Never report `DEPL
 
 ## Local post-push workspace synchronization
 
-This path applies only after the user explicitly selected local mode and a native-Git push has been verified by remote commit/tree readback. After that success, generate a deterministic offer:
+This path applies when the current conversation is in local mode and a native-Git push has been verified by remote commit/tree readback. After that success, generate a deterministic offer:
 
 ```bash
 python3 scripts/codex_loop.py workspace-sync-offer --repository OWNER/REPO --commit FULL_40_HEX_SHA
