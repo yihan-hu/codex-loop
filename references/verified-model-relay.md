@@ -1,6 +1,6 @@
 # Verified model relay
 
-Use this reference only after the user explicitly authorizes a model-carried file transfer as an alternate data plane. It is a slow fallback for a file that otherwise cannot cross the ChatGPT/PiWork boundary. It is not a binary bridge, is never the repository publish transport, and must never be enabled silently.
+Use this reference only after the user explicitly authorizes a model-carried file transfer as an alternate data plane. It is a slow fallback for a file that otherwise cannot cross the ChatGPT/local-host boundary. It is not a binary bridge, is never the repository publish transport, and must never be enabled silently.
 
 ## Goal
 
@@ -94,4 +94,4 @@ The guard is diagnostic and sacrificial. A guard mismatch alone does not make a 
 
 This transport is allowed only for the specifically authorized file movement. It does not become standing permission for future model-carried transfers. It must not be used for normal Git publication, to replace native Git, to bypass a working binary bridge, or to promote a transferred artifact into a canonical source baseline without the normal workspace/lineage checks.
 
-For every relay command, pass `--cwd` as the exact authorized filesystem root. The CLI resolves input/envelope/output paths and rejects any effective target outside that root, including a symlink escape. On Remote Desktop Commander use `--cwd /Users/yihanhu/PiWork` unless the user explicitly authorizes another narrow temporary root. The host remains responsible for actual tool dispatch, filesystem/network permissions, and carrying the envelope text between surfaces.
+For every relay command, pass `--cwd` as the exact authorized filesystem root. The CLI resolves input/envelope/output paths and rejects any effective target outside that root, including a symlink escape. On Remote Desktop Commander, substitute the exact resolved absolute `LOCAL_ROOT` for `--cwd`; never pass the literal placeholder. Use another narrow temporary root only when the user explicitly authorizes it. The host remains responsible for actual tool dispatch, filesystem/network permissions, and carrying the envelope text between surfaces.

@@ -1,6 +1,6 @@
 # Canonical workspace and release lineage
 
-Use Git identity to keep source, audit, packaging, and publishing on one lineage when the current conversation has entered local/PiWork mode. This is a Codex Loop local extension; network access, GitHub credentials, connector dispatch, and approval remain host-owned.
+Use Git identity to keep source, audit, packaging, and publishing on one lineage when the current conversation has entered Local mode. This is a Codex Loop local extension; network access, GitHub credentials, connector dispatch, and approval remain host-owned.
 
 ## Invariants
 
@@ -72,7 +72,7 @@ The receipt is bound to task generation, source commit, source tree, artifact na
 
 ## Integrated publish flow
 
-For explicit local/PiWork mode, Codex Loop uses one verified publish transport only: native Git executed through Remote Desktop Commander on the persistent canonical repository under `/Users/yihanhu/PiWork`. GitHub connector/object-API source upload is not a supported fallback. Read `verified-native-git.md` for the end-to-end verified host authentication, native push, and commit/tree readback sequence.
+For Local mode, Codex Loop uses one verified publish transport only: native Git executed through Remote Desktop Commander on the persistent canonical repository under `LOCAL_ROOT`. GitHub connector/object-API source upload is not a supported fallback. Read `verified-native-git.md` for the end-to-end verified host authentication, native push, and commit/tree readback sequence.
 
 First use native Git in the canonical worktree to fetch/observe the destination branch, then call:
 
@@ -109,9 +109,9 @@ If the push outcome is ambiguous, inspect the real remote state with native Git 
 
 ## Packaging versus ChatGPT deployment
 
-Treat the packaged `skill.zip` as an immutable release artifact derived from the audited Git commit, not as proof that the installed ChatGPT Skill changed. Do not assume local PiWork changes or a successful GitHub push synchronize into ChatGPT automatically. When deployment matters, read `skill-deployment.md`, report the deployment state separately, and require an explicit supported installation/update action or observed user confirmation before calling the Skill deployed.
+Treat the packaged `skill.zip` as an immutable release artifact derived from the audited Git commit, not as proof that the installed ChatGPT Skill changed. Do not assume local source changes or a successful GitHub push synchronize into ChatGPT automatically. When deployment matters, read `skill-deployment.md`, report the deployment state separately, and require an explicit supported installation/update action or observed user confirmation before calling the Skill deployed.
 
-If an artifact exists only on one side of a ChatGPT/PiWork boundary and no verified binary file-transfer bridge is available, stop and explain that boundary. Do not reconstruct the artifact through model-carried chunks, base64, heredocs, repeated file writes, or connector payloads merely to bridge the gap. Use such an alternate data plane only when the user explicitly authorizes that exact method after the limitation and integrity risk are stated.
+If an artifact exists only on one side of a ChatGPT/local-host boundary and no verified binary file-transfer bridge is available, stop and explain that boundary. Do not reconstruct the artifact through model-carried chunks, base64, heredocs, repeated file writes, or connector payloads merely to bridge the gap. Use such an alternate data plane only when the user explicitly authorizes that exact method after the limitation and integrity risk are stated.
 
 ## Responsibility split
 
@@ -119,7 +119,7 @@ If an artifact exists only on one side of a ChatGPT/PiWork boundary and no verif
 Codex Loop        -> canonical workspace, Git lineage, audit/release receipts, publish plan/state
 Git               -> files, modes, commits, trees, ancestry, diffs
 Packager          -> audited HEAD export -> skill.zip release artifact
-RDC host          -> persistent PiWork filesystem, native Git/network execution, and host-managed credentials
+RDC host          -> persistent LOCAL_ROOT filesystem, native Git/network execution, and host-managed credentials
 ChatGPT deployment -> explicit install/update of the packaged Skill; never the source baseline
 ```
 

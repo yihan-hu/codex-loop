@@ -57,6 +57,24 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("head_sha", deployment)
         self.assertIn("download_workflow_artifact", deployment)
 
+    def test_public_readme_and_configurable_local_root_contract(self):
+        readme = (ROOT / "README.md").read_text()
+        local_setup = (ROOT / "references" / "local-mode-setup.md").read_text()
+        skill = (ROOT / "SKILL.md").read_text()
+        self.assertIn("## What it can do", readme)
+        self.assertIn("## Local mode requirements", readme)
+        self.assertIn("Remote Desktop Commander", readme)
+        self.assertIn("workspace-download.yml", readme)
+        self.assertIn("## Skill packaging and installation", readme)
+        self.assertIn("`LOCAL_ROOT`", local_setup)
+        self.assertIn("If `LOCAL_ROOT` is unresolved", local_setup)
+        self.assertIn("references/local-mode-setup.md", skill)
+
+    def test_public_docs_do_not_hardcode_author_local_root(self):
+        docs = [ROOT / "SKILL.md", ROOT / "README.md", *sorted((ROOT / "references").glob("*.md"))]
+        for path in docs:
+            self.assertNotIn("/Users/yihanhu/PiWork", path.read_text(), str(path))
+
     def test_workflow_emits_commit_bound_source_hash(self):
         workflow = (ROOT / ".github" / "workflows" / "workspace-download.yml").read_text()
         self.assertIn("git archive", workflow)

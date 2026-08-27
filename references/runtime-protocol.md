@@ -182,7 +182,7 @@ python scripts/codex_loop.py release-record --cwd REPO --artifact-name skill.zip
 
 `release-plan` fails when tracked/staged source is uncommitted. Untracked paths are reported but excluded because export comes from `git archive` of the exact commit. A release receipt is bound to task generation plus source commit/tree and becomes stale after later observed workspace mutation.
 
-Only when the current conversation is in local/PiWork mode, use native Git through Remote Desktop Commander on the persistent canonical repo under `/Users/yihanhu/PiWork` for repository publishing. A generic `push` in a conversation that is still in web mode does not silently select local mode. Observe the destination branch with native Git, then plan against that state:
+Only when the current conversation is in Local mode, use native Git through Remote Desktop Commander on the persistent canonical repo under `LOCAL_ROOT` for repository publishing. A generic `push` in a conversation that is still in web mode does not silently select local mode. Observe the destination branch with native Git, then plan against that state:
 
 ```bash
 python scripts/codex_loop.py publish-plan --cwd REPO \

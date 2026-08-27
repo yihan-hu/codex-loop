@@ -1,12 +1,13 @@
 # Skill source, release, deployment, and transfer boundaries
 
-Keep development location, source lineage, workspace synchronization, and ChatGPT installation state separate. Use this reference whenever a task asks to install/update a Skill, asks whether local changes synchronize into ChatGPT, or moves an artifact between the current ChatGPT workspace and PiWork.
+Keep development location, source lineage, workspace synchronization, and ChatGPT installation state separate. Use this reference whenever a task asks to install/update a Skill, asks whether local changes synchronize into ChatGPT, or moves an artifact between the current ChatGPT workspace and the local host.
 
 ## Development modes
 
-- **A new conversation starts in web mode.** The current ChatGPT/web workspace is the mutable source baseline. Make edits and validations there and return generated files with normal workspace download links. Do not enter PiWork or use Remote Desktop Commander merely because those capabilities are available.
-- **Local mode is explicit once per conversation.** Enter it when the user asks for local/PiWork/Remote Desktop Commander development or an equivalent persistent-Mac workflow and the conversation has not already entered local mode. Once selected, keep local mode for later repository tasks in that same conversation unless the user explicitly switches back to web mode. In local mode `/Users/yihanhu/PiWork/<repo>` is the authoritative mutable source workspace and GitHub is its durable remote.
-- A generic `push` request does not silently convert a conversation that is still in web mode into local mode. If the only verified publish path requires PiWork, preserve the web result and surface that requirement instead of migrating source without authorization.
+- **A new conversation starts in web mode.** The current ChatGPT/web workspace is the mutable source baseline. Make edits and validations there and return generated files with normal workspace download links. Do not enter Local mode or use Remote Desktop Commander merely because those capabilities are available.
+- **Local mode is explicit once per conversation.** Enter it when the user asks for local/PiWork/Remote Desktop Commander development or an equivalent persistent-Mac workflow and the conversation has not already entered local mode. Once selected, keep local mode for later repository tasks in that same conversation unless the user explicitly switches back to web mode. In local mode `LOCAL_ROOT/<repo>` is the authoritative mutable source workspace and GitHub is its durable remote.
+- **`LOCAL_ROOT` is user-specific configuration.** Resolve it as the absolute RDC-authorized persistent development root using `local-mode-setup.md`; never substitute an author-specific home-directory path. If it is unresolved or unauthorized, fail closed before local filesystem access.
+- A generic `push` request does not silently convert a conversation that is still in web mode into local mode. If the only verified publish path requires Local mode, preserve the web result and surface that requirement instead of migrating source without authorization.
 - **Conversation reset.** A new conversation starts in web mode again; local-mode state does not persist across conversations.
 - `skill.zip` is a release/install artifact, not a development baseline in either mode. The installed ChatGPT Skill is a deployed copy and never becomes source-of-truth merely because installation succeeded.
 
@@ -23,7 +24,7 @@ Web mode (default at conversation start)
   -> explicit ChatGPT install/update action
 
 Local mode (after explicit selection; persists for this conversation)
-  PiWork canonical repo
+  LOCAL_ROOT canonical repo
   -> edit / validate / review
   -> git commit
   -> native git push + remote readback
@@ -35,7 +36,7 @@ Local mode (after explicit selection; persists for this conversation)
 
 Report the stages independently. A useful user-facing status vocabulary is:
 
-- `SOURCE_PUSHED`: GitHub remote commit/tree matches the audited PiWork commit/tree.
+- `SOURCE_PUSHED`: GitHub remote commit/tree matches the audited local commit/tree.
 - `WORKSPACE_SYNCED`: the exact pushed commit was materialized into the current ChatGPT workspace through the verified Actions-artifact path and passed integrity checks.
 - `SKILL_PACKAGED`: a verified `skill.zip` exists for that commit.
 - `DEPLOY_PENDING`: the release artifact exists but the installed ChatGPT Skill has not been explicitly updated.
@@ -68,14 +69,14 @@ Do not treat synchronization as Skill packaging or installation. If the synchron
 
 ## Transfer boundary rule
 
-Distinguish file location from tool control. Remote Desktop Commander operates the user's remote Mac filesystem; a file that exists only in ChatGPT's conversation/sandbox storage is not automatically a Mac-local file. Likewise, a PiWork artifact is not automatically installed into ChatGPT.
+Distinguish file location from tool control. Remote Desktop Commander operates the user's remote Mac filesystem; a file that exists only in ChatGPT's conversation/sandbox storage is not automatically a Mac-local file. Likewise, a local-host artifact is not automatically installed into ChatGPT.
 
 When no verified binary transfer bridge exists between the current source and destination:
 
 - Stop before reconstructing the file through the model.
 - State where the real bytes currently live and where they need to go.
 - State that the available tools do not provide a verified direct binary bridge for that boundary.
-- Ask the user to place the real file at an authorized PiWork path, use an actually supported file-transfer mechanism, or explicitly authorize a specific alternate data plane.
+- Ask the user to place the real file at an authorized path under `LOCAL_ROOT`, use an actually supported file-transfer mechanism, or explicitly authorize a specific alternate data plane.
 - Do not default to chunked text, base64, heredocs, repeated `write_file` calls, connector-created blobs, GitHub contents/object API payloads, or archive-content relay.
 
 If the user explicitly authorizes an alternate transfer method, scope that authorization to the named transfer, preserve checksums when practical, verify the destination bytes/tree before treating the transfer as successful, and never promote a transferred artifact into the canonical source baseline.
@@ -86,4 +87,4 @@ For an explicitly authorized model-carried transfer, use `references/verified-mo
 
 When a user asks why a local repo change is not visible in ChatGPT, explain the source/synchronization/deployment separation before trying tools. A verified local push updates GitHub; if the repository has the audited workspace-download workflow, offer the Actions-artifact synchronization path to materialize that exact commit in the current ChatGPT workspace. Skill packaging and installation remain separate even after `WORKSPACE_SYNCED`.
 
-When a user asks to move a ChatGPT-only artifact into PiWork (or a PiWork-only artifact into ChatGPT), do not immediately start encoding or chunking it. Explain the transfer boundary first and offer the shortest verified path. If no verified path is available, surface `DEPLOY_PENDING` or the transfer blocker rather than inventing a fallback.
+When a user asks to move a ChatGPT-only artifact to the local host (or a local-host artifact into ChatGPT), do not immediately start encoding or chunking it. Explain the transfer boundary first and offer the shortest verified path. If no verified path is available, surface `DEPLOY_PENDING` or the transfer blocker rather than inventing a fallback.
