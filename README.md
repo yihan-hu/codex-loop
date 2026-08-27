@@ -13,7 +13,7 @@ Use Codex Loop for end-to-end repository tasks such as:
 - investigating or reviewing a codebase;
 - running repository-native validation;
 - tracking acceptance criteria and review freshness;
-- committing and publishing source with verified Git lineage;
+- publishing Web-mode workspace source through verified Drive staging + GitHub Actions, or Local-mode source through native Git;
 - packaging ChatGPT Skills;
 - synchronizing a verified local GitHub commit back into the current ChatGPT workspace;
 - degrading requested reviewer/researcher/tester delegation to a bounded logical isolation when native subagents are unavailable.
@@ -39,6 +39,8 @@ Review this repository and fix the issues you find.
 ```
 
 You do not need Remote Desktop Commander for Web mode.
+
+If you ask to push from Web mode, Codex Loop keeps the current workspace authoritative and uses the verified Google Drive -> GitHub Actions publication path when its prerequisites are configured.
 
 To use a persistent repository on your own computer, explicitly enter **Local mode**:
 
@@ -105,6 +107,29 @@ new conversation
 A generic `push` request does not silently move a Web-mode task onto your computer. Local mode must have been explicitly selected in the current conversation first.
 
 Each durable runtime task still has its own repository/worktree binding even though the development-location choice persists for the conversation.
+
+## Publishing from Web mode
+
+For a repository being developed in the current ChatGPT workspace, the standard GitHub publication path is:
+
+```text
+ChatGPT workspace
+  -> deterministic source archive + exact size/SHA-256
+  -> Google Drive `ChatGPT-GitHub-Staging` via binary file_uri
+  -> inherited anyone-with-link read permission verified
+  -> tiny GitHub import-request commit
+  -> audited `.github/workflows/workspace-import.yml`
+  -> runner size/SHA verification + safe extraction
+  -> source commit/push
+  -> GitHub commit/tree readback
+  -> delete the temporary Drive archive
+```
+
+One-time setup requires a connected Google Drive, a dedicated `ChatGPT-GitHub-Staging` folder shared as **Anyone with the link -> Viewer**, GitHub Actions enabled on the target repository, workflow permissions set to read/write, and the audited workspace-import workflow. For an empty repository, Codex Loop may bootstrap only that small trusted workflow through the GitHub Connector before the first source import.
+
+The Drive archive is temporarily anyone-with-link readable. Use this path only for source that can tolerate that temporary exposure, and keep the staging folder dedicated to publication artifacts. GitHub Connector writes are control plane only; repository source bytes do not travel through connector-created blobs/trees, model text, or Base64.
+
+A Web-mode `push` does not switch the conversation into Local mode. If the prerequisites are missing or the staging trust boundary is unacceptable, Codex Loop reports the blocker and preserves the Web workspace.
 
 ## Publishing from Local mode
 
@@ -201,7 +226,8 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 - Preserve pre-existing user changes and untracked files.
 - Keep local filesystem access inside the resolved RDC-authorized `LOCAL_ROOT` unless the user explicitly authorizes another narrow root.
 - Never read credential files directly.
-- Treat native Git commit/tree readback as publication success evidence.
+- Treat native Git commit/tree readback as Local-mode publication success evidence; for Web mode require the archive-bound Actions receipt plus GitHub branch commit/tree readback.
+- Treat the public-read Google Drive staging folder as a temporary publication trust boundary and delete staged archives after verified success.
 - Do not invent a binary transfer route when no verified bridge exists.
 - Do not treat an installed Skill, downloaded archive, or copied release folder as the canonical development source.
 
@@ -210,6 +236,8 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 **Codex Loop is trying to use the wrong local path.** Explicitly state your absolute RDC-authorized workspace root when entering Local mode. The distributed Skill should contain no author-specific home-directory path.
 
 **RDC cannot access the repository.** Confirm that the repository is under the directory you authorized in Remote Desktop Commander and that the integration is connected.
+
+**A Web-mode push does not start.** Confirm Google Drive is connected, `ChatGPT-GitHub-Staging` is anyone-with-link readable, the target repository has Actions enabled, and workflow permissions allow read/write.
 
 **`git push` fails.** Fix the reported native Git authentication/network/permission/divergence problem on the RDC host. Codex Loop intentionally does not switch to a different source-upload transport.
 

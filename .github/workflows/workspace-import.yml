@@ -1,0 +1,149 @@
+name: Workspace Import
+
+on:
+  push:
+    paths:
+      - '.github/import-requests/*.json'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: workspace-import-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trigger commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Resolve request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" -- '.github/import-requests/*.json')
+          test "${#files[@]}" -eq 1
+          req="${files[0]}"
+          echo "request=$req" >> "$GITHUB_OUTPUT"
+          jq -e '.version == 1 and (.transfer_id | type == "string" and length > 0) and (.file_id | type == "string" and length > 0) and (.size | type == "number" and . > 0) and (.sha256 | type == "string") and (.expected_base | type == "string") and (.target_branch | type == "string" and length > 0)' "$req" >/dev/null
+          sha="$(jq -r .sha256 "$req")"
+          base="$(jq -r .expected_base "$req")"
+          [[ "$sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$base" =~ ^[0-9a-f]{40}$ ]]
+          test "$base" = "${{ github.event.before }}"
+          test "$(jq -r .target_branch "$req")" = "${{ github.ref_name }}"
+          cp "$req" /tmp/workspace-import-request.json
+
+      - name: Download and verify archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          req='${{ steps.request.outputs.request }}'
+          file_id="$(jq -r .file_id "$req")"
+          expected_size="$(jq -r .size "$req")"
+          expected_sha="$(jq -r .sha256 "$req")"
+          curl -fL --retry 3 --retry-all-errors \
+            "https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t" \
+            -o /tmp/source.tar.gz
+          test "$(stat -c %s /tmp/source.tar.gz)" = "$expected_size"
+          echo "$expected_sha  /tmp/source.tar.gz" | sha256sum -c -
+
+      - name: Safely extract source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/import
+          mkdir -p /tmp/import
+          python3 - <<'PY'
+          import pathlib, tarfile
+
+          archive = pathlib.Path('/tmp/source.tar.gz')
+          out = pathlib.Path('/tmp/import')
+          with tarfile.open(archive, 'r:gz') as tf:
+              members = tf.getmembers()
+              if not members:
+                  raise SystemExit('empty archive')
+              roots = set()
+              for member in members:
+                  path = pathlib.PurePosixPath(member.name)
+                  if path.is_absolute() or '..' in path.parts:
+                      raise SystemExit(f'unsafe path: {member.name}')
+                  if member.issym() or member.islnk():
+                      raise SystemExit(f'links are not allowed: {member.name}')
+                  if path.parts:
+                      roots.add(path.parts[0])
+              if len(roots) != 1:
+                  raise SystemExit(f'archive must have one top-level directory, got {sorted(roots)}')
+              for member in members:
+                  path = pathlib.PurePosixPath(member.name)
+                  rel = pathlib.PurePosixPath(*path.parts[1:])
+                  if not rel.parts:
+                      continue
+                  dest = out.joinpath(*rel.parts)
+                  if member.isdir():
+                      dest.mkdir(parents=True, exist_ok=True)
+                  elif member.isfile():
+                      dest.parent.mkdir(parents=True, exist_ok=True)
+                      source = tf.extractfile(member)
+                      if source is None:
+                          raise SystemExit(f'cannot read {member.name}')
+                      with open(dest, 'wb') as target:
+                          target.write(source.read())
+                      dest.chmod(member.mode & 0o777)
+                  else:
+                      raise SystemExit(f'unsupported entry type: {member.name}')
+          PY
+
+      - name: Import source and push
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/workflows/workspace-import.yml' \
+            --exclude='.github/import-requests/' \
+            /tmp/import/ ./
+          rm -rf .github/import-requests
+          remote_head="$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | awk '{print $1}')"
+          test "$remote_head" = "$GITHUB_SHA"
+          git config user.name 'codex-loop-workspace-import'
+          git config user.email 'codex-loop-workspace-import@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && { echo 'No source changes'; exit 1; }
+          git commit -m 'Import verified ChatGPT workspace source'
+          published_commit="$(git rev-parse HEAD)"
+          published_tree="$(git rev-parse HEAD^{tree})"
+          echo "commit=$published_commit" >> "$GITHUB_OUTPUT"
+          echo "tree=$published_tree" >> "$GITHUB_OUTPUT"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+
+      - name: Write receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          req=/tmp/workspace-import-request.json
+          jq -n \
+            --arg transfer_id "$(jq -r .transfer_id "$req")" \
+            --arg trigger "$GITHUB_SHA" \
+            --arg branch "$GITHUB_REF_NAME" \
+            --arg archive_sha256 "$(jq -r .sha256 "$req")" \
+            --argjson archive_size "$(jq -r .size "$req")" \
+            --arg published_commit '${{ steps.publish.outputs.commit }}' \
+            --arg published_tree '${{ steps.publish.outputs.tree }}' \
+            '{version:1,transfer_id:$transfer_id,trigger_sha:$trigger,target_branch:$branch,archive_sha256:$archive_sha256,archive_size:$archive_size,published_commit:$published_commit,published_tree:$published_tree}' \
+            > /tmp/workspace-import-receipt.json
+          cat /tmp/workspace-import-receipt.json
+
+      - name: Upload receipt artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-import-receipt-${{ github.run_id }}
+          path: /tmp/workspace-import-receipt.json
+          if-no-files-found: error
+          retention-days: 1

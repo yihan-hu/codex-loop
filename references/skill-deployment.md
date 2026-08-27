@@ -7,7 +7,7 @@ Keep development location, source lineage, workspace synchronization, and ChatGP
 - **A new conversation starts in web mode.** The current ChatGPT/web workspace is the mutable source baseline. Make edits and validations there and return generated files with normal workspace download links. Do not enter Local mode or use Remote Desktop Commander merely because those capabilities are available.
 - **Local mode is explicit once per conversation.** Enter it when the user asks for local/PiWork/Remote Desktop Commander development or an equivalent persistent-Mac workflow and the conversation has not already entered local mode. Once selected, keep local mode for later repository tasks in that same conversation unless the user explicitly switches back to web mode. In local mode `LOCAL_ROOT/<repo>` is the authoritative mutable source workspace and GitHub is its durable remote.
 - **`LOCAL_ROOT` is user-specific configuration.** Resolve it as the absolute RDC-authorized persistent development root using `local-mode-setup.md`; never substitute an author-specific home-directory path. If it is unresolved or unauthorized, fail closed before local filesystem access.
-- A generic `push` request does not silently convert a conversation that is still in web mode into local mode. If the only verified publish path requires Local mode, preserve the web result and surface that requirement instead of migrating source without authorization.
+- A generic `push` request does not silently convert a conversation that is still in Web mode into Local mode. When the verified Web-mode prerequisites are available, publish from the current workspace through `web-mode-publish.md`; if those prerequisites are unavailable or the public-read staging boundary is unacceptable, preserve the Web result and report the blocker rather than migrating source without authorization.
 - **Conversation reset.** A new conversation starts in web mode again; local-mode state does not persist across conversations.
 - `skill.zip` is a release/install artifact, not a development baseline in either mode. The installed ChatGPT Skill is a deployed copy and never becomes source-of-truth merely because installation succeeded.
 
@@ -19,6 +19,11 @@ Use these conceptual flows:
 Web mode (default at conversation start)
   current ChatGPT workspace
   -> edit / validate / review
+  -> if GitHub publication is requested: source archive + size/SHA-256
+  -> Google Drive public-read staging via binary file_uri
+  -> audited GitHub Actions import + remote commit/tree readback
+  -> delete staging object
+  -> SOURCE_PUSHED
   -> return downloadable files/links
   -> if this is a Skill and installation is requested: validate/package skill.zip
   -> explicit ChatGPT install/update action
@@ -36,13 +41,23 @@ Local mode (after explicit selection; persists for this conversation)
 
 Report the stages independently. A useful user-facing status vocabulary is:
 
-- `SOURCE_PUSHED`: GitHub remote commit/tree matches the audited local commit/tree.
+- `SOURCE_PUSHED`: GitHub remote commit/tree matches the verified publication identity: the audited local commit/tree in Local mode, or the archive-bound workflow receipt in Web mode.
 - `WORKSPACE_SYNCED`: the exact pushed commit was materialized into the current ChatGPT workspace through the verified Actions-artifact path and passed integrity checks.
 - `SKILL_PACKAGED`: a verified `skill.zip` exists for that commit.
 - `DEPLOY_PENDING`: the release artifact exists but the installed ChatGPT Skill has not been explicitly updated.
 - `DEPLOYED`: an explicit supported install/update action or user confirmation shows that the intended Skill release is installed.
 
 These are reporting labels, not extra runtime state commands. Never report `DEPLOYED` from Git push or packaging evidence alone.
+
+## Web-mode GitHub publishing
+
+When the conversation is still in Web mode and the user asks to push/publish, use `web-mode-publish.md` as the standard path. Keep the current ChatGPT workspace authoritative; do not switch to RDC/local development just to gain Git transport.
+
+The verified data plane is Workspace binary file -> dedicated `ChatGPT-GitHub-Staging` folder in Google Drive -> audited `.github/workflows/workspace-import.yml` -> target Git branch. The GitHub Connector is control plane only: it may bootstrap the trusted workflow and create a tiny `.github/import-requests/*.json` trigger that binds Drive file ID, byte size, SHA-256, expected base commit, and target branch. It must not carry source bytes through blobs, trees, contents payloads, comments, or Base64.
+
+Before `SOURCE_PUSHED`, require a completed/success workflow run bound to the exact trigger commit, inspect the download/hash/extract/push evidence, read the receipt-bound published commit/tree, and read the target branch back from GitHub. Delete the temporary Drive archive only after the remote identity matches.
+
+The dedicated Drive folder is intentionally `anyone: reader` so a GitHub-hosted runner can download without Google credentials. Treat this as a user-configured trust boundary. If the source cannot tolerate temporary anyone-with-link readability, do not use this path and do not silently substitute model relay or GitHub source-object APIs.
 
 ## Local post-push workspace synchronization
 
@@ -70,6 +85,8 @@ Do not treat synchronization as Skill packaging or installation. If the synchron
 ## Transfer boundary rule
 
 Distinguish file location from tool control. Remote Desktop Commander operates the user's remote Mac filesystem; a file that exists only in ChatGPT's conversation/sandbox storage is not automatically a Mac-local file. Likewise, a local-host artifact is not automatically installed into ChatGPT.
+
+The verified Web-mode Drive `upload_file(file_uri=...)` path is a real binary bridge from the current ChatGPT workspace to staging when its prerequisites are present; do not claim the boundary is missing in that case.
 
 When no verified binary transfer bridge exists between the current source and destination:
 
