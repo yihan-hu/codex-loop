@@ -1,6 +1,6 @@
 # Canonical workspace and release lineage
 
-Use Git identity to keep source, audit, packaging, and publishing on one lineage. This is a Codex Loop local extension; network access, GitHub credentials, connector dispatch, and approval remain host-owned.
+Use Git identity to keep source, audit, packaging, and publishing on one lineage after a task has explicitly selected local/PiWork mode. This is a Codex Loop local extension; network access, GitHub credentials, connector dispatch, and approval remain host-owned.
 
 ## Invariants
 
@@ -38,7 +38,7 @@ When the canonical workspace is accessed through Remote Desktop Commander, apply
 
 ## Source-only push fast path
 
-When the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then plan with:
+In explicit local mode, when the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then plan with:
 
 ```bash
 python3 scripts/codex_loop.py publish-plan --cwd REPO \
@@ -72,7 +72,7 @@ The receipt is bound to task generation, source commit, source tree, artifact na
 
 ## Integrated publish flow
 
-Codex Loop uses one verified publish transport only: native Git executed through Remote Desktop Commander on the persistent canonical repository under `/Users/yihanhu/PiWork`. GitHub connector/object-API source upload is not a supported fallback. Read `verified-native-git.md` for the end-to-end verified host authentication, native push, and commit/tree readback sequence.
+For explicit local/PiWork mode, Codex Loop uses one verified publish transport only: native Git executed through Remote Desktop Commander on the persistent canonical repository under `/Users/yihanhu/PiWork`. GitHub connector/object-API source upload is not a supported fallback. Read `verified-native-git.md` for the end-to-end verified host authentication, native push, and commit/tree readback sequence.
 
 First use native Git in the canonical worktree to fetch/observe the destination branch, then call:
 

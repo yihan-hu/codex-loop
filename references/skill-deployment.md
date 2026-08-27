@@ -1,49 +1,69 @@
 # Skill source, release, deployment, and transfer boundaries
 
-Keep development lineage and ChatGPT installation state separate. Use this reference whenever a task asks to install/update a Skill, asks whether local changes synchronize into ChatGPT, or requires moving a release artifact across the ChatGPT/PiWork boundary.
+Keep development location, source lineage, workspace synchronization, and ChatGPT installation state separate. Use this reference whenever a task asks to install/update a Skill, asks whether local changes synchronize into ChatGPT, or moves an artifact between the current ChatGPT workspace and PiWork.
 
-## Four distinct roles
+## Development modes
 
-1. `/Users/yihanhu/PiWork/<repo>` is the authoritative mutable source workspace. Make edits, tests, commits, and release planning there.
-2. GitHub is the durable Git remote. Publish source only with native Git from the canonical PiWork repository and verify the remote commit/tree after push.
-3. `skill.zip` is a release artifact built from an audited committed Git HEAD. It is not a development baseline and does not update an installed Skill by itself.
-4. The installed ChatGPT Skill is a deployed copy. Do not treat it as source of truth, and do not assume it automatically follows PiWork or GitHub unless a supported synchronization mechanism has been explicitly observed.
+- **Web mode is the default.** The current ChatGPT/web workspace is the task mutable source baseline. Make edits and validations there and return generated files with normal workspace download links. Do not enter PiWork or use Remote Desktop Commander merely because those capabilities are available.
+- **Local mode is explicit.** Enter it only when the user asks for local/PiWork/Remote Desktop Commander development or an equivalent persistent-Mac workflow. In that mode `/Users/yihanhu/PiWork/<repo>` is the authoritative mutable source workspace and GitHub is its durable remote.
+- A generic `push` request does not silently convert a web-mode task into local mode. If the only verified publish path requires PiWork, preserve the web result and surface that requirement instead of migrating source without authorization.
+- `skill.zip` is a release/install artifact, not a development baseline in either mode. The installed ChatGPT Skill is a deployed copy and never becomes source-of-truth merely because installation succeeded.
 
 ## Stage separation
 
-Use this conceptual flow:
+Use these conceptual flows:
 
 ```text
-PiWork canonical repo
+Web mode (default)
+  current ChatGPT workspace
+  -> edit / validate / review
+  -> return downloadable files/links
+  -> if this is a Skill and installation is requested: validate/package skill.zip
+  -> explicit ChatGPT install/update action
+
+Local mode (explicit only)
+  PiWork canonical repo
   -> edit / validate / review
   -> git commit
   -> native git push + remote readback
-  -> package audited HEAD as skill.zip
-  -> explicit ChatGPT install/update action
+  -> SOURCE_PUSHED
+  -> optionally offer sync to current ChatGPT workspace
+  -> if accepted and verified: WORKSPACE_SYNCED
+  -> Skill packaging/install only when separately requested
 ```
 
 Report the stages independently. A useful user-facing status vocabulary is:
 
 - `SOURCE_PUSHED`: GitHub remote commit/tree matches the audited PiWork commit/tree.
+- `WORKSPACE_SYNCED`: the exact pushed commit was materialized into the current ChatGPT workspace through the verified Actions-artifact path and passed integrity checks.
 - `SKILL_PACKAGED`: a verified `skill.zip` exists for that commit.
 - `DEPLOY_PENDING`: the release artifact exists but the installed ChatGPT Skill has not been explicitly updated.
 - `DEPLOYED`: an explicit supported install/update action or user confirmation shows that the intended Skill release is installed.
 
 These are reporting labels, not extra runtime state commands. Never report `DEPLOYED` from Git push or packaging evidence alone.
 
-## ChatGPT chatbox post-push handoff
+## Local post-push workspace synchronization
 
-For this Skill's ChatGPT chatbox target, append a copy/paste handoff after every successful GitHub source push, after native-Git remote commit/tree readback succeeds. Generate it deterministically from the exact repository and full pushed commit SHA:
+This path applies only after the user explicitly selected local mode and a native-Git push has been verified by remote commit/tree readback. After that success, generate a deterministic offer:
 
 ```bash
-python3 scripts/codex_loop.py chatbox-handoff --repository OWNER/REPO --commit FULL_40_HEX_SHA
+python3 scripts/codex_loop.py workspace-sync-offer --repository OWNER/REPO --commit FULL_40_HEX_SHA
 ```
 
-The command returns the exact GitHub commit archive URL plus `copy_prompt`. Put `copy_prompt` at the very end of the push report and tell the user to copy the entire prompt and send it as the next user message. Do not treat an assistant-authored URL as equivalent to that new user message: the purpose of this handoff is to make the exact archive URL explicit user-provided input for the next download attempt.
+Present the returned offer to the user. Do not synchronize automatically. If the user declines, finish with `SOURCE_PUSHED`. If the user accepts, use the verified GitHub Actions artifact -> GitHub Connector -> current ChatGPT workspace path below. This is repository synchronization and works for ordinary repositories as well as Skills.
 
-The prompt is intentionally generic. It asks ChatGPT to download the commit-pinned ZIP into the current workspace, fail closed instead of switching transports, and, when the archive contains exactly one ChatGPT Skill (`SKILL.md` count equals one), validate/repackage it as `skill.zip` for Web UI upload. For a non-Skill repository it keeps the original archive. Never label this handoff `DEPLOYED`; before the user sends it, deployment remains whatever state the release/install evidence supports.
+The repository must already contain an enabled `.github/workflows/workspace-download.yml` (or an explicitly equivalent audited workflow) that packages the pushed commit. Prefer the standard contract used by Codex Loop: artifact name `<repo-name>-source`, containing a commit-built source tarball, with the build step logging that tarball's SHA-256. If the workflow is absent, offer its one-time setup as a separate repository change; do not silently add it merely because local mode was selected.
 
-Use only a full 40-hex commit SHA and exact `OWNER/REPO`. Do not generate the handoff from a branch name, short SHA, mutable `main` URL, search result, or inferred fork. If source push/readback did not reach terminal success, do not emit a handoff that implies that revision was published.
+For an accepted sync, require all of the following before reporting `WORKSPACE_SYNCED`:
+
+1. Find the workflow run whose `path` is `.github/workflows/workspace-download.yml` and whose `head_sha` exactly equals the verified pushed commit; require `status=completed` and `conclusion=success`.
+2. Fetch that run's artifacts and select the exact expected source artifact. Do not select an artifact only because it is newest.
+3. Download it with the GitHub Connector `download_workflow_artifact` action. Require a real binary file reference that materializes in the current ChatGPT workspace; a connector metadata object alone is not synchronization success.
+4. Verify the materialized artifact ZIP SHA-256 against GitHub's artifact `digest` when the digest is available.
+5. Open the artifact ZIP and locate the expected source tarball. Fetch the job log for the same commit-bound workflow run, read the SHA-256 emitted by the audited `git archive HEAD` build step, and require the materialized source tarball to match it exactly. Because the run `head_sha` already equals the native-Git-readback commit, the archive is bound to that pushed revision.
+6. Only then report `WORKSPACE_SYNCED` and expose the synchronized workspace files/download link as appropriate.
+
+Do not treat synchronization as Skill packaging or installation. If the synchronized repository contains a Skill and the user asks to install/update it, validate/package that Skill as a separate next stage and report deployment state independently. Do not fall back from this verified local-to-web path to direct GitHub archive URLs, IDrive/Dropbox URLs, model-carried Base64, or per-file reconstruction merely because artifact synchronization fails.
 
 ## Transfer boundary rule
 
@@ -63,6 +83,6 @@ For an explicitly authorized model-carried transfer, use `references/verified-mo
 
 ## Similar-problem user guidance
 
-When a user asks why a local repo change is not visible in ChatGPT, explain the source/release/deployment separation before trying tools. Tell them that Git push updates GitHub, packaging creates the installable release artifact, and the installed ChatGPT Skill still requires an explicit supported deployment step unless a real synchronization mechanism is available.
+When a user asks why a local repo change is not visible in ChatGPT, explain the source/synchronization/deployment separation before trying tools. A verified local push updates GitHub; if the repository has the audited workspace-download workflow, offer the Actions-artifact synchronization path to materialize that exact commit in the current ChatGPT workspace. Skill packaging and installation remain separate even after `WORKSPACE_SYNCED`.
 
 When a user asks to move a ChatGPT-only artifact into PiWork (or a PiWork-only artifact into ChatGPT), do not immediately start encoding or chunking it. Explain the transfer boundary first and offer the shortest verified path. If no verified path is available, surface `DEPLOY_PENDING` or the transfer blocker rather than inventing a fallback.

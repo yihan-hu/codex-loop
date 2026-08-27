@@ -1,10 +1,10 @@
 # Verified RDC native Git path
 
-Use this as the proven publishing path for persistent Mac repository work. This architecture was verified end to end with `yihan-hu/codex-loop`: a non-force native Git push succeeded from the PiWork canonical repository, then native Git readback returned the exact local commit and tree.
+Use this only after the user explicitly selects local/PiWork development for the current task. It is the proven publishing path for that persistent Mac workflow. This architecture was verified end to end with `yihan-hu/codex-loop`: a non-force native Git push succeeded from the PiWork canonical repository, then native Git readback returned the exact local commit and tree.
 
 ## Persistent source and authentication
 
-- Keep the canonical repository under `/Users/yihanhu/PiWork`; make all normal source edits there after bootstrap.
+- In the current local-mode task, keep the canonical repository under `/Users/yihanhu/PiWork` and make that task's source edits there after bootstrap.
 - Let Git own repository transport. Do not send source bytes through GitHub connector/object APIs or model-carried payloads.
 - Keep host authentication host-owned. Never read or print tokens, SSH keys, or credential-store contents.
 - When a global GitHub CLI installation/config is not desired, keep the `gh` binary and config under PiWork, for example `GH_CONFIG_DIR=/Users/yihanhu/PiWork/.gh`.
@@ -37,6 +37,6 @@ If native Git fails because of authentication, network, permissions, branch prot
 
 A one-time user-authorized bootstrap transfer may be used only to seed a persistent canonical repository when the required source exists solely on another surface and no real binary bridge is available. Verify the transferred artifact/delta hash and the resulting full Git tree before committing. That exception is not part of the normal publish path and never becomes standing authorization for model-carried chunks, base64, heredocs, or repeated remote writes.
 
-After the canonical PiWork repository exists, perform future edits, tests, commits, packaging, and pushes directly from that persistent repository. Do not route normal development back through a ChatGPT sandbox copy.
+Within an explicitly selected local-mode task, perform subsequent edits, tests, commits, packaging, and pushes directly from that persistent repository. The mere existence of a PiWork checkout does not make later tasks local by default; later tasks return to web mode unless the user explicitly selects local development again.
 
 Keep ChatGPT Skill deployment separate from Git publication: build `skill.zip` from the audited final commit, then report deployment as pending until a supported install/update action or user confirmation establishes that the ChatGPT-installed Skill changed.
