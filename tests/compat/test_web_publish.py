@@ -53,6 +53,14 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("published_tree", workflow)
         self.assertIn("workspace-import-receipt-${{ github.run_id }}", workflow)
 
+    def test_skill_description_stays_within_package_limit(self):
+        skill = (ROOT / "SKILL.md").read_text()
+        description_line = next(line for line in skill.splitlines() if line.startswith("description: "))
+        description = description_line.removeprefix("description: ").strip().strip(chr(34))
+        self.assertLessEqual(len(description), 1024)
+        self.assertIn("Web-mode GitHub publishing", description)
+        self.assertIn("Local-mode native-Git publishing", description)
+
     def test_public_docs_explain_web_publish_prerequisites(self):
         readme = (ROOT / "README.md").read_text()
         self.assertIn("Publishing from Web mode", readme)
