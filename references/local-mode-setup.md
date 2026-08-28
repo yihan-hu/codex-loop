@@ -1,6 +1,6 @@
 # Local mode setup and `LOCAL_ROOT` contract
 
-Use this reference whenever a conversation enters local development through Remote Desktop Commander (RDC), or when a local workspace root must be resolved.
+Use this reference when the user explicitly selects local repository development or when a local workspace root must be resolved. Remote Desktop Commander (RDC) is an execution/interaction transport, not a development-mode selector: using RDC for local Chrome or macOS computer use does not by itself enter Local mode.
 
 ## `LOCAL_ROOT`
 
@@ -8,20 +8,38 @@ Use this reference whenever a conversation enters local development through Remo
 
 Examples such as `/Users/alice/PiWork` are illustrative only. Never copy an example path into a user's execution plan unless that exact path was established for the current user.
 
-Resolve `LOCAL_ROOT` in this order:
+Resolve `LOCAL_ROOT` in this order, but only after the user has explicitly selected Local repository development:
 
 1. Reuse the exact root already established for Local mode earlier in the current conversation.
 2. Otherwise, use an absolute root explicitly named by the user when they select Local mode.
-3. If the host exposes a single explicit RDC-authorized workspace root as tool metadata, that root may be used after confirming it is the intended development root.
-4. Otherwise ask once for the exact absolute root and require the user to authorize that root in RDC.
+3. Otherwise, read the dedicated host-local config `~/.codex-loop/host.json` if it exists and use its `default_local_root` after confirming RDC can access that root. Reading this one config file is a narrow bootstrap exception; it does not itself select Local mode.
+4. If the host exposes a single explicit RDC-authorized workspace root as tool metadata, that root may be used after confirming it is the intended development root.
+5. Otherwise ask once for the exact absolute root and require the user to authorize that root in RDC. When the user wants the choice remembered across future conversations, persist it in the host-local config.
 
-Do not infer a root from the repository author's home directory, a stale prior conversation, a downloaded archive path, or filesystem visibility outside the authorized boundary.
+Do not infer a root from the repository author's home directory, a stale prior conversation, a downloaded archive path, or arbitrary filesystem visibility outside the authorized boundary.
+
+## Host-local persistent configuration
+
+The optional config path is `~/.codex-loop/host.json`. It belongs to the user's computer, not to any repository and not to the packaged Skill. A minimal file is:
+
+```json
+{
+  "schema_version": 1,
+  "default_local_root": "/absolute/path/to/PiWork"
+}
+```
+
+Store only non-sensitive routing defaults. Never store Git/OAuth tokens, passwords, cookies, connector credentials, approval tokens, or other secrets in this file.
+
+Because the file lives outside the repository, normal Git commits, Web-mode source archives, Local-mode `git push`, and Skill packaging must not include it. Do not copy it into a repository merely to make it easier to discover.
+
+A new conversation still starts in Web mode even when this file exists. The persisted root is consulted only after explicit Local-development intent, so remembering a path never becomes implicit consent to use the local checkout.
 
 ## Conversation and task scope
 
 A new conversation starts in Web mode. Selecting Local mode activates the resolved `LOCAL_ROOT` for later repository tasks in that same conversation until the user explicitly switches back to Web mode.
 
-Development-location resolution must happen before any RDC/local-filesystem discovery or repository operation. Do not use RDC to look for a local checkout first and then infer that the conversation is in Local mode. An explicit request to synchronize a verified Web-mode push to the Mac permits a downstream local synchronization phase only after Web publication has completed; the local repository must be updated from the exact verified remote commit rather than consulted as a competing development baseline.
+Development-location resolution must happen before any **repository-affecting** RDC/local-filesystem discovery or repository operation. Interaction-only RDC use is routed separately by `references/interaction-routing.md` and may occur while `workspace_mode=web`; it must not inspect a local checkout or influence the Web source baseline. Do not use RDC to look for a local checkout first and then infer that the conversation is in Local mode. An explicit request to synchronize a verified Web-mode push to the Mac permits a downstream local synchronization phase only after Web publication has completed; the local repository must be updated from the exact verified remote commit rather than consulted as a competing development baseline.
 
 If the current ChatGPT/Web workspace lacks an obvious write or publication bridge, that absence does not resolve `LOCAL_ROOT` and does not authorize Local mode. Stay in Web mode and surface the missing capability instead of probing the Mac.
 

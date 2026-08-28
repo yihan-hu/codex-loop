@@ -1,0 +1,57 @@
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class InteractionRoutingContractTests(unittest.TestCase):
+    def test_rdc_does_not_select_local_workspace_mode(self):
+        skill = (ROOT / "SKILL.md").read_text()
+        routing = (ROOT / "references" / "interaction-routing.md").read_text()
+        self.assertIn("does **not** enter Local mode", skill)
+        self.assertIn("workspace_mode=web", routing)
+        self.assertIn("interaction_target=local_chrome", routing)
+        self.assertIn("must not inspect or mutate a local repository", routing)
+
+    def test_local_chrome_keeps_chatgpt_as_reasoning_authority(self):
+        routing = (ROOT / "references" / "interaction-routing.md").read_text()
+        self.assertIn("Keep ChatGPT as the reasoning/orchestration authority", routing)
+        self.assertIn("RDC-backed structured Chrome automation", routing)
+        self.assertIn("create `about:blank`", routing)
+        self.assertIn("screenshot + mouse/keyboard GUI automation", routing)
+
+    def test_capability_preflight_batches_predictable_permissions(self):
+        skill = (ROOT / "SKILL.md").read_text()
+        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
+        self.assertIn("Capability and permission preflight", skill)
+        self.assertIn("Batch missing connection", preflight)
+        self.assertIn("Google Drive", preflight)
+        self.assertIn("local_chrome", preflight)
+        self.assertIn("cannot bypass host-enforced per-action confirmation", preflight)
+
+    def test_host_local_root_default_is_non_sensitive_and_does_not_select_local_mode(self):
+        setup = (ROOT / "references" / "local-mode-setup.md").read_text()
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("~/.codex-loop/host.json", setup)
+        self.assertIn('"default_local_root"', setup)
+        self.assertIn("does not itself select Local mode", setup)
+        self.assertIn("New conversations still start in Web mode", readme)
+        self.assertIn("Git/OAuth tokens", setup)
+
+    def test_rdc_boundary_has_separate_interaction_only_contract(self):
+        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
+        self.assertIn("Interaction-only RDC boundary", boundary)
+        self.assertIn("workspace_mode=web", boundary)
+        self.assertIn("must not touch the local checkout", boundary)
+        self.assertIn("never change them silently", boundary)
+
+    def test_readme_explains_all_three_layers(self):
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("Workspace mode versus interaction target", readme)
+        self.assertIn("Capability and permission preflight", readme)
+        self.assertIn("Remembering `LOCAL_ROOT` across conversations", readme)
+        self.assertIn("RDC-backed Chrome path has been validated end to end", readme)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -13,6 +13,9 @@ Use Codex Loop for end-to-end repository tasks such as:
 - investigating or reviewing a codebase;
 - running repository-native validation;
 - tracking acceptance criteria and review freshness;
+- keeping repository `workspace_mode` independent from browser/computer `interaction_target`;
+- controlling a user's local Chrome through a supported native bridge or RDC-backed structured Chrome automation without launching a local Codex agent;
+- preflighting required RDC, GitHub, Google Drive, browser, and host permissions before substantive multi-step execution;
 - publishing Web-mode workspace source through verified Drive staging + GitHub Actions, or Local-mode source through native Git;
 - packaging ChatGPT Skills;
 - synchronizing a verified local GitHub commit back into the current ChatGPT workspace;
@@ -38,7 +41,7 @@ Add this feature and run the relevant tests.
 Review this repository and fix the issues you find.
 ```
 
-You do not need Remote Desktop Commander for Web mode.
+You do not need Remote Desktop Commander for ordinary Web-mode repository work. However, Web mode may still use RDC for **interaction-only** tasks such as controlling your local Chrome or macOS UI; that does not move the repository source of truth onto the Mac.
 
 If you ask to push from Web mode, Codex Loop keeps the current workspace authoritative and uses the verified Google Drive -> GitHub Actions publication path when its prerequisites are configured.
 
@@ -61,7 +64,9 @@ Choose one absolute directory to be your persistent local workspace root. Codex 
 /Users/alice/PiWork
 ```
 
-`LOCAL_ROOT` is a runtime placeholder, not a path baked into the distributed Skill and not necessarily an operating-system environment variable. Configure that directory as an allowed directory in RDC, then tell Codex Loop the absolute path when you first select Local mode in a conversation.
+`LOCAL_ROOT` is a runtime placeholder, not a path baked into the distributed Skill and not necessarily an operating-system environment variable. Configure that directory as an allowed directory in RDC. You may provide it when selecting Local mode, or persist a non-sensitive default in `~/.codex-loop/host.json` so later conversations can reuse it after you explicitly choose Local development.
+
+A persisted root does **not** make new conversations start in Local mode. New conversations still start in Web mode; the host-local default is consulted only after explicit Local repository-development intent.
 
 You should not edit the Skill to replace another user's home directory. Different users can choose different roots.
 
@@ -87,6 +92,42 @@ Do not paste tokens or credentials into ChatGPT. Let Git, `gh`, the OS credentia
 
 If `LOCAL_ROOT` is missing or RDC has not authorized it, Local mode fails closed instead of guessing another directory.
 
+### Remembering `LOCAL_ROOT` across conversations
+
+To remember a non-sensitive default root on one computer, create the host-local file `~/.codex-loop/host.json`:
+
+```json
+{
+  "schema_version": 1,
+  "default_local_root": "/Users/alice/PiWork"
+}
+```
+
+This file is deliberately outside every repository and outside the packaged Skill. Git commits, GitHub pushes, Web-mode source archives, and `skill.zip` must not include it. Do not put tokens, passwords, cookies, OAuth credentials, or approval state in this file.
+
+## Workspace mode versus interaction target
+
+Codex Loop treats **where the repository lives** and **which computer/browser is being controlled** as separate axes:
+
+```text
+workspace_mode:      web | local
+interaction_target:  none | cloud_browser | local_chrome | local_mac_gui
+```
+
+For example, `workspace_mode=web` plus `interaction_target=local_chrome` means the repository remains in the current ChatGPT workspace while ChatGPT uses your Mac only to interact with your signed-in local Chrome. Using RDC for that interaction does not make the Mac checkout authoritative.
+
+For `local_chrome`, Codex Loop keeps ChatGPT as the reasoning authority and does not launch a local Codex agent. It prefers an official host-exposed Chrome/Computer Use bridge when available; otherwise on macOS it can use RDC-backed structured Chrome automation. Generic screenshot plus mouse/keyboard automation is a fallback only when structured control is insufficient.
+
+The RDC-backed Chrome path has been validated end to end with a harmless test: create `about:blank`, independently confirm the tab exists, close only that test tab, then independently confirm it is gone.
+
+## Capability and permission preflight
+
+For multi-step work, Codex Loop should determine the required integrations before substantive execution and check them together. Depending on the planned workflow this can include RDC, GitHub, Google Drive, local Chrome, native Git authentication, or macOS GUI permissions.
+
+The goal is to avoid stopping halfway through a task to ask for predictable setup. Capabilities that are already connected and still valid are reused during the task. If several connections are missing and the host allows it, Codex Loop should present them as one setup/preflight stage rather than discovering them one by one later.
+
+Preflight does not disable ChatGPT or operating-system security. If the host requires a fresh confirmation for a sensitive individual action, that confirmation still happens at the required boundary. Credentials and approval tokens are never stored in Codex Loop's local config.
+
 ## Web mode versus Local mode
 
 ```text
@@ -106,7 +147,7 @@ new conversation
 
 A generic `push` request does not silently move a Web-mode task onto your computer. Local mode must have been explicitly selected in the current conversation first.
 
-Codex Loop treats development-mode selection as a **pre-tool routing gate**. Before it searches a repository, mutates files, packages a release, runs Git, transfers/synchronizes source, or invokes RDC for a repository/Skill-development task, it resolves whether the conversation is still in Web mode or has explicitly entered Local mode. A connected Mac, a visible local checkout, or the absence of an obvious Web write bridge is never enough to switch modes. If Web-mode capability is missing, Codex Loop fails closed and reports that boundary instead of probing the Mac as a fallback.
+Codex Loop treats repository development-mode selection as a **pre-tool routing gate**. Before it searches a repository, mutates files, packages a release, runs Git, or transfers/synchronizes source, it resolves whether the conversation is still in Web mode or has explicitly entered Local mode. A connected Mac, a visible local checkout, an RDC request, or the absence of an obvious Web write bridge is never enough to switch modes. Interaction-only RDC/Chrome/macOS work is routed independently and may run while the repository remains in Web mode; it must not inspect the local checkout unless Local development was separately selected.
 
 If you explicitly ask to fix something in the current ChatGPT workspace, push it, **then** sync the pushed result to your Mac, the ordering is fixed: Web edit/validate/review -> verified Web publish -> resolve authorized `LOCAL_ROOT` -> update the Mac repository from the exact pushed commit. The Mac checkout is downstream synchronization state, not the source baseline for that already-audited Web change.
 
@@ -258,6 +299,8 @@ If your ChatGPT environment exposes no callable Skill-install action, upload the
 
 ```text
 Use Codex Loop to implement this feature and test it.
+Keep the repository in Web mode, but use my local Chrome to verify the signed-in flow.
+Preflight every integration this task will need before you start changing files.
 Use local development under /Users/alice/PiWork for this repository.
 Fix this locally and push.
 Sync the pushed commit back to the current workspace.

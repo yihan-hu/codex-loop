@@ -1,8 +1,8 @@
-# Remote Desktop Commander workspace boundary
+# Remote Desktop Commander boundaries
 
-Use this reference only after Local mode has resolved the conversation's `LOCAL_ROOT` according to `local-mode-setup.md`. Remote Desktop Commander (RDC) operations must stay inside that authorized root plus any task-specific temporary roots explicitly granted by the user.
+RDC is a host execution/interaction transport and does not select repository development mode. Apply the repository boundary below when `workspace_mode=local`; apply the interaction-only boundary when RDC is used for `local_chrome` or `local_mac_gui` while the repository may remain in Web mode. See `interaction-routing.md`.
 
-## Required allowlist
+## Local repository-development boundary
 
 1. Treat the resolved `LOCAL_ROOT` as the persistent RDC development boundary for the current conversation only when the host actually authorizes it.
 2. Bind each repository task to exactly one canonical Git working tree located under `LOCAL_ROOT`. Sibling repositories, worktrees, scratch folders, and artifacts may be accessed when relevant, but they do not become alternate source baselines.
@@ -11,9 +11,9 @@ Use this reference only after Local mode has resolved the conversation's `LOCAL_
 5. Do not broaden the allowlist merely because a command, tool, dependency, or repository discovery step would be easier outside `LOCAL_ROOT`. Ask for an explicit temporary root when the task genuinely requires another location.
 6. Keep any outside-root temporary authorization narrow: record the exact root and purpose, use it only for that purpose, and stop using it when the step is complete. Do not treat it as a new persistent workspace.
 
-## Tool behavior
+## Local repository tool behavior
 
-- Run RDC terminal commands with a working directory inside an allowed root. Reject commands whose explicit path arguments, redirections, archive targets, Git worktrees, package outputs, or subprocess paths escape the allowlist.
+- Run repository-affecting RDC terminal commands with a working directory inside an allowed root. Reject commands whose explicit repository/file path arguments, redirections, archive targets, Git worktrees, package outputs, or subprocess paths escape the allowlist.
 - Restrict file search roots to allowed roots. Never start whole-disk, home-directory, or unrelated-parent searches to discover a repository.
 - Restrict reads, writes, moves, edits, archive extraction, packaging, and generated artifacts to allowed roots.
 - Treat symlink and path traversal as boundary-sensitive. Resolve the effective target before relying on a lexical path prefix; do not follow a symlink into an out-of-scope location.
@@ -22,6 +22,20 @@ Use this reference only after Local mode has resolved the conversation's `LOCAL_
 - Do not weaken RDC host configuration such as `allowedDirectories` during an ordinary coding task. Treat host enforcement and this Skill's allowlist as cumulative; the narrower boundary wins.
 - Do not use RDC text/file-write primitives to reconstruct a session-only archive or source tree from model-carried chunks, Base64, heredocs, or repeated writes merely because a direct binary transfer bridge is missing.
 - When the user explicitly authorizes `GUARDED_SINGLE_SHOT_RELAY`, keep its envelope, partial file, and verified destination under an authorized root; decode only the uniquely framed payload, require exact size/SHA-256, and atomically rename only after verification. Guard damage may be diagnostic, but payload integrity failure remains a failure.
+
+## Interaction-only RDC boundary
+
+When `interaction_target` is `local_chrome` or `local_mac_gui`, RDC may be used even while `workspace_mode=web`. In that case:
+
+- Do not inspect, edit, test, package, commit, or publish a local repository unless the user separately selected Local repository development; interaction-only RDC use must not touch the local checkout while `workspace_mode=web`.
+- Limit commands and observations to the requested application/computer interaction and narrowly necessary host capability checks.
+- For Chrome, prefer structured application scripting or a supported native browser bridge over generic coordinates.
+- For native GUI fallback, use the minimum screenshot/mouse/keyboard scope needed and verify the resulting state.
+- Do not enumerate unrelated files, tabs, windows, processes, or user data merely because RDC can access them.
+- Keep temporary interaction artifacts ephemeral and delete them after verification when practical.
+- macOS Accessibility, Screen Recording, browser-profile, and similar permissions remain host-owned; never change them silently.
+
+The fixed host-local config `~/.codex-loop/host.json` is a narrow bootstrap exception used only after explicit Local-development intent to resolve non-sensitive defaults such as `default_local_root`. It is not a repository workspace and must never contain credentials.
 
 ## Establishing a workspace
 
