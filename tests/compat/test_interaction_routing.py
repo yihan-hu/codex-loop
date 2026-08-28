@@ -103,6 +103,29 @@ class InteractionRoutingContractTests(unittest.TestCase):
         self.assertIn("do not use AppleScript", boundary)
         self.assertIn("RDC/AppleScript", completion)
 
+    def test_local_mac_gui_uses_semantic_targeting_real_mouse_and_readback(self):
+        routing = (ROOT / "references" / "interaction-routing.md").read_text()
+        gui = (ROOT / "references" / "local-mac-gui.md").read_text()
+        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
+        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("local_mac_gui` routing", routing)
+        self.assertIn("AXIdentifier", gui)
+        self.assertIn("CoreGraphics", gui)
+        self.assertIn("Derive element centers dynamically", gui)
+        self.assertIn("current result/input view contains `4`", gui)
+        self.assertIn("not Browser Control", gui)
+        self.assertIn("Restore transient mouse/focus state", boundary)
+        self.assertIn("independently verify GUI results", preflight)
+        self.assertIn("Global keystrokes are a last resort", readme)
+
+    def test_local_mac_gui_does_not_claim_unverified_silent_or_locked_support(self):
+        gui = (ROOT / "references" / "local-mac-gui.md").read_text()
+        routing = (ROOT / "references" / "interaction-routing.md").read_text()
+        self.assertIn("silent/background execution without stealing focus", gui)
+        self.assertIn("reliable operation while the Mac is locked", gui)
+        self.assertIn("Do not claim silent/background or locked-Mac support", routing)
+
     def test_runtime_entrypoints_are_executable(self):
         for relative in ("scripts/codex_loop.py", "scripts/codex_loop_kernel.py"):
             mode = (ROOT / relative).stat().st_mode

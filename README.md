@@ -170,6 +170,16 @@ For `local_chrome`, Codex Loop keeps ChatGPT as the reasoning authority and does
 
 Codex Loop distinguishes `browser_host_health` (Chrome, extension, native host) from `browser_session_health` (whether this conversation has a callable Browser executor). A healthy host with no attached executor is `SESSION_BROWSER_CAPABILITY_MISSING`, not a broken Chrome installation. See `references/browser-control-recovery.md`.
 
+### Native macOS Computer Use (`local_mac_gui`)
+
+For native macOS UI tasks, `local_mac_gui` is a separate explicitly authorized Computer Use path. It does not require Mac Codex and does not change `workspace_mode`: a Web-workspace task can use the Mac GUI for interaction while source remains in the ChatGPT workspace.
+
+The verified control pattern is **semantic target -> dynamic geometry -> real mouse event -> independent readback**. Codex Loop prefers Accessibility (`AXRole`/`AXIdentifier`) to locate the intended control, derives click coordinates from the element's live position/size, dispatches the minimum CoreGraphics mouse move/down/up event when a real click is needed, and then verifies the resulting application state through Accessibility or another structured surface. It restores transient cursor/focus state after smoke tests when practical. Global keystrokes are a last resort and require freshly verified target focus.
+
+A Calculator smoke test verified this end to end: resolve `AllClear`/`Two`/`Add`/`Equals` from the live Accessibility tree, click `AC -> 2 -> + -> 2 -> =` with real mouse events, then read back `4` from Calculator's current result view. The coordinates are intentionally not part of the contract and must be resolved dynamically each time.
+
+This path is **not Browser Control** and does not satisfy Browser capability checks. It must not be used to disguise a missing Browser executor. Silent/background, locked-Mac, screenshot-only, and cross-display behavior remain unverified. See `references/local-mac-gui.md`.
+
 ## Capability and permission preflight
 
 For multi-step work, Codex Loop should determine the required integrations before substantive execution and check them together. Depending on the planned workflow this can include RDC, GitHub, Google Drive, local Chrome, native Git authentication, or macOS GUI permissions.

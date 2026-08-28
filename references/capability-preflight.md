@@ -25,7 +25,7 @@ Request the capabilities needed by the task, not every integration the host happ
 - Local repository edit: the Local read capabilities plus explicit current-task local-source-mutation authorization.
 - Local native-Git publication of already-existing audited content: the Local read capabilities plus host-owned native Git authentication/network access; source integration/conflict resolution additionally requires explicit current-task local-source-mutation authorization.
 - `local_chrome`: explicit user authorization for computer use in the current task, plus local Chrome host health and a supported Browser/Chrome executor attached to the current conversation. Read `browser-control-recovery.md`; do not treat RDC/AppleScript automation as Browser Control fallback.
-- `local_mac_gui`: explicit user authorization for computer use in the current task, RDC, plus any macOS Accessibility/Screen Recording permissions genuinely needed by the chosen action/observation transport.
+- `local_mac_gui`: explicit user authorization for computer use in the current task, RDC, plus macOS Accessibility and any Screen Recording permission genuinely needed by the chosen observation transport. Read `local-mac-gui.md`; prefer Accessibility element targeting and independently verify GUI results.
 
 ## What may persist
 

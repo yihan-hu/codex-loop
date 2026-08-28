@@ -60,7 +60,8 @@ When `interaction_target` is `local_chrome` or `local_mac_gui`, RDC may be used 
 - Do not inspect, edit, test, package, commit, or publish a local repository unless the user separately selected Local repository development; interaction-only RDC use must not touch the local checkout while `workspace_mode=web`.
 - Limit commands and observations to the requested application/computer interaction and narrowly necessary host capability checks.
 - For Chrome Browser Control, RDC is diagnostic/setup transport only; do not use AppleScript, Chrome `execute javascript`, generic coordinates, or internal Browser sockets as a Browser Control fallback.
-- If the user explicitly requests a separate nonstandard RDC/GUI automation path after the limitation is disclosed, use the minimum scope needed, verify the resulting state, and label it as computer automation rather than Browser Control evidence.
+- If the user explicitly requests a separate nonstandard RDC/GUI automation path after the limitation is disclosed, use the minimum scope needed, follow `local-mac-gui.md`, verify the resulting state, and label it as computer automation rather than Browser Control evidence.
+- For `local_mac_gui`, prefer Accessibility identifiers/roles and derive mouse coordinates from current element geometry. Restore transient mouse/focus state when practical; do not rely on unverified global keystroke focus.
 - Do not enumerate unrelated files, tabs, windows, processes, or user data merely because RDC can access them.
 - Keep temporary interaction artifacts ephemeral and delete them after verification when practical.
 - macOS Accessibility, Screen Recording, browser-profile, and similar permissions remain host-owned; never change them silently.

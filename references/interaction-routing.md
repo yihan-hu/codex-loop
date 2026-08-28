@@ -42,6 +42,14 @@ Do not silently substitute RDC-backed AppleScript, Chrome `execute javascript`, 
 
 Distinguish local host health from current-session health. A valid Chrome extension/native-host bridge may coexist with `SESSION_BROWSER_CAPABILITY_MISSING`, and one conversation lacking a Browser executor must not trigger repeated Chrome reinstall/repair attempts.
 
+## `local_mac_gui` routing
+
+Use `local_mac_gui` only for explicitly authorized native macOS UI interaction that is not better served by a supported structured tool. Read `local-mac-gui.md` before the first GUI action.
+
+Prefer semantic Accessibility targeting over raw coordinates. When a real mouse event is necessary, resolve the current target element by stable Accessibility attributes, derive the hit point from its current geometry, dispatch the minimum mouse action, and independently read back application state. Avoid global keystrokes unless the target application's frontmost/focused state has just been verified.
+
+Treat generic GUI automation as visible local computer use, not as Browser Control. Do not claim silent/background or locked-Mac support unless that behavior has been separately tested.
+
 ## Interaction safety
 
 - Target the requested application/tab/site rather than enumerating unrelated browser content.

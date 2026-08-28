@@ -41,7 +41,7 @@ For Local mode, reason about `Primary Local Root + Session Granted Roots = Effec
 
 ## Capability and permission preflight
 
-Before substantive execution of a multi-step task, infer the external capabilities required by the intended workflow and run one bounded preflight. Read `references/capability-preflight.md` when the task may require RDC, GitHub, Google Drive, local Chrome/computer use, macOS GUI permissions, or another host integration. For User Chrome Browser tasks, also read `references/browser-control-recovery.md` and keep Chrome host health separate from current-session Browser capability.
+Before substantive execution of a multi-step task, infer the external capabilities required by the intended workflow and run one bounded preflight. Read `references/capability-preflight.md` when the task may require RDC, GitHub, Google Drive, local Chrome/computer use, macOS GUI permissions, or another host integration. For User Chrome Browser tasks, also read `references/browser-control-recovery.md` and keep Chrome host health separate from current-session Browser capability. For native macOS GUI computer use, read `references/local-mac-gui.md` before the first GUI action.
 
 Batch predictable missing connection/setup requests up front when the host supports it, then continue automatically after they are satisfied. Reuse live, still-valid host capability state during the task instead of interrupting the user for the same permission repeatedly. Request only capabilities actually needed by the planned workflow.
 
