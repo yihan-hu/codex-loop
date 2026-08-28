@@ -75,7 +75,7 @@ class InteractionRoutingContractTests(unittest.TestCase):
         self.assertIn("Workspace-resident Skill/package update", deployment)
         self.assertIn("For any Skill or Skill installation package", deployment)
         self.assertIn("all Skills and Skill installation packages", readme)
-        self.assertIn("do not invent a browser UI deployment step", readme)
+        self.assertIn("never treat deployment intent as permission to automate browser clicks", readme)
 
     def test_runtime_entrypoints_are_executable(self):
         for relative in ("scripts/codex_loop.py", "scripts/codex_loop_kernel.py"):

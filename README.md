@@ -13,11 +13,13 @@ Use Codex Loop for end-to-end repository tasks such as:
 - investigating or reviewing a codebase;
 - running repository-native validation;
 - tracking acceptance criteria and review freshness;
+- remembering stable local workspace aliases without turning remembered paths into standing access permission;
 - keeping repository `workspace_mode` independent from browser/computer `interaction_target`;
 - controlling a user's local Chrome through a supported native bridge or RDC-backed structured Chrome automation without launching a local Codex agent;
 - preflighting required RDC, GitHub, Google Drive, browser, and host permissions before substantive multi-step execution;
 - publishing Web-mode workspace source through verified Drive staging + GitHub Actions, or Local-mode source through native Git;
 - packaging ChatGPT Skills;
+- refreshing an active current-workspace Skill after its Web-mode source is pushed, with a completion-blocking deployment handoff;
 - synchronizing a verified local GitHub commit back into the current ChatGPT workspace;
 - degrading requested reviewer/researcher/tester delegation to a bounded logical isolation when native subagents are unavailable.
 
@@ -27,9 +29,11 @@ Codex Loop is not Codex CLI and does not contain a model runtime. ChatGPT remain
 
 This repository is the Skill source. In a normal external deployment, a Git checkout or ordinary source ZIP is not automatically an installed ChatGPT Skill: package the repository into a validated `skill.zip`, then use a supported install/update action or the ChatGPT Skills UI.
 
-There is one important workspace-hosted rule that applies to **all Skills and Skill installation packages**: if the Skill/package is already present or active in the current workspace or host-managed Skill environment, do not treat wording such as “install”, “update”, or “install in UI” as an instruction to automate the browser. Reuse the existing workspace/host resource and perform the requested source/package update or publication through supported non-browser capabilities first. Use the actual ChatGPT Skills UI only when the user explicitly asks for that UI operation or the host requires it and the user explicitly authorizes computer use.
+There is one important workspace-hosted rule that applies to **all Skills and Skill installation packages**: if the Skill/package is already present or active in the current workspace or host-managed Skill environment, prefer supported host-managed non-browser update operations and never treat deployment intent as permission to automate browser clicks.
 
-Keep source publication and a separately installed external copy conceptually distinct; do not invent a browser UI deployment step merely because installation wording was used.
+For the **active current-workspace Skill being maintained in Web mode**, Codex Loop now has a stronger post-push invariant: when you ask to push/publish the edited Skill, verified GitHub publication must be followed by deployment reconciliation for the same pushed revision. Codex Loop records a completion-blocking `chatgpt_skill_update` handoff, tries a supported host-managed update first, and otherwise surfaces the Save/Update UI handoff. If neither update path is available, the result stays `DEPLOY_PENDING` instead of silently finishing. This prevents the common state where GitHub cannot silently become newer than the Skill that is still active in the workspace.
+
+Source publication and deployment are still separate evidence states. Surfacing a Save/Update handoff is not browser automation; if actual Chrome/macOS interaction is needed to click through the UI, explicit current-task computer-use authorization is still required. A separately installed external Skill copy remains a distinct deployment target and is not updated merely because GitHub changed.
 
 ## Quick start
 
@@ -45,7 +49,7 @@ Review this repository and fix the issues you find.
 
 You do not need Remote Desktop Commander for ordinary Web-mode repository work. However, Web mode may still use RDC for **interaction-only** tasks such as controlling your local Chrome or macOS UI; that does not move the repository source of truth onto the Mac.
 
-If you ask to push from Web mode, Codex Loop keeps the current workspace authoritative and uses the verified Google Drive -> GitHub Actions publication path when its prerequisites are configured.
+If you ask to push from Web mode, Codex Loop keeps the current workspace authoritative and uses the verified Google Drive -> GitHub Actions publication path when its prerequisites are configured. If that workspace is the active Skill being edited, a successful source push immediately enters the mandatory Skill refresh handoff for the exact published commit; `SOURCE_PUSHED` alone is not the end of the task.
 
 To use a persistent repository on your own computer, explicitly enter **Local mode**:
 
@@ -96,16 +100,58 @@ If `LOCAL_ROOT` is missing or RDC has not authorized it, Local mode fails closed
 
 ### Remembering `LOCAL_ROOT` across conversations
 
-To remember a non-sensitive default root on one computer, create the host-local file `~/.codex-loop/host.json`:
+Codex Loop now prefers a **Known Workspace Registry** for stable local paths. The registry lives at `~/.codex-loop/workspace-registry.json` on the host. Register a development root once:
+
+```bash
+python3 scripts/codex_loop.py workspace-register \
+  --name piwork \
+  --path "/absolute/path/to/PiWork" \
+  --kind development_root
+```
+
+Then `~/.codex-loop/host.json` can remember only the preferred alias:
 
 ```json
 {
   "schema_version": 1,
-  "default_local_root": "/Users/alice/PiWork"
+  "default_local_workspace": "piwork"
 }
 ```
 
-This file is deliberately outside every repository and outside the packaged Skill. Git commits, GitHub pushes, Web-mode source archives, and `skill.zip` must not include it. Do not put tokens, passwords, cookies, OAuth credentials, or approval state in this file.
+Older installations may still contain `"default_local_root"`. Codex Loop treats that as a compatibility/migration input after you explicitly choose Local mode; it does not itself select Local mode or grant access. Register the path as `piwork` and prefer `default_local_workspace` afterward.
+
+The host-local config and registry are deliberately outside every repository and outside the packaged Skill. Git commits, GitHub pushes, Web-mode source archives, and `skill.zip` must not include them. Do not put tokens, passwords, cookies, OAuth credentials, approval state, or session-grant nonces in either file.
+
+### Remembering local workspaces without permanent access
+
+You can register a frequently used repository once:
+
+```bash
+python3 scripts/codex_loop.py workspace-register \
+  --name epiagent \
+  --path "/absolute/path/to/EpiAgent" \
+  --kind repository
+```
+
+That makes the workspace **KNOWN**, not authorized. In a later conversation you can simply say:
+
+```text
+Give EpiAgent path permission.
+```
+
+Codex Loop records that explicit grant only for the current conversation. You do not need to paste the absolute path again. A new conversation keeps the alias/path knowledge but starts with no usable grants.
+
+The three states stay separate:
+
+```text
+KNOWN    I know where the workspace is.
+GRANTED  This conversation may use that exact registered workspace.
+BOUND    The current durable task uses one canonical Git working tree.
+```
+
+A request such as `modify EpiAgent` does not by itself grant the path. If the alias is registered but not granted, Codex Loop asks for current-conversation path permission instead of asking for the path again. Host/RDC authorization is still required after the semantic grant, and host denial always wins.
+
+For Local mode, the access model is `Primary Local Root + Session Granted Roots = Effective Local Roots`. Multiple roots can be accessible in one conversation, but each task still binds to one canonical Git working tree. See `references/workspace-registry.md`.
 
 ## Workspace mode versus interaction target
 
@@ -291,13 +337,13 @@ Source publication, workspace synchronization, Skill packaging, and ChatGPT inst
 SOURCE_PUSHED      GitHub matches the audited local commit/tree
 WORKSPACE_SYNCED   that exact commit has been verified in the ChatGPT workspace
 SKILL_PACKAGED     a validated skill.zip exists for the intended commit
-DEPLOY_PENDING     package exists but the installed Skill is not yet confirmed updated
+DEPLOY_PENDING     the intended Skill revision still needs an observed current/installed-Skill update
 DEPLOYED           an explicit supported install/update action or user confirmation proves installation
 ```
 
 When packaging Codex Loop as a ChatGPT Skill, validate the Skill directory and produce a ZIP named exactly `skill.zip`. The repository source itself is not proof of installation.
 
-If your ChatGPT environment exposes no callable Skill-install action, upload the validated `skill.zip` through the ChatGPT Skills UI. Do not report `DEPLOYED` merely because Git push or packaging succeeded.
+If your ChatGPT environment exposes no callable Skill-install action, use the product's Save/Update or Skill-install handoff with the validated `skill.zip` when required. For an active current-workspace Skill after a Web-mode push, Codex Loop must surface that handoff rather than merely mention it in a closing note. Do not report `DEPLOYED` merely because Git push, handoff display, or packaging succeeded; require observed update evidence.
 
 ## Useful prompts
 
@@ -348,7 +394,7 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 
 **A pushed commit is not visible in ChatGPT.** Git push updates GitHub, not the current ChatGPT workspace. Ask to sync the pushed commit and make sure the repository has the audited workspace-download workflow.
 
-**A new Skill version is not active after pushing.** Git publication and Skill deployment are separate. Build/validate `skill.zip`, then use a supported ChatGPT install/update action.
+**A new Skill version is not active after pushing.** For the active Skill being maintained in the current Web workspace, this should now remain an unfinished `DEPLOY_PENDING` workflow rather than a silent success: Codex Loop creates `skill-deploy-handoff`, prefers a supported host-managed update, and otherwise surfaces the Save/Update UI handoff. For other/external Skill copies, Git publication and deployment remain separately requested.
 
 **Local mode disappeared in a new chat.** This is expected. Development mode is conversation-scoped; each new conversation starts in Web mode.
 

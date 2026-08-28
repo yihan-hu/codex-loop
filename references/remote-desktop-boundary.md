@@ -2,21 +2,49 @@
 
 RDC is a host execution/interaction transport and does not select repository development mode. Apply the repository boundary below when `workspace_mode=local`; apply the interaction-only boundary when RDC is used for `local_chrome` or `local_mac_gui` while the repository may remain in Web mode. See `interaction-routing.md`.
 
+Registered workspace identity, current-conversation semantic grants, and RDC filesystem authorization are separate layers. See `workspace-registry.md`.
+
 ## Local repository-development boundary
 
-1. Treat the resolved `LOCAL_ROOT` as the persistent RDC development boundary for the current conversation only when the host actually authorizes it.
-2. Bind each repository task to exactly one canonical Git working tree located under `LOCAL_ROOT`. Sibling repositories, worktrees, scratch folders, and artifacts may be accessed when relevant, but they do not become alternate source baselines.
-3. Allow scratch, artifact, release-staging, receipt, and temporary directories anywhere under `LOCAL_ROOT` without separate authorization when they are used for the current task.
-4. Treat every location outside `LOCAL_ROOT` as out of scope by default, including unrelated home-directory content, cloud-synced folders, Downloads, Desktop, Documents, credential stores, SSH configuration, package-manager caches, and system directories.
-5. Do not broaden the allowlist merely because a command, tool, dependency, or repository discovery step would be easier outside `LOCAL_ROOT`. Ask for an explicit temporary root when the task genuinely requires another location.
-6. Keep any outside-root temporary authorization narrow: record the exact root and purpose, use it only for that purpose, and stop using it when the step is complete. Do not treat it as a new persistent workspace.
+Local mode may have more than one **Effective Local Root**:
+
+```text
+Primary Local Root + Session Granted Roots = Effective Local Roots
+```
+
+The primary root comes from explicit Local-mode selection. A registered additional root enters the effective set only when the user explicitly grants that exact registry entry for the current conversation and RDC actually authorizes its resolved real path.
+
+1. Treat every Effective Local Root as an RDC development boundary for the current conversation only when the host actually authorizes it.
+2. Bind each repository task to exactly one canonical Git working tree inside one Effective Local Root. Other roots, sibling repositories, worktrees, scratch folders, and artifacts never become alternate source baselines.
+3. A session grant for one registered workspace does not grant its parent, siblings, or another alias. A broader RDC host root may contain multiple repositories, but semantic grant checks remain exact per registry entry.
+4. Scratch, artifact, release-staging, receipt, and temporary directories may be used inside the task's already-authorized Effective Local Roots when relevant; do not infer new roots from convenience.
+5. Treat every location outside the Effective Local Roots as out of scope by default, including unrelated home-directory content, cloud-synced folders, Downloads, Desktop, Documents, credential stores, SSH configuration, package-manager caches, and system directories.
+6. Do not broaden the allowlist merely because a command, tool, dependency, or repository discovery step would be easier elsewhere. Ask for an explicit narrow temporary root when genuinely required.
+7. Keep any outside-root temporary authorization narrow: record the exact root and purpose, use it only for that purpose, and stop using it when the step is complete. Do not persist it as a registered trusted workspace unless the user separately asks to register that location.
+
+## Registered workspace access gate
+
+For a registered workspace, actual repository-affecting access requires:
+
+```text
+REGISTERED + GRANTED THIS CONVERSATION + HOST/RDC AUTHORIZED = ACCESSIBLE
+```
+
+A KNOWN alias is not permission. Before the first RDC filesystem action for a registered workspace:
+
+- confirm the current conversation has an explicit semantic grant;
+- resolve the configured path to its real path and reject missing/non-directory/changed-symlink targets;
+- pass only host-observed authorized roots to `workspace-resolve` and require access;
+- never modify RDC `allowedDirectories` to make the check pass.
+
+If the alias is known but not granted, ask for current-conversation path permission without asking the user to repeat the stored absolute path. If the path no longer exists or its realpath changed, ask for explicit re-registration; never search the whole home directory or disk for a replacement.
 
 ## Local repository tool behavior
 
-- Treat Local mode and `LOCAL_ROOT` authorization as routing/access state, not source-write consent. Before the first edit/create/delete/overwrite/reformat of local source in each task, require explicit current-task local-source-mutation authorization. Do not infer it from earlier tasks, RDC availability, prior successful writes, a read-only inspection request, synchronization intent, or generic `push` wording.
+- Treat Local mode and root authorization as routing/access state, not source-write consent. Before the first edit/create/delete/overwrite/reformat of local source in each task, require explicit current-task local-source-mutation authorization. Do not infer it from earlier tasks, RDC availability, prior successful writes, a read-only inspection request, synchronization intent, or generic `push` wording.
 - A publish-only request may use native Git to publish already-existing audited local content when otherwise authorized, but it must not silently change source files to make the push succeed. If source integration or conflict resolution would be required, stop and request explicit local mutation authorization for that task.
-- Run repository-affecting RDC terminal commands with a working directory inside an allowed root. Reject commands whose explicit repository/file path arguments, redirections, archive targets, Git worktrees, package outputs, or subprocess paths escape the allowlist.
-- Restrict file search roots to allowed roots. Never start whole-disk, home-directory, or unrelated-parent searches to discover a repository.
+- Run repository-affecting RDC terminal commands with a working directory inside an Effective Local Root and the task's bound canonical working tree when source state matters. Reject commands whose explicit repository/file path arguments, redirections, archive targets, Git worktrees, package outputs, or subprocess paths escape the allowlist.
+- Restrict file search roots to Effective Local Roots. Never start whole-disk, home-directory, or unrelated-parent searches to discover a repository.
 - Restrict reads, writes, moves, edits, archive extraction, packaging, and generated artifacts to allowed roots.
 - Treat symlink and path traversal as boundary-sensitive. Resolve the effective target before relying on a lexical path prefix; do not follow a symlink into an out-of-scope location.
 - Keep Git discovery, clone, fetch, commit, worktree, archive, and push operations rooted in the canonical workspace or an explicitly authorized temporary root. Do not use another checkout as an implicit source baseline.
@@ -37,23 +65,25 @@ When `interaction_target` is `local_chrome` or `local_mac_gui`, RDC may be used 
 - Keep temporary interaction artifacts ephemeral and delete them after verification when practical.
 - macOS Accessibility, Screen Recording, browser-profile, and similar permissions remain host-owned; never change them silently.
 
-The fixed host-local config `~/.codex-loop/host.json` is a narrow bootstrap exception used only after explicit Local-development intent to resolve non-sensitive defaults such as `default_local_root`. It is not a repository workspace and must never contain credentials.
+The host-local files `~/.codex-loop/host.json` and `~/.codex-loop/workspace-registry.json` are narrow bootstrap/configuration exceptions used only for non-sensitive routing identity/defaults. They are not repository workspaces and must never contain credentials or persistent permission state. Reading them does not select Local mode.
 
 ## Establishing a workspace
 
-If the repository path is not yet known, search only within the resolved `LOCAL_ROOT` or create/clone the repository there. Do not search the user's entire machine. Once a repository is selected, bind the task to that repository's Git working tree as the canonical workspace.
+If a repository alias is already registered, resolve it through the registry; do not rediscover it by scanning the machine. If the path is not registered, search only within an already resolved/authorized primary root or use an exact path supplied by the user. Once a repository is selected, bind the task to that repository's Git working tree as the canonical workspace.
 
 An illustrative layout is:
 
 ```text
-<LOCAL_ROOT>/
-  repo/
+<PRIMARY_ROOT>/
+  repo-a/
   scratch/
-  artifacts/
+
+<SESSION_GRANTED_ROOT>/
+  repo-b/
 ```
 
-`<LOCAL_ROOT>` is a placeholder in documentation. Before tool execution, replace it with the exact absolute root resolved for the current conversation. `LOCAL_ROOT` is the access boundary; task relevance still controls which contents should be touched.
+The placeholders are documentation only. Before tool execution, use the exact real paths that were registered/selected, granted when required, and confirmed by the host.
 
 ## Fail-closed rule
 
-If `LOCAL_ROOT` is unresolved, RDC rejects it, or a required operation would touch an unauthorized path, stop that operation and request the exact missing root authorization. Do not infer consent from device connectivity, filesystem visibility, a prior conversation, successful tool access, or the ability to execute the command.
+If the primary root is unresolved, a registered workspace is not granted, RDC rejects the resolved path, a symlink changes the real boundary, or an operation would touch an unauthorized path, stop that operation. Do not infer consent from device connectivity, filesystem visibility, a prior conversation, successful tool access, registry knowledge, or the ability to execute a command.

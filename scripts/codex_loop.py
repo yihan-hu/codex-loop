@@ -31,6 +31,15 @@ from codex_loop_runtime.model_relay import (
 from codex_loop_runtime.protocol import emit_error, emit_ok
 from codex_loop_runtime.state import active_task_id, open_store
 from codex_loop_runtime.workspace import repo_root
+from codex_loop_runtime.workspace_registry import (
+    grant_workspace,
+    list_workspaces,
+    register_workspace,
+    registry_path,
+    remove_workspace,
+    resolve_workspace,
+    session_grants,
+)
 
 
 def _cwd(raw: str | None) -> Path:
@@ -243,6 +252,77 @@ def _cmd_workspace_sync_offer(argv: list[str]) -> int:
     })
     return 0
 
+def _cmd_workspace_register(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-register')
+    p.add_argument('--name', required=True)
+    p.add_argument('--path', required=True)
+    p.add_argument('--kind', required=True, choices=['repository', 'development_root'])
+    p.add_argument('--update', action='store_true')
+    args = p.parse_args(argv[1:])
+    emit_ok(register_workspace(args.name, args.path, args.kind, update=args.update))
+    return 0
+
+
+def _cmd_workspace_registry_list(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-registry-list')
+    p.parse_args(argv[1:])
+    emit_ok({
+        'registry_path': str(registry_path()),
+        'workspaces': list_workspaces(),
+        'authorization_persisted': False,
+    })
+    return 0
+
+
+def _cmd_workspace_resolve(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-resolve')
+    p.add_argument('name')
+    p.add_argument('--session-id')
+    p.add_argument('--host-authorized-root', action='append', default=[])
+    p.add_argument('--require-access', action='store_true')
+    args = p.parse_args(argv[1:])
+    state = resolve_workspace(
+        args.name,
+        session_id=args.session_id,
+        host_authorized_roots=args.host_authorized_root,
+    )
+    if args.require_access and not state['accessible']:
+        reasons = ', '.join(state.get('reasons') or ['workspace access denied'])
+        raise PermissionError(f'workspace access denied for {state["name"]}: {reasons}')
+    emit_ok(state)
+    return 0
+
+
+def _cmd_workspace_grant(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-grant')
+    p.add_argument('name')
+    p.add_argument('--session-id')
+    p.add_argument('--authorization-evidence', required=True)
+    args = p.parse_args(argv[1:])
+    emit_ok(grant_workspace(
+        args.name,
+        args.authorization_evidence,
+        session_id=args.session_id,
+    ))
+    return 0
+
+
+def _cmd_workspace_grants(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-grants')
+    p.add_argument('--session-id')
+    args = p.parse_args(argv[1:])
+    emit_ok(session_grants(session_id=args.session_id))
+    return 0
+
+
+def _cmd_workspace_remove(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-remove')
+    p.add_argument('name')
+    args = p.parse_args(argv[1:])
+    emit_ok(remove_workspace(args.name))
+    return 0
+
+
 def _delegate(argv: list[str]) -> int:
     args = list(argv)
     command = args[0] if args else ''
@@ -271,6 +351,18 @@ def main() -> int:
             return _cmd_validate(argv)
         if argv[0] == 'validation-record':
             return _cmd_validation_record(argv)
+        if argv[0] == 'workspace-register':
+            return _cmd_workspace_register(argv)
+        if argv[0] == 'workspace-registry-list':
+            return _cmd_workspace_registry_list(argv)
+        if argv[0] == 'workspace-resolve':
+            return _cmd_workspace_resolve(argv)
+        if argv[0] == 'workspace-grant':
+            return _cmd_workspace_grant(argv)
+        if argv[0] == 'workspace-grants':
+            return _cmd_workspace_grants(argv)
+        if argv[0] == 'workspace-remove':
+            return _cmd_workspace_remove(argv)
         if argv[0] == 'workspace-sync-offer':
             return _cmd_workspace_sync_offer(argv)
         if argv[0] == 'relay-frame':

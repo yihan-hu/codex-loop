@@ -107,6 +107,24 @@ A workflow conclusion of `success` is necessary but not sufficient. Before repor
 
 If staging cleanup fails after verified publication, keep `SOURCE_PUSHED` but report the cleanup warning and the remaining temporary object. Cleanup failure is not permission to republish.
 
+## Post-push active Skill reconciliation
+
+Verified `SOURCE_PUSHED` is the terminal state of the Git publication phase, but it is not always the terminal state of the user task. If the published Web workspace is the source of a Skill that is already active/present in the current ChatGPT workspace or host-managed Skill environment, the push request also implies refresh of that same current Skill.
+
+After the remote commit/tree readback succeeds and staging cleanup is reconciled, run:
+
+```bash
+python3 scripts/codex_loop.py skill-deploy-handoff \
+  --cwd REPO \
+  --skill-name NAME \
+  --repository OWNER/REPO \
+  --commit PUBLISHED_FULL_SHA
+```
+
+The handoff must be bound to the exact published commit from the verified import receipt/readback. It records a pending `chatgpt_skill_update` external action, which keeps the Codex Loop completion gate open until the active Skill update is reconciled. Prefer a supported host-managed non-browser Skill update; otherwise surface the product's Save/Update UI handoff. If the host update surface needs a `skill.zip`, package/validate the same pushed source generation before that handoff.
+
+If no update mechanism or usable handoff is available, retain `SOURCE_PUSHED`, report `DEPLOY_PENDING`, and state the missing capability. Do not republish the source, do not claim `DEPLOYED`, and do not silently complete while the active workspace Skill may still be older than GitHub. Surfacing a Save/Update handoff does not authorize automated browser/computer interaction; the ordinary explicit computer-use gate still controls any clicks or GUI operation.
+
 ## Empty repositories and bootstrap
 
 An empty repository needs one control-plane bootstrap commit before it can run Actions. Creating the audited workflow file through the GitHub Connector is allowed because it is small trusted control plane, not source transport. After bootstrap, observe that commit as the branch head and bind the first import request to it.

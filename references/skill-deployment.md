@@ -12,7 +12,7 @@ Keep development location, source lineage, workspace synchronization, and ChatGP
 - A generic `push` request does not silently convert a conversation that is still in Web mode into Local mode. When the verified Web-mode prerequisites are available, publish from the current workspace through `web-mode-publish.md`; if those prerequisites are unavailable or the public-read staging boundary is unacceptable, preserve the Web result and report the blocker rather than migrating source without authorization.
 - **Conversation reset.** A new conversation starts in web mode again; local-mode state does not persist across conversations.
 - `skill.zip` is a release/install artifact, not a development baseline in either mode. The installed ChatGPT Skill is a deployed copy and never becomes source-of-truth merely because installation succeeded.
-- **Workspace-resident Skill/package update.** For any Skill or Skill installation package already present/active in the current workspace or host-managed Skill environment, do not interpret install/update/“install in UI” wording as permission to open Chrome or automate the ChatGPT Skills page. Reuse that existing workspace/host resource and perform the requested source/package update or publication through supported non-browser capabilities first. Use the actual ChatGPT Skills UI only when the user explicitly asks for that UI operation or the host demonstrably requires it and the user explicitly authorizes computer use.
+- **Workspace-resident Skill/package update.** For any Skill or Skill installation package already present/active in the current workspace or host-managed Skill environment, reuse that existing workspace/host resource and perform source/package publication through supported non-browser capabilities first. When Web mode is maintaining that active Skill and the user asks to push/publish the changes, post-push refresh of the current Skill is part of the requested workflow; it is not an optional reminder. Prefer a supported host-managed update, otherwise surface the product's Save/Update handoff. This does not authorize Chrome/browser automation or clicking the Skills UI; actual computer-use interaction still requires explicit current-task authorization.
 
 ## Stage separation
 
@@ -27,9 +27,13 @@ Web mode (default at conversation start)
   -> audited GitHub Actions import + remote commit/tree readback
   -> delete staging object
   -> SOURCE_PUSHED
+  -> if the edited source is the active current-workspace Skill:
+       skill-deploy-handoff for that exact pushed commit
+       -> supported host-managed update, or surface Save/Update UI handoff
+       -> DEPLOYED only after observed update evidence
+       -> otherwise DEPLOY_PENDING and completion remains blocked
+  -> for other Skill sources: packaging/install remains separately requested
   -> return downloadable files/links
-  -> if this is a Skill and installation is requested: validate/package skill.zip
-  -> explicit ChatGPT install/update action
 
 Local mode (after explicit selection; persists for this conversation)
   LOCAL_ROOT canonical repo
@@ -47,7 +51,7 @@ Report the stages independently. A useful user-facing status vocabulary is:
 - `SOURCE_PUSHED`: GitHub remote commit/tree matches the verified publication identity: the audited local commit/tree in Local mode, or the archive-bound workflow receipt in Web mode.
 - `WORKSPACE_SYNCED`: the exact pushed commit was materialized into the current ChatGPT workspace through the verified Actions-artifact path and passed integrity checks.
 - `SKILL_PACKAGED`: a verified `skill.zip` exists for that commit.
-- `DEPLOY_PENDING`: the release artifact exists but the installed ChatGPT Skill has not been explicitly updated.
+- `DEPLOY_PENDING`: a Skill update is required for the intended revision, but the current/installed ChatGPT Skill has not yet been observably updated. A package may or may not already exist depending on the host update surface.
 - `DEPLOYED`: an explicit supported install/update action or user confirmation shows that the intended Skill release is installed.
 
 These are reporting labels, not extra runtime state commands. Never report `DEPLOYED` from Git push or packaging evidence alone.
@@ -63,6 +67,33 @@ If the same user request also asks to synchronize the published result to a Mac,
 Before `SOURCE_PUSHED`, require a completed/success workflow run bound to the exact trigger commit, inspect the download/hash/extract/push evidence, read the receipt-bound published commit/tree, and read the target branch back from GitHub. Delete the temporary Drive archive only after the remote identity matches.
 
 The dedicated Drive folder is intentionally `anyone: reader` so a GitHub-hosted runner can download without Google credentials. Treat this as a user-configured trust boundary. If the source cannot tolerate temporary anyone-with-link readability, do not use this path and do not silently substitute model relay or GitHub source-object APIs.
+
+## Web workspace Skill post-push refresh
+
+When Web mode modifies a Skill that is already active/present in the current ChatGPT workspace or host-managed Skill environment, an explicit request to push or publish those Skill changes also implies refresh of that current Skill after publication. This is a narrow post-push invariant for the Skill being maintained; it does not make arbitrary Skill installation automatic.
+
+After verified `SOURCE_PUSHED`, immediately create the deterministic deployment handoff for the exact published commit:
+
+```bash
+python3 scripts/codex_loop.py skill-deploy-handoff \
+  --cwd REPO \
+  --skill-name NAME \
+  --repository OWNER/REPO \
+  --commit FULL_40_HEX_SHA
+```
+
+The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. Because unresolved external actions block Codex Loop completion, the workflow cannot silently report success while GitHub is newer than the active workspace Skill. Repeated handoff calls for the same Skill/commit deduplicate to the same action.
+
+Resolve the handoff in this order:
+
+1. Prefer a supported host-managed, non-browser Skill update/save operation that targets the current workspace Skill and the same pushed source generation. If the update surface requires `skill.zip`, validate/package it from that same generation as part of this deployment stage rather than asking for a separate install intent.
+2. If no callable update exists but the product can surface a Save/Update affordance, surface the Save/Update UI handoff prominently before the task is considered complete. Showing the handoff is allowed; automating clicks is not implied.
+3. Record the external action as `dispatched` only when an actual host update or user-facing update handoff has been initiated. Record `terminal_success` only after the host or user-visible state provides observable evidence that the intended Skill revision is active.
+4. If neither update path is available, keep the action unresolved, report `DEPLOY_PENDING`, and state the exact missing capability. Do not downgrade the missing update into a footnote after reporting success.
+
+`SOURCE_PUSHED` and `DEPLOYED` remain separate evidence states. The push can remain successfully published even when deployment is pending; what changes is that a Web-mode Skill-maintenance task must not normally pass its final completion gate while the active workspace Skill's revision is unknown or older.
+
+This rule does not grant browser/computer-use authorization. If completing the update requires interacting with ChatGPT through Chrome or macOS UI, the normal explicit computer-use authorization gate still applies.
 
 ## Local post-push workspace synchronization
 

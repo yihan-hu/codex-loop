@@ -45,7 +45,7 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         deployment = (ROOT / "references" / "skill-deployment.md").read_text()
         verified_git = (ROOT / "references" / "verified-native-git.md").read_text()
         self.assertIn("A new conversation starts in **web mode**", skill)
-        self.assertIn("later repository tasks in the same conversation inherit local mode", skill)
+        self.assertIn("later repository tasks in the same conversation inherit the baseline", skill)
         self.assertIn("A new conversation resets to web mode", skill)
         self.assertIn("Local mode is explicit once per conversation", deployment)
         self.assertIn("local-mode state does not persist across conversations", deployment)
@@ -74,7 +74,7 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("Development mode is a pre-tool gate", deployment)
         self.assertIn("Web mode fails closed", deployment)
         self.assertIn("do not inspect the Mac before publication", deployment)
-        self.assertIn("Development-location resolution must happen before any RDC/local-filesystem discovery", local_setup)
+        self.assertIn("Development-location resolution must happen before any **repository-affecting** RDC/local-filesystem discovery", local_setup)
         self.assertIn("pre-tool routing gate", readme)
         self.assertIn("Web edit/validate/review -> verified Web publish", readme)
 
@@ -88,7 +88,7 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("workspace-download.yml", readme)
         self.assertIn("## Skill packaging and installation", readme)
         self.assertIn("`LOCAL_ROOT`", local_setup)
-        self.assertIn("If `LOCAL_ROOT` is unresolved", local_setup)
+        self.assertIn("Otherwise ask once for the exact absolute root", local_setup)
         self.assertIn("references/local-mode-setup.md", skill)
 
     def test_public_docs_do_not_hardcode_author_local_root(self):

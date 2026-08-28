@@ -2,6 +2,47 @@
 
 Use `python scripts/codex_loop.py ...`. Commands emit JSON. Runtime state is task-scoped under a private temp directory; it never writes `.codex-loop` state into the repository. `bootstrap` binds the created task as the workspace's active task, so ordinary task-scoped commands may omit `--task-id`. Pass an explicit `--task-id` when deliberately addressing a non-active task or when low-level audit/debugging requires it. If no active task exists, task-scoped commands fail closed.
 
+## Persistent workspace registry and conversation grants
+
+Workspace registry commands are host-local and not task-scoped. They never bootstrap a repository task and never imply Local mode.
+
+```bash
+python3 scripts/codex_loop.py workspace-register --name epiagent --path /ABS/PATH --kind repository
+python3 scripts/codex_loop.py workspace-register --name piwork --path /ABS/PATH --kind development_root
+python3 scripts/codex_loop.py workspace-registry-list
+python3 scripts/codex_loop.py workspace-resolve epiagent
+python3 scripts/codex_loop.py workspace-remove epiagent
+```
+
+Updating an existing canonical alias requires explicit `--update`. Registry state lives at `~/.codex-loop/workspace-registry.json` (or the test-only/process override `CODEX_LOOP_HOME`) and stores only alias/path/kind identity.
+
+After the host/model observes explicit user authorization in the current conversation, record a semantic grant:
+
+```bash
+python3 scripts/codex_loop.py workspace-grant epiagent \
+  --authorization-evidence "user explicitly granted EpiAgent path access in this conversation"
+```
+
+The first grant returns a high-entropy `session_id`. Keep it only in the current conversation context; later calls pass it explicitly (or through host-owned ephemeral `CODEX_LOOP_SESSION_ID`):
+
+```bash
+python3 scripts/codex_loop.py workspace-grants --session-id SESSION_NONCE
+python3 scripts/codex_loop.py workspace-resolve epiagent --session-id SESSION_NONCE
+```
+
+The session file stores only the registered-workspace fingerprint and a digest of the evidence. Registry mutation makes an older grant stale. A new conversation has no old nonce and therefore no usable grant.
+
+Before host filesystem access, combine semantic grant with actual host/RDC authorization. Pass only roots the host has independently observed as authorized and fail closed with `--require-access`:
+
+```bash
+python3 scripts/codex_loop.py workspace-resolve epiagent \
+  --session-id SESSION_NONCE \
+  --host-authorized-root /HOST/AUTHORIZED/ROOT \
+  --require-access
+```
+
+This check cannot create RDC permission or change `allowedDirectories`. See `references/workspace-registry.md`.
+
 ## Adaptive pre-runtime assessment
 
 Before bootstrap, the host/Skill may deterministically record whether durable runtime is needed from concrete capability signals:
@@ -135,6 +176,30 @@ Terminal and `outcome_unknown` states require concise observable details. Non-id
 python scripts/codex_loop.py external-resolve-failure --cwd REPO --task-id TASK \
   --action-id ID --evidence "later host-visible action recovered the failure"
 ```
+
+## Post-push workspace Skill deployment handoff
+
+For a Web-mode task that edits the Skill already active/present in the current ChatGPT workspace, a verified source push is followed by a mandatory deployment handoff for the same published commit:
+
+```bash
+python3 scripts/codex_loop.py skill-deploy-handoff \
+  --cwd REPO \
+  --skill-name NAME \
+  --repository OWNER/REPO \
+  --commit FULL_40_HEX_SHA
+```
+
+The command requires an active Codex Loop task, synchronizes the current workspace generation, validates the Skill name/repository/full commit identity, and records an `external_non_idempotent` action with:
+
+```text
+kind     = chatgpt_skill_update
+identity = chatgpt-skill:NAME@COMMIT
+state    = planned
+```
+
+It returns `DEPLOY_PENDING`, a preferred supported host-managed Skill update action, and a `surface_save_update_ui` fallback. The planned external action is intentionally completion-blocking. If a host-managed update or Save/Update handoff is actually initiated, advance that same action to `dispatched`; record `terminal_success` only after observable evidence shows the intended Skill revision is active. Repeating the handoff for the same Skill/commit deduplicates to the existing action.
+
+The handoff never manufactures deployment permission and never authorizes browser automation. If completing the update requires computer use, the normal explicit current-task computer-use gate still applies. If no update surface exists, leave the action unresolved and report `DEPLOY_PENDING` rather than silently accepting a newer GitHub revision than the active workspace Skill.
 
 ## Managed process sessions
 

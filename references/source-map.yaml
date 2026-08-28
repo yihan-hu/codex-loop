@@ -471,6 +471,7 @@
     "scripts/codex_loop_runtime/upstream_verify.py": "THIN_WRAPPER",
     "scripts/codex_loop_runtime/validation.py": "HYBRID",
     "scripts/codex_loop_runtime/workspace.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/workspace_registry.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/world_state.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/write_transaction.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/release_lineage.py": "LOCAL_EXTENSION"
