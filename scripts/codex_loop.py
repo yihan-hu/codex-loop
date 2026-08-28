@@ -252,6 +252,48 @@ def _cmd_workspace_sync_offer(argv: list[str]) -> int:
     })
     return 0
 
+def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py skill-deploy-handoff')
+    p.add_argument('--cwd')
+    p.add_argument('--task-id')
+    p.add_argument('--skill-name', required=True)
+    p.add_argument('--repository', required=True)
+    p.add_argument('--commit', required=True)
+    args = p.parse_args(argv[1:])
+    skill_name = args.skill_name.strip().lower()
+    repository = args.repository.strip()
+    commit = args.commit.strip().lower()
+    if not skill_name or not re.fullmatch(r'[a-z0-9][a-z0-9-]*', skill_name):
+        raise ValueError('--skill-name must be a lowercase Skill name')
+    if not _REPOSITORY_RE.fullmatch(repository):
+        raise ValueError('--repository must be an exact GitHub OWNER/REPO name')
+    if not _FULL_COMMIT_RE.fullmatch(commit):
+        raise ValueError('--commit must be a full 40-hex Git commit SHA')
+    _cwd_path, _root, store = _scope_from_argv(argv)
+    store.ensure_active()
+    identity = f'chatgpt-skill:{skill_name}@{commit}'
+    action_id = store.record_external(
+        'chatgpt_skill_update',
+        'planned',
+        identity,
+        action_class='external_non_idempotent',
+    )
+    emit_ok({
+        'skill_name': skill_name,
+        'repository': repository,
+        'commit': commit,
+        'source_state': 'SOURCE_PUSHED',
+        'deployment_state': 'DEPLOY_PENDING',
+        'target': 'current_chatgpt_workspace_skill',
+        'preferred_action': 'supported_host_managed_skill_update',
+        'fallback_action': 'surface_save_update_ui',
+        'browser_automation_authorized': False,
+        'completion_blocking_until_reconciled': True,
+        'external_action_id': action_id,
+    })
+    return 0
+
+
 def _cmd_workspace_register(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py workspace-register')
     p.add_argument('--name', required=True)
@@ -365,6 +407,8 @@ def main() -> int:
             return _cmd_workspace_remove(argv)
         if argv[0] == 'workspace-sync-offer':
             return _cmd_workspace_sync_offer(argv)
+        if argv[0] == 'skill-deploy-handoff':
+            return _cmd_skill_deploy_handoff(argv)
         if argv[0] == 'relay-frame':
             return _cmd_relay_frame(argv)
         if argv[0] == 'relay-receive':
