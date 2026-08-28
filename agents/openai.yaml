@@ -1,8 +1,8 @@
 interface:
   display_name: Codex Loop
-  short_description: Execute coding, release, and publish tasks with Git-bound state
-  default_prompt: Use $codex-loop to complete this coding task end to end with the
-    bundled deterministic runtime and the host tools available here.
+  short_description: Default coding, Git sync, and computer-use workflow
+  default_prompt: Use $codex-loop to complete this development, Git/sync, or computer-use
+    task end to end with the bundled deterministic runtime and host tools available here.
   icon_small: assets/icon.svg
   icon_large: assets/icon.svg
 policy:

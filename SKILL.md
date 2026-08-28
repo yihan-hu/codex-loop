@@ -1,6 +1,6 @@
 ---
 name: codex-loop
-description: "Codex-style coding-agent loop for end-to-end repository work: implement/fix/refactor/review, validate, release, publish, and run reviewer/researcher/tester workflows. New conversations start in the current ChatGPT/web workspace; Local development requires explicit local/PiWork intent, and local source mutation/computer use each require current-task authorization. Supports workspace registry + session grants, capability preflight, validation/review/completion gates, verified Web-mode GitHub publishing via Drive + GitHub Actions, verified Local-mode native-Git publishing, local post-push workspace sync, mandatory post-push refresh of the active workspace Skill, and Skill deployment separation. Never launch Codex CLI or another model runtime."
+description: "Default coding and computer-use workflow for ChatGPT. Use automatically whenever the user asks to implement, fix, refactor, review, test, run repository commands, use Web-mode GitHub publishing or Local-mode native-Git publishing, commit/push/publish, sync between the ChatGPT workspace, GitHub, and a local Mac, package/install/update a Skill, or perform computer use/browser/GUI interaction such as local Chrome, macOS, or cloud-browser actions, including terse follow-ups like push or sync. New conversations use the Web workspace as the recommended primary development path; Mac/PiWork Local mode is an explicit, non-recommended backup. Preserve task-scoped authorization for local source mutation and computer use. Never launch Codex CLI or another model runtime."
 ---
 
 # Codex Loop
@@ -9,13 +9,21 @@ Act as the coding agent. Use ChatGPT for reasoning and the bundled deterministic
 
 Use `scripts/codex_loop.py` as the stable local-runtime entry point. Run bundled code directly rather than reimplementing its bookkeeping inline. Runtime state belongs in the private system temp directory, never in the repository.
 
+## Invocation and continuation
+
+Treat Codex Loop as the default orchestrator once it has been implicitly selected for a development, Git lifecycle, synchronization/deployment, or computer-use task. Do not require the user to type `@Codex Loop`, `$codex-loop`, or otherwise name the Skill. Terse continuation requests such as `push`, `publish`, `sync`, `install`, `update the Skill`, `open this in Chrome`, or `click through the flow` inherit Codex Loop when the conversation context unambiguously identifies the active task.
+
+Automatic Skill invocation is routing, not authorization. It never grants Local-mode source mutation, local filesystem access, browser control, or native macOS GUI control. Keep the existing explicit current-task authorization gates for local source mutation and computer use, and keep `workspace_mode` separate from `interaction_target`.
+
 ## Development location selection
 
-A new conversation starts in **web mode**: develop in the current ChatGPT/web workspace using the files and tools already available there, and return generated files with normal workspace download links. Do not inspect, mutate, or synchronize any RDC-backed local workspace merely because Remote Desktop Commander is available.
+A new conversation starts in **web mode**: develop in the current ChatGPT/web workspace using the files and tools already available there, and return generated files with normal workspace download links. **Web mode is the recommended primary development path for ordinary repository work.** When GitHub publication is needed, prefer the Web workspace + verified cloud publication path because it usually avoids RDC hops, host-filesystem permission checks, native-Git host state, and Mac-to-workspace synchronization overhead. Do not inspect, mutate, or synchronize any RDC-backed local workspace merely because Remote Desktop Commander is available.
 
 **Mandatory pre-tool routing gate.** Before the first repository/filesystem observation or discovery, workspace mutation, packaging/release action, Git action, or transfer/synchronization action in any repository or Skill-development task, resolve `workspace_mode`. Until explicit Local repository-development intent has been observed, the resolved mode is Web and the current ChatGPT workspace is the only mutable source baseline. RDC/computer-use availability does not select Local mode. Resolve browser/computer interaction independently via `interaction_target` as defined in `references/interaction-routing.md`.
 
 **Fail-closed Web rule.** RDC availability, the existence of a Mac checkout, an installed Skill directory, or the absence of an obvious Web-mode mutation/publish bridge is not evidence that Local mode has been selected. If a required Web-mode capability is genuinely unavailable, preserve the Web workspace, stop at that boundary, and report the missing capability. Do not search, inspect, mutate, or synchronize a Mac checkout as a workaround.
+
+**Local mode is a supported but non-recommended backup / escape hatch.** Do not proactively choose or recommend Local mode merely because RDC is connected, a Mac checkout exists, or the task could technically be completed there. Mention it as an optional fallback only when persistent Mac-local files/tools are genuinely required or the user explicitly prefers the Mac checkout as the repository baseline. A Web-mode capability failure may justify offering Local mode as an option, but it never authorizes an automatic switch; explicit Local-development intent is still required.
 
 **Web-push then Mac-sync sequencing.** If the user asks to develop or fix the current Web workspace, push it, and then synchronize that pushed result to a Mac, complete Web-mode editing, validation, review, and verified publication first. Only after `SOURCE_PUSHED` is proven may the explicitly requested local synchronization phase begin: resolve and authorize `LOCAL_ROOT`, treat the Mac repository as a downstream destination of the exact pushed commit, and do not use local contents to influence the already-audited Web source generation. Entering that downstream local phase does not retroactively change which workspace was authoritative for the completed Web change.
 

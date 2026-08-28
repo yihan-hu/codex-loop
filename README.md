@@ -37,21 +37,31 @@ Source publication and deployment are still separate evidence states. Surfacing 
 
 ## Quick start
 
+Codex Loop is designed for **implicit invocation**. In normal use, you should not need to type `@Codex Loop` or name the Skill. ChatGPT should select it automatically for repository/software-development work, Git lifecycle commands such as commit/push/publish, workspace/GitHub/Mac synchronization, Skill packaging/install/update work, and Computer Use tasks involving browser or GUI interaction. Short follow-ups such as `push`, `sync`, or `open this in Chrome` should continue through Codex Loop when the active task is clear from context.
+
+Automatic invocation does **not** bypass permissions. Local source mutation and actual Computer Use remain explicitly authorized per task under the existing safety gates. Selecting Codex Loop for `open/click/type/navigate` work does not itself authorize control of local Chrome or macOS.
+
 After installing the Skill, ordinary coding requests use **Web mode** by default in every new conversation. Work happens in the current ChatGPT workspace and the result is returned with normal downloadable files or links.
 
-Example prompts:
+**Recommended path:** keep ordinary repository development in the ChatGPT/chatbox workspace and connect that Web workspace to GitHub when publication is needed. This is usually faster and simpler than Mac Local mode because it avoids the extra RDC hop, host-filesystem authorization, native-Git host state, and Mac-to-workspace synchronization steps.
+
+Example prompts (explicit Skill naming is optional):
 
 ```text
-Use Codex Loop to fix this bug.
-Add this feature and run the relevant tests.
-Review this repository and fix the issues you find.
+Fix this bug and run the relevant tests.
+Push the current workspace to GitHub.
+Sync the pushed commit back here.
+Use my local Chrome to verify this signed-in flow.
+Click through the macOS setup and verify the result.
 ```
 
 You do not need Remote Desktop Commander for ordinary Web-mode repository work. However, Web mode may still use RDC for **interaction-only** tasks such as controlling your local Chrome or macOS UI; that does not move the repository source of truth onto the Mac.
 
 If you ask to push from Web mode, Codex Loop keeps the current workspace authoritative and uses the verified Google Drive -> GitHub Actions publication path when its prerequisites are configured. If that workspace is the active Skill being edited, a successful source push immediately enters the mandatory Skill refresh handoff for the exact published commit; `SOURCE_PUSHED` alone is not the end of the task.
 
-To use a persistent repository on your own computer, explicitly enter **Local mode**:
+**Local mode is a supported backup / escape hatch, not the recommended day-to-day path.** Use it when a task genuinely needs persistent files or tools on your Mac, or when you deliberately want the Mac checkout to be the repository source of truth. For ordinary development it is usually slower than the Web workspace + GitHub path because each task can add RDC and permission checks, native-host coordination, and extra push/synchronization round trips.
+
+To use that backup path, explicitly enter **Local mode**:
 
 ```text
 Use local development for this repository.
@@ -60,7 +70,7 @@ Use Codex Loop locally under /Users/alice/PiWork and fix this bug.
 
 Once Local mode is selected, later repository tasks in the same conversation keep using that local repository as the baseline unless you explicitly switch back to Web mode. **That does not carry forward permission to modify local source.** Each task that would edit/create/delete/overwrite local source files must explicitly authorize local mutation again, for example: `Fix this locally and push.` A generic `push`, read-only inspection, RDC availability, or earlier local edits do not authorize new source changes. A new conversation starts in Web mode again.
 
-## Local mode requirements
+## Local mode requirements (backup path)
 
 Local mode requires a connected **Remote Desktop Commander (RDC)** integration because ChatGPT needs a host-authorized bridge to the persistent filesystem and native Git installation on your computer. The end-to-end path documented and verified in this repository is macOS + RDC + native Git; other hosts should be treated as unverified until their equivalent behavior is tested.
 
@@ -190,6 +200,8 @@ Preflight does not disable ChatGPT or operating-system security. If the host req
 
 ## Web mode versus Local mode
 
+Treat the two modes asymmetrically: **Web mode is the recommended primary development route; Mac Local mode is an explicit backup.** A connected RDC integration or an existing Mac checkout is never, by itself, a reason to recommend Local mode or switch to it.
+
 ```text
 new conversation
   -> Web mode
@@ -291,6 +303,8 @@ Use Codex Loop in Web mode to update this repository, test it, and push the curr
 ```
 
 ## Publishing from Local mode
+
+This section documents the supported backup path. For ordinary work, prefer Web workspace -> GitHub publishing unless you explicitly need the Mac checkout as the development baseline.
 
 For a local repository, Codex Loop's verified publication path is:
 

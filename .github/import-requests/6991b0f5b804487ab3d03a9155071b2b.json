@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "transfer_id": "6991b0f5b804487ab3d03a9155071b2b",
-  "file_id": "1ZCfzPQzcMse4WXjwhFtAmXJFY_8x6gUi",
-  "size": 217188,
-  "sha256": "35d954786e7319e64b1c3ae256afdb85825c8165997d3d9ab03cb78b6fcf6921",
-  "expected_base": "a3a3c5801a1388110a64d81f9b93ef52e62f3697",
-  "target_branch": "main"
-}
