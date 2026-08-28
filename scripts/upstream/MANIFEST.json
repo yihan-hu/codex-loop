@@ -54,6 +54,15 @@
       "sha256": "6b9acf0fb64e43aa8bf5f51873fa9623b1caf91a5ff5e4fbccaea0720d8fca65",
       "source": "codex-rs/shell-command/src/shell_snapshot.rs#powershell_snapshot_script",
       "source_commit": "c9b19deb09c1841ce7acc33ddb96276030936a29"
+    },
+    {
+      "classification": "EXACT_VENDOR",
+      "git_blob_sha1": "62391c523cab01022a32c6bb685292ed1e8d3205",
+      "local_path": "references/upstream-codex-goal-continuation.md",
+      "path": "codex-goal-continuation.md",
+      "sha256": "b9127a5d96c30b625ed6267b59e2fe22f312f4db34cfa8e041ddc1fb2740bdcb",
+      "source": "codex-rs/ext/goal/templates/goals/continuation.md",
+      "source_commit": "2008d27e98d7b46170d2d464b36dbf97008611b8"
     }
   ],
   "resource_source_commit": "275ef855fac71203ffff904d20c860a7717d6e8a"

@@ -108,6 +108,10 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
             git_mutation_scope={"head": args.allow_git_head, "branch": args.allow_git_branch, "index": args.allow_git_index},
             no_validation_reason=args.no_validation_reason,
         )
+        # New CLI-bootstrapped tasks adopt the upstream Codex goal completion-audit
+        # contract. Legacy/direct StateStore fixtures remain readable and do not
+        # acquire this obligation retroactively.
+        store.set_meta("requires_objective_completion_audit", True)
         store.set_meta("workspace_binding", capture_workspace_binding(root))
         count = capture_baseline(root, store)
         set_active_task(root, task_id)

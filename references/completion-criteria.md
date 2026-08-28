@@ -10,6 +10,8 @@ Use these checks before setting criteria to `pass` and before accepting a runtim
 - Relevant validation ran after the final substantive mutation when the environment allowed it, from the intended cwd; command identity includes cwd.
 - The final changed-file set was actually reviewed at the current generation.
 - Acceptance criteria and steer acknowledgements carry current-generation evidence; stale evidence was re-evaluated.
+- Bootstrap acceptance criteria are execution aids, not sufficient completion proof. A fresh objective-level audit was independently derived from the original objective plus referenced current specifications/instructions, and every explicit requirement, numbered item, named artifact, command, test, gate, invariant, and deliverable is proven by authoritative evidence.
+- If the objective names another Skill or workflow, authoritative evidence proves that workflow reached its required end state; Codex Loop does not duplicate or infer the domain workflow's internal semantics.
 - No external action with unknown/pending outcome remains relevant to completion.
 - No managed process that should be stopped remains running, orphaned, or internally failed without host-observed resolution.
 - Any validation waiver has a recorded reason, any protected-work override has a per-mutation reason, and any expected Git mutation is explicitly scoped to HEAD/branch/index.

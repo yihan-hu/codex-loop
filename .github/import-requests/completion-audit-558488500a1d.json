@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "transfer_id": "completion-audit-558488500a1d",
-  "file_id": "1pV9pjWNNHcpW2dzKqm4BmxAnr42479V0",
-  "size": 230082,
-  "sha256": "558488500a1d7433c55c4d4cbb8daff2b6205fb3dd4ecfe60e3fc9f2f2c26452",
-  "expected_base": "d6fb61b0ad124324342dade4da1947bb9a87d596",
-  "target_branch": "main"
-}

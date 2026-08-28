@@ -21,6 +21,8 @@ class CliSmokeTests(unittest.TestCase):
       recorded,_=call(root,'validation-record','--command-json','["pytest","-q"]','--exit-code','0','--evidence','host-visible pytest exited 0')
       self.assertTrue(recorded['data']['bookkeeping_inferred'])
       call(root,'changes','--review')
+      audit={'requirements':[{'requirement':'change a to b','status':'proven','evidence':'observed a.txt contains b and host-visible validation passed','authoritative_source':'workspace file plus host validation'}]}
+      call(root,'objective-audit','--audit-json',json.dumps(audit))
       done,_=call(root,'completion'); self.assertEqual(done['data']['status'],'PASS'); self.assertEqual(tid,done['data']['details']['changes']['generation'] and tid)
   @unittest.skipIf(sys.platform.startswith('win'),'workspace alias test requires symlinks')
   def test_content_file_accepts_workspace_alias_without_losing_symlink_checks(self):

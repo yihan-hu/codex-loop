@@ -156,7 +156,32 @@ python scripts/codex_loop.py steer-ack --cwd REPO --task-id TASK --steer-id ID \
   --evidence "replanned and verified the API surface is unchanged"
 ```
 
-Passing criteria and acknowledging steers require evidence at the current workspace generation. Any later workspace mutation makes prior pass/ack evidence stale; re-check the condition, then repeat `criterion --status pass` or `steer-ack` with fresh evidence.
+Passing criteria and acknowledging steers require evidence at the current workspace generation. Any later workspace mutation makes prior pass/ack evidence stale; re-check the condition, then repeat `criterion --status pass` or `steer-ack` with fresh evidence. Working criteria guide execution but do not independently prove completion of the original objective.
+
+## Objective completion audit
+
+New tasks created through the Codex Loop CLI require a separate upstream-style objective audit before `completion` may return `PASS`. Re-derive the requirements from the original objective and referenced current files/plans/specifications/issues/user instructions; do not merely restate the bootstrap criteria. Read `upstream-codex-goal-continuation.md` and `upstream-adaptation.md` before changing this behavior.
+
+Record the audit as JSON:
+
+```bash
+python scripts/codex_loop.py objective-audit --cwd REPO <<'JSON'
+{
+  "requirements": [
+    {
+      "requirement": "Use the named workflow to its required end state",
+      "status": "proven",
+      "evidence": "The workflow's authoritative completion receipt reports PASS.",
+      "authoritative_source": "workflow completion receipt"
+    }
+  ]
+}
+JSON
+```
+
+Allowed statuses are `proven`, `contradicted`, `incomplete`, `weak`, and `missing`. A `proven` item requires non-empty evidence and an authoritative source. Every requirement must be `proven` for the audit to pass. The audit is bound to the stored objective, current workspace generation, and current `plan_revision`; a later workspace mutation or user steer makes it stale. Re-run the objective audit after those changes and before final `completion`.
+
+The runtime deliberately does not understand domain-specific workflow internals. If the objective names another Skill, gate, invariant, or deliverable, record the authoritative evidence proving that requirement rather than adding a domain-specific dependency mechanism to Codex Loop.
 
 ## External/host actions
 

@@ -17,6 +17,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import codex_loop_kernel as kernel
 from codex_loop_context_projection import build_working
 from codex_loop_runtime.change_tracker import sync_generation
+from codex_loop_runtime.completion import record_objective_audit
 from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
 from codex_loop_runtime.lifecycle import DURABLE_SIGNAL_KEYS, assess_runtime_need
@@ -294,6 +295,44 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
     return 0
 
 
+
+def _cmd_objective_audit(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py objective-audit')
+    p.add_argument('--cwd')
+    p.add_argument('--task-id')
+    p.add_argument('--audit-json')
+    args = p.parse_args(argv[1:])
+    _cwd_path, root, store = _scope_from_argv(argv)
+    store.ensure_active()
+    sync_generation(root, store)
+    if args.audit_json is not None:
+        raw_text = args.audit_json
+    else:
+        payload = sys.stdin.buffer.read(64 * 1024 + 1)
+        if len(payload) > 64 * 1024:
+            raise ValueError('objective audit JSON exceeds 64 KiB')
+        try:
+            raw_text = payload.decode('utf-8')
+        except UnicodeDecodeError as exc:
+            raise ValueError('objective audit stdin must be valid UTF-8 JSON') from exc
+    if not raw_text.strip():
+        raise ValueError('objective audit requires JSON via --audit-json or stdin')
+    try:
+        raw = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError('objective audit must be valid JSON') from exc
+    audit = record_objective_audit(store, raw)
+    unresolved = [item for item in audit['requirements'] if item['status'] != 'proven']
+    emit_ok({
+        'status': 'PASS' if not unresolved else 'CONTINUE',
+        'generation': audit['generation'],
+        'plan_revision': audit['plan_revision'],
+        'requirements_count': len(audit['requirements']),
+        'unresolved_count': len(unresolved),
+        'upstream_blob': audit['upstream_blob'],
+    })
+    return 0
+
 def _cmd_workspace_register(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py workspace-register')
     p.add_argument('--name', required=True)
@@ -393,6 +432,8 @@ def main() -> int:
             return _cmd_validate(argv)
         if argv[0] == 'validation-record':
             return _cmd_validation_record(argv)
+        if argv[0] == 'objective-audit':
+            return _cmd_objective_audit(argv)
         if argv[0] == 'workspace-register':
             return _cmd_workspace_register(argv)
         if argv[0] == 'workspace-registry-list':

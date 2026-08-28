@@ -2,12 +2,131 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import hashlib
 from pathlib import Path
 from typing import Any
 
 from .change_tracker import changes, sync_generation
 from .release_lineage import workspace_binding_status
-from .state import READ_ONLY_PROFILES, StateStore
+from .state import READ_ONLY_PROFILES, StateStore, scrub_persisted_text
+
+
+OBJECTIVE_AUDIT_STATUSES = {"proven", "contradicted", "incomplete", "weak", "missing"}
+UPSTREAM_GOAL_CONTINUATION_BLOB = "62391c523cab01022a32c6bb685292ed1e8d3205"
+
+
+def _objective_sha256(objective: str) -> str:
+    return hashlib.sha256(str(objective).encode("utf-8")).hexdigest()
+
+
+def record_objective_audit(store: StateStore, payload: Any) -> dict[str, Any]:
+    """Record an upstream-style objective completion audit without domain-specific semantics."""
+    store.ensure_active()
+    requirements = payload.get("requirements") if isinstance(payload, dict) else payload
+    if not isinstance(requirements, list) or not requirements:
+        raise ValueError("objective audit requires a non-empty requirements array")
+    if len(requirements) > 256:
+        raise ValueError("objective audit exceeds the 256 requirement limit")
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(requirements):
+        if not isinstance(item, dict):
+            raise ValueError(f"objective audit requirement {index} must be an object")
+        requirement = (scrub_persisted_text(str(item.get("requirement", "")), limit=4096) or "").strip()
+        status = str(item.get("status", "")).strip().lower()
+        evidence = (scrub_persisted_text(str(item.get("evidence", "")), limit=4096) or "").strip()
+        source = (scrub_persisted_text(str(item.get("authoritative_source", "")), limit=2048) or "").strip()
+        if not requirement:
+            raise ValueError(f"objective audit requirement {index} is missing requirement text")
+        if status not in OBJECTIVE_AUDIT_STATUSES:
+            raise ValueError(
+                f"objective audit requirement {index} has invalid status {status!r}; "
+                f"expected one of {sorted(OBJECTIVE_AUDIT_STATUSES)}"
+            )
+        if status == "proven" and not evidence:
+            raise ValueError(f"objective audit requirement {index} is proven without evidence")
+        if status == "proven" and not source:
+            raise ValueError(f"objective audit requirement {index} is proven without an authoritative source")
+        normalized.append({
+            "ordinal": index,
+            "requirement": requirement,
+            "status": status,
+            "evidence": evidence,
+            "authoritative_source": source,
+        })
+
+    objective = str(store.get_meta("objective", "") or "")
+    audit = {
+        "version": 1,
+        "upstream_blob": UPSTREAM_GOAL_CONTINUATION_BLOB,
+        "objective_sha256": _objective_sha256(objective),
+        "generation": store.generation(),
+        "plan_revision": int(store.get_meta("plan_revision", 0)),
+        "requirements": normalized,
+    }
+    store.set_meta("objective_completion_audit", audit)
+    return audit
+
+
+def _objective_audit_state(store: StateStore, generation: int) -> dict[str, Any]:
+    audit = store.get_meta("objective_completion_audit")
+    reasons: list[str] = []
+    unresolved: list[dict[str, Any]] = []
+    if not isinstance(audit, dict):
+        return {
+            "required": True,
+            "present": False,
+            "fresh": False,
+            "pass": False,
+            "reasons": ["objective completion audit has not been recorded"],
+            "requirements": [],
+            "unresolved": [],
+        }
+
+    objective = str(store.get_meta("objective", "") or "")
+    if str(audit.get("objective_sha256", "")) != _objective_sha256(objective):
+        reasons.append("objective completion audit does not match the current objective")
+    if int(audit.get("generation", -1)) != int(generation):
+        reasons.append(f"objective completion audit is stale for generation {generation}")
+    if int(audit.get("plan_revision", -1)) != int(store.get_meta("plan_revision", 0)):
+        reasons.append("objective completion audit predates the current user steer/plan revision")
+
+    requirements = audit.get("requirements")
+    if not isinstance(requirements, list) or not requirements:
+        requirements = []
+        reasons.append("objective completion audit has no requirements")
+    else:
+        for index, item in enumerate(requirements):
+            if not isinstance(item, dict):
+                unresolved.append({"ordinal": index, "status": "invalid", "requirement": "<invalid>"})
+                continue
+            requirement = str(item.get("requirement", "")).strip()
+            status = str(item.get("status", "")).strip().lower()
+            evidence = str(item.get("evidence", "")).strip()
+            source = str(item.get("authoritative_source", "")).strip()
+            if status != "proven" or not requirement or not evidence or not source:
+                unresolved.append({
+                    "ordinal": index,
+                    "status": status or "missing",
+                    "requirement": requirement or "<missing requirement>",
+                })
+        if unresolved:
+            reasons.append("one or more objective requirements are not proven by authoritative evidence")
+
+    fresh = not any("does not match" in x or "stale" in x or "predates" in x for x in reasons)
+    passed = bool(requirements) and not reasons and not unresolved
+    return {
+        "required": True,
+        "present": True,
+        "fresh": fresh,
+        "pass": passed,
+        "reasons": reasons,
+        "requirements": requirements,
+        "unresolved": unresolved,
+        "generation": audit.get("generation"),
+        "plan_revision": audit.get("plan_revision"),
+        "upstream_blob": audit.get("upstream_blob"),
+    }
 
 
 class CompletionStatus(str, Enum):
@@ -55,6 +174,22 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
             reasons.append(f"criterion {item['ordinal']} passed without evidence")
         elif int(item.get("evidence_generation") if item.get("evidence_generation") is not None else -1) != generation:
             reasons.append(f"criterion {item['ordinal']} evidence is stale for generation {generation}")
+
+    objective_audit_required = bool(store.get_meta("requires_objective_completion_audit", False))
+    if objective_audit_required:
+        objective_audit = _objective_audit_state(store, generation)
+        if not objective_audit["pass"]:
+            reasons.extend(str(x) for x in objective_audit["reasons"])
+    else:
+        objective_audit = {
+            "required": False,
+            "present": False,
+            "fresh": True,
+            "pass": True,
+            "reasons": [],
+            "requirements": [],
+            "unresolved": [],
+        }
 
     if store.pending_steers():
         reasons.append("one or more user steers are pending integration")
@@ -151,6 +286,7 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
         {
             "generation": generation,
             "criteria": criteria,
+            "objective_audit": objective_audit,
             "validation": validation_state,
             "reviewed_generation": reviewed_generation,
             "unresolved_external": unresolved_external,
