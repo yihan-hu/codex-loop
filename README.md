@@ -15,7 +15,7 @@ Use Codex Loop for end-to-end repository tasks such as:
 - tracking acceptance criteria and review freshness;
 - remembering stable local workspace aliases without turning remembered paths into standing access permission;
 - keeping repository `workspace_mode` independent from browser/computer `interaction_target`;
-- controlling a user's local Chrome through a supported native bridge or RDC-backed structured Chrome automation without launching a local Codex agent;
+- controlling a user's local Chrome through a supported Browser/Chrome bridge attached to the current conversation, with separate host-health and session-capability recovery;
 - preflighting required RDC, GitHub, Google Drive, browser, and host permissions before substantive multi-step execution;
 - publishing Web-mode workspace source through verified Drive staging + GitHub Actions, or Local-mode source through native Git;
 - packaging ChatGPT Skills;
@@ -164,11 +164,11 @@ interaction_target:  none | cloud_browser | local_chrome | local_mac_gui
 
 For example, `workspace_mode=web` plus `interaction_target=local_chrome` means the repository remains in the current ChatGPT workspace while ChatGPT uses your Mac only to interact with your signed-in local Chrome. Using RDC for that interaction does not make the Mac checkout authoritative.
 
-For `local_chrome`, Codex Loop keeps ChatGPT as the reasoning authority and does not launch a local Codex agent. It prefers an official host-exposed Chrome/Computer Use bridge when available; otherwise on macOS it can use RDC-backed structured Chrome automation. Generic screenshot plus mouse/keyboard automation is a fallback only when structured control is insufficient.
+For `local_chrome`, Codex Loop keeps ChatGPT as the reasoning authority and does not launch a local Codex agent. Browser Control requires an official/supported host-exposed Chrome/Computer Use executor or native bridge that is actually attached to the current conversation. RDC/AppleScript, Chrome `execute javascript`, generic screenshot/mouse/keyboard automation, and private Browser/Codex sockets are not Browser Control fallbacks and must not be reported as Browser capability success.
 
 **Computer use is opt-in per task.** Codex Loop must not interact with local Chrome or the macOS GUI until you explicitly authorize computer use for that task, for example: `Use my local Chrome to verify this signed-in flow.` A connected RDC/Chrome session, prior computer-use success, or the agent deciding that browser interaction would be useful is not authorization. Once authorized, low-risk actions within that task scope can continue without asking before every individual click/tab action; host-required sensitive confirmations still apply.
 
-The RDC-backed Chrome path has been validated end to end with a harmless test: create `about:blank`, independently confirm the tab exists, close only that test tab, then independently confirm it is gone.
+Codex Loop distinguishes `browser_host_health` (Chrome, extension, native host) from `browser_session_health` (whether this conversation has a callable Browser executor). A healthy host with no attached executor is `SESSION_BROWSER_CAPABILITY_MISSING`, not a broken Chrome installation. See `references/browser-control-recovery.md`.
 
 ## Capability and permission preflight
 
@@ -383,6 +383,8 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 - Do not treat an installed Skill, downloaded archive, or copied release folder as the canonical development source.
 
 ## Troubleshooting
+
+**Chrome extension is installed but Browser Control is unavailable.** First distinguish host health from session health. If the native messaging host is missing/invalid, use `ChatGPT / Codex -> Settings -> Computer use -> Google Chrome -> Manage / Reconnect`, then recheck. Do not hand-create the manifest or use AppleScript/internal sockets as a substitute. If host health is good but the current conversation still has no Browser executor, classify `SESSION_BROWSER_CAPABILITY_MISSING` and retry from a Browser-capable conversation rather than repairing Chrome again.
 
 **Codex Loop is trying to use the wrong local path.** Explicitly state your absolute RDC-authorized workspace root when entering Local mode. The distributed Skill should contain no author-specific home-directory path.
 

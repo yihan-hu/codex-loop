@@ -13,6 +13,8 @@ The purpose is to avoid discovering predictable permission blockers halfway thro
 5. After required capabilities are available, continue the task without re-asking for capabilities that remain valid.
 6. Re-run preflight only if the workflow expands to a new capability or an already-checked capability becomes unavailable.
 
+For `local_chrome`, keep `browser_host_health` separate from `browser_session_health`. If the extension/native host is healthy but the current conversation has no Browser executor, classify `SESSION_BROWSER_CAPABILITY_MISSING` and stop Browser execution at that boundary rather than repairing Chrome again or switching to RDC/AppleScript.
+
 Request the capabilities needed by the task, not every integration the host happens to offer.
 
 ## Common capability sets
@@ -22,7 +24,7 @@ Request the capabilities needed by the task, not every integration the host happ
 - Local repository read/inspection: RDC access plus resolved/authorized `LOCAL_ROOT`; this does not authorize source mutation.
 - Local repository edit: the Local read capabilities plus explicit current-task local-source-mutation authorization.
 - Local native-Git publication of already-existing audited content: the Local read capabilities plus host-owned native Git authentication/network access; source integration/conflict resolution additionally requires explicit current-task local-source-mutation authorization.
-- `local_chrome`: explicit user authorization for computer use in the current task, plus local Chrome availability and a supported host Chrome bridge or RDC-backed Chrome automation.
+- `local_chrome`: explicit user authorization for computer use in the current task, plus local Chrome host health and a supported Browser/Chrome executor attached to the current conversation. Read `browser-control-recovery.md`; do not treat RDC/AppleScript automation as Browser Control fallback.
 - `local_mac_gui`: explicit user authorization for computer use in the current task, RDC, plus any macOS Accessibility/Screen Recording permissions genuinely needed by the chosen action/observation transport.
 
 ## What may persist

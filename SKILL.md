@@ -41,7 +41,7 @@ For Local mode, reason about `Primary Local Root + Session Granted Roots = Effec
 
 ## Capability and permission preflight
 
-Before substantive execution of a multi-step task, infer the external capabilities required by the intended workflow and run one bounded preflight. Read `references/capability-preflight.md` when the task may require RDC, GitHub, Google Drive, local Chrome/computer use, macOS GUI permissions, or another host integration.
+Before substantive execution of a multi-step task, infer the external capabilities required by the intended workflow and run one bounded preflight. Read `references/capability-preflight.md` when the task may require RDC, GitHub, Google Drive, local Chrome/computer use, macOS GUI permissions, or another host integration. For User Chrome Browser tasks, also read `references/browser-control-recovery.md` and keep Chrome host health separate from current-session Browser capability.
 
 Batch predictable missing connection/setup requests up front when the host supports it, then continue automatically after they are satisfied. Reuse live, still-valid host capability state during the task instead of interrupting the user for the same permission repeatedly. Request only capabilities actually needed by the planned workflow.
 
@@ -50,6 +50,8 @@ Preflight never bypasses host-enforced per-action approval, sandboxing, or high-
 **Explicit local-source-mutation authorization gate.** In Local mode, before the first source-content mutation in each task, require an explicit current-task instruction to modify the local repository, such as “fix this locally,” “modify the PiWork checkout,” or “update the local Codex Loop and push.” Do not infer write consent from Local mode persisting from an earlier task, RDC availability, earlier local edits, a read-only local inspection request, synchronization intent, or a generic `push`. A push may publish already-existing audited local commits/changes when otherwise authorized, but it must not silently create or change source content. Keep this authorization task-scoped; do not carry it into a later task.
 
 **Explicit computer-use authorization gate.** Before the first `local_chrome` or `local_mac_gui` interaction action, require explicit user authorization for computer use in the current task. A direct instruction such as “use my local Chrome to verify this flow” qualifies. RDC/Chrome availability, prior computer use, a persisted capability, or the agent's belief that browser interaction would be helpful does not qualify. Once explicitly authorized, low-risk interaction within the stated task scope may continue without re-asking for every click/tab action, while any host-required sensitive-action confirmation still applies. Read `references/interaction-routing.md` for the exact scope.
+
+**Browser Control evidence gate.** Do not infer Browser Control from successful RDC/AppleScript/GUI automation. A `local_chrome` Browser task requires a supported Browser/Chrome executor attached to the current conversation. If the Chrome extension/native host is healthy but that executor is absent, report `SESSION_BROWSER_CAPABILITY_MISSING`; do not repair Chrome again, attach to internal sockets, hand-create the native-host manifest, or silently fall back to AppleScript.
 
 ## Adaptive lifecycle
 

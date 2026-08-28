@@ -32,19 +32,15 @@ Do **not** infer authorization from RDC/Chrome availability, prior computer-use 
 
 Once authorized, keep the authorization scoped to the stated task and target. Low-risk actions within that scope may proceed without re-asking for every click or tab operation; host-enforced confirmations for sensitive actions remain separate and mandatory.
 
-## `local_chrome` transport order
+## `local_chrome` Browser Control routing
 
 Keep ChatGPT as the reasoning/orchestration authority; do not launch a local Codex model/agent merely to control the browser.
 
-Prefer transports in this order:
+For a Browser Control task, require a supported host-exposed Chrome/Computer Use executor or native bridge that is actually attached to the current conversation. Read `browser-control-recovery.md` before declaring the local Chrome path unavailable or healthy.
 
-1. A host-exposed official Chrome/Computer Use tool or native bridge, when the current ChatGPT surface actually exposes it.
-2. RDC-backed structured Chrome automation on macOS, using Chrome's application scripting/interface for targeted tab/window actions.
-3. Generic screenshot + mouse/keyboard GUI automation only when structured Chrome control cannot perform the required action.
+Do not silently substitute RDC-backed AppleScript, Chrome `execute javascript`, generic screenshot/mouse/keyboard automation, or a private Browser/Codex socket when the supported Browser executor is missing. Those paths are not evidence that Browser Control is attached. If the user explicitly requests a separate nonstandard computer-automation path after the limitation is disclosed, keep it clearly labeled as such and do not use its success to satisfy Browser capability checks.
 
-The RDC-backed Chrome path has been end-to-end validated with a harmless loop: create `about:blank` -> independently query that exact tab -> close only the test tab -> independently verify it is gone.
-
-Do not treat the existence of ChatGPT Desktop browser-use sockets as permission to attach a second client. An internal native pipe may be session-bound; only use it when the host exposes a supported callable interface.
+Distinguish local host health from current-session health. A valid Chrome extension/native-host bridge may coexist with `SESSION_BROWSER_CAPABILITY_MISSING`, and one conversation lacking a Browser executor must not trigger repeated Chrome reinstall/repair attempts.
 
 ## Interaction safety
 

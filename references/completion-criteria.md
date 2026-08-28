@@ -19,6 +19,7 @@ Use these checks before setting criteria to `pass` and before accepting a runtim
 - For a Web-mode push of the active workspace Skill, post-push deployment reconciliation ran for the exact published revision. If the active workspace Skill is not observably updated, the `chatgpt_skill_update` action remains unresolved and normal completion must not pass merely because GitHub publication succeeded.
 - No missing binary transfer bridge was silently replaced with chunked text, base64, heredoc reconstruction, repeated remote writes, or connector payload relay unless the user explicitly authorized that exact transfer method after the limitation was disclosed.
 - Any explicitly authorized guarded model relay published a destination only after unique framing, strict Base64 decode, exact decoded size, and full SHA-256 verification; failed one-shot attempts did not heuristically alter payload bytes and surfaced the verified chunk relay only as fallback.
+- Browser Control success is claimed only when a supported Browser/Chrome executor attached to the current conversation produced the evidence; RDC/AppleScript or generic GUI automation never satisfies that capability claim.
 - Remaining limitations are stated precisely.
 
 ## Bug fix

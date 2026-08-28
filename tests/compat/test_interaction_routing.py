@@ -13,12 +13,15 @@ class InteractionRoutingContractTests(unittest.TestCase):
         self.assertIn("interaction_target=local_chrome", routing)
         self.assertIn("must not inspect or mutate a local repository", routing)
 
-    def test_local_chrome_keeps_chatgpt_as_reasoning_authority(self):
+    def test_local_chrome_requires_supported_browser_executor(self):
         routing = (ROOT / "references" / "interaction-routing.md").read_text()
+        recovery = (ROOT / "references" / "browser-control-recovery.md").read_text()
         self.assertIn("Keep ChatGPT as the reasoning/orchestration authority", routing)
-        self.assertIn("RDC-backed structured Chrome automation", routing)
-        self.assertIn("create `about:blank`", routing)
-        self.assertIn("screenshot + mouse/keyboard GUI automation", routing)
+        self.assertIn("supported host-exposed Chrome/Computer Use executor", routing)
+        self.assertIn("SESSION_BROWSER_CAPABILITY_MISSING", routing)
+        self.assertIn("RDC -> AppleScript", recovery)
+        self.assertIn("not a Browser Control executor", recovery)
+        self.assertNotIn("RDC-backed structured Chrome automation on macOS", routing)
 
     def test_capability_preflight_batches_predictable_permissions(self):
         skill = (ROOT / "SKILL.md").read_text()
@@ -77,17 +80,44 @@ class InteractionRoutingContractTests(unittest.TestCase):
         self.assertIn("all Skills and Skill installation packages", readme)
         self.assertIn("never treat deployment intent as permission to automate browser clicks", readme)
 
+    def test_browser_recovery_separates_host_and_session_health(self):
+        recovery = (ROOT / "references" / "browser-control-recovery.md").read_text()
+        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
+        skill = (ROOT / "SKILL.md").read_text()
+        self.assertIn("browser_host_health", recovery)
+        self.assertIn("browser_session_health", recovery)
+        self.assertIn("NATIVE_HOST_MISSING", recovery)
+        self.assertIn("BRIDGE_HEALTHY", recovery)
+        self.assertIn("SESSION_BROWSER_CAPABILITY_MISSING", preflight)
+        self.assertIn("Browser Control evidence gate", skill)
+
+    def test_browser_recovery_uses_supported_product_path_not_manual_manifest(self):
+        recovery = (ROOT / "references" / "browser-control-recovery.md").read_text()
+        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
+        completion = (ROOT / "references" / "completion-criteria.md").read_text()
+        self.assertIn("Settings", recovery)
+        self.assertIn("Computer use", recovery)
+        self.assertIn("Google Chrome", recovery)
+        self.assertIn("Manage / Reconnect", recovery)
+        self.assertIn("Do not synthesize or repair the manifest manually", recovery)
+        self.assertIn("do not use AppleScript", boundary)
+        self.assertIn("RDC/AppleScript", completion)
+
     def test_runtime_entrypoints_are_executable(self):
         for relative in ("scripts/codex_loop.py", "scripts/codex_loop_kernel.py"):
             mode = (ROOT / relative).stat().st_mode
             self.assertNotEqual(mode & 0o111, 0, relative)
 
-    def test_readme_explains_all_three_layers(self):
+    def test_readme_explains_browser_host_session_recovery(self):
         readme = (ROOT / "README.md").read_text()
         self.assertIn("Workspace mode versus interaction target", readme)
         self.assertIn("Capability and permission preflight", readme)
         self.assertIn("Remembering `LOCAL_ROOT` across conversations", readme)
-        self.assertIn("RDC-backed Chrome path has been validated end to end", readme)
+        self.assertIn("browser_host_health", readme)
+        self.assertIn("browser_session_health", readme)
+        self.assertIn("SESSION_BROWSER_CAPABILITY_MISSING", readme)
+        self.assertIn("Settings -> Computer use -> Google Chrome -> Manage / Reconnect", readme)
+        self.assertNotIn("RDC-backed Chrome path has been validated end to end", readme)
 
 
 if __name__ == "__main__":
