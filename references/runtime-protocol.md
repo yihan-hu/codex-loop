@@ -235,7 +235,9 @@ Every new task records a canonical workspace binding at bootstrap. Inspect it wi
 python scripts/codex_loop.py workspace-binding --cwd REPO
 ```
 
-The canonical root and shared Git repository identity must remain stable for the task. HEAD/branch may move only through the existing Git-mutation workflow. Use Git worktrees for concurrent tasks; installed Skills, copied full-source directories, disposable release staging, and unpacked artifacts are never later development baselines. See `references/release-lineage.md`.
+The canonical root and shared Git repository identity must remain stable for the task. HEAD/branch may move only through the existing Git-mutation workflow. Use Git worktrees for concurrent tasks. Installed Skills are deployment state and are never edited in place, but a verified-latest installed Skill may be copied once to bootstrap a fresh workspace under `references/source-acquisition.md`; after that copy, only the new workspace is authoritative. Copied full-source directories without that provenance/freshness proof, disposable release staging, and unpacked artifacts are never later development baselines. See `references/release-lineage.md`.
+
+When Web mode needs source from GitHub, use the exact-revision workspace-download Actions artifact contract in `references/source-acquisition.md`. A shell/network inability to run `git clone` in the container is not a reason to invent another source transport. Likewise, inability of one connector query to observe a workflow run must be recorded as an observability limitation, not as proof that the workflow failed or never ran.
 
 Commit source before packaging. Plan an export from the audited Git HEAD, build outside the canonical tree, then record the artifact hash:
 

@@ -102,6 +102,7 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("HEAD", workflow)
         self.assertIn("sha256sum", workflow)
         self.assertIn("name: codex-loop-source", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
 
 
 if __name__ == "__main__":

@@ -45,6 +45,10 @@ After installing the Skill, ordinary coding requests use **Web mode** by default
 
 **Recommended path:** keep ordinary repository development in the ChatGPT/chatbox workspace and connect that Web workspace to GitHub when publication is needed. This is usually faster and simpler than Mac Local mode because it avoids the extra RDC hop, host-filesystem authorization, native-Git host state, and Mac-to-workspace synchronization steps.
 
+When a Web task starts from source that currently lives on GitHub, Codex Loop does **not** treat container `git clone` as the standard acquisition path. It materializes the exact GitHub revision through the audited `.github/workflows/workspace-download.yml` Actions artifact, downloads that artifact through the GitHub Connector, verifies the artifact digest and source archive SHA-256, and extracts it into a fresh Web workspace.
+
+For Skill maintenance, an installed Skill may be copied into a fresh workspace only as a narrow bootstrap optimization when its deployment provenance proves that it is the latest observed target-branch revision. The installed directory stays read-only deployment state; after copying, only the new workspace is authoritative. If freshness is uncertain, acquire the source from GitHub through the verified Actions-artifact route.
+
 Example prompts (explicit Skill naming is optional):
 
 ```text
@@ -225,6 +229,24 @@ If you explicitly ask to fix something in the current ChatGPT workspace, push it
 
 Each durable runtime task still has its own repository/worktree binding even though the development-location choice persists for the conversation.
 
+## Acquiring GitHub source into Web mode
+
+For requests such as “pull this repository into the Web workspace”, “open the GitHub version here”, or “sync this exact commit into ChatGPT”, Codex Loop uses one verified materialization path:
+
+```text
+exact GitHub commit
+  -> .github/workflows/workspace-download.yml
+  -> commit-bound GitHub Actions artifact
+  -> GitHub Connector artifact download
+  -> artifact ZIP digest verification
+  -> source tarball SHA-256 verification from the same job log
+  -> safe extraction into a fresh ChatGPT workspace
+```
+
+The workflow should support push-triggered packaging and `workflow_dispatch` for hosts that can explicitly request a fresh artifact. Codex Loop must bind the selected workflow run to the exact `head_sha`; choosing the newest artifact is not enough. If no exact run can be produced or observed, report that acquisition/observability blocker instead of falling back to shell `git clone`, GitHub per-file reconstruction, or generic repository archive URLs.
+
+If an installed Skill is proven by deployment evidence or an audited full manifest to be exactly the latest observed GitHub revision, Codex Loop may copy it once into a fresh workspace as a bootstrap shortcut. This is not allowed when the user explicitly asked to acquire from GitHub, and it never permits editing the installed Skill directory itself.
+
 ## Publishing from Web mode
 
 For a repository being developed in the current ChatGPT workspace, the standard GitHub publication path is:
@@ -404,7 +426,8 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 - Treat native Git commit/tree readback as Local-mode publication success evidence; for Web mode require the archive-bound Actions receipt plus GitHub branch commit/tree readback.
 - Treat the public-read Google Drive staging folder as a temporary publication trust boundary and delete staged archives after verified success.
 - Do not invent a binary transfer route when no verified bridge exists.
-- Do not treat an installed Skill, downloaded archive, or copied release folder as the canonical development source.
+- Never edit an installed Skill in place or treat it as ongoing source authority. A verified-latest installed Skill may only bootstrap a fresh workspace once; downloaded artifacts and copied release folders remain transport/release material rather than development baselines.
+- Materialize GitHub source into Web mode through the exact-commit `workspace-download.yml` Actions artifact path, not shell `git clone` or per-file reconstruction.
 
 ## Troubleshooting
 
@@ -419,6 +442,8 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 **`git push` fails.** Fix the reported native Git authentication/network/permission/divergence problem on the RDC host. Codex Loop intentionally does not switch to a different source-upload transport.
 
 **A pushed commit is not visible in ChatGPT.** Git push updates GitHub, not the current ChatGPT workspace. Ask to sync the pushed commit and make sure the repository has the audited workspace-download workflow.
+
+**GitHub source cannot be materialized into the Web workspace.** Confirm the repository has the audited `workspace-download.yml`, locate or produce a run bound to the exact target `head_sha`, and verify the artifact can be downloaded through the GitHub Connector. If one query surface cannot observe a push-triggered run, classify that as an observability limitation and inspect the repository's Actions runs through a compatible endpoint; do not conclude that the workflow failed merely from an empty incompatible query.
 
 **A new Skill version is not active after pushing.** For the active Skill being maintained in the current Web workspace, this should now remain an unfinished `DEPLOY_PENDING` workflow rather than a silent success: Codex Loop creates `skill-deploy-handoff`, prefers a supported host-managed update, and otherwise surfaces the Save/Update UI handoff. For other/external Skill copies, Git publication and deployment remain separately requested.
 
