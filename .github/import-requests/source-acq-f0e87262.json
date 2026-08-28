@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "transfer_id": "source-acq-f0e87262",
+  "file_id": "1kMP0X5BZqycFzbB01-hNefeiIsLMQ4Pn",
+  "size": 222496,
+  "sha256": "f0e87262c2c2013ae083edbeca3bd0bd74f175a44492096d0734547191a17974",
+  "expected_base": "1169c4a29e52dc5b8dff3db6b68d3d87517e877f",
+  "target_branch": "main"
+}
