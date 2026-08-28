@@ -45,6 +45,19 @@ class InteractionRoutingContractTests(unittest.TestCase):
         self.assertIn("must not touch the local checkout", boundary)
         self.assertIn("never change them silently", boundary)
 
+    def test_local_source_mutation_requires_explicit_current_task_authorization(self):
+        skill = (ROOT / "SKILL.md").read_text()
+        setup = (ROOT / "references" / "local-mode-setup.md").read_text()
+        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
+        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("Explicit local-source-mutation authorization gate", skill)
+        self.assertIn("Local mode is routing state, not write consent", skill)
+        self.assertIn("does **not** persist permission to mutate local source", setup)
+        self.assertIn("does not authorize source mutation", preflight)
+        self.assertIn("generic `push` wording", boundary)
+        self.assertIn("does not carry forward permission to modify local source", readme)
+
     def test_computer_use_requires_explicit_current_task_authorization(self):
         skill = (ROOT / "SKILL.md").read_text()
         routing = (ROOT / "references" / "interaction-routing.md").read_text()
@@ -63,6 +76,11 @@ class InteractionRoutingContractTests(unittest.TestCase):
         self.assertIn("For any Skill or Skill installation package", deployment)
         self.assertIn("all Skills and Skill installation packages", readme)
         self.assertIn("do not invent a browser UI deployment step", readme)
+
+    def test_runtime_entrypoints_are_executable(self):
+        for relative in ("scripts/codex_loop.py", "scripts/codex_loop_kernel.py"):
+            mode = (ROOT / relative).stat().st_mode
+            self.assertNotEqual(mode & 0o111, 0, relative)
 
     def test_readme_explains_all_three_layers(self):
         readme = (ROOT / "README.md").read_text()

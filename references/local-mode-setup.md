@@ -37,7 +37,7 @@ A new conversation still starts in Web mode even when this file exists. The pers
 
 ## Conversation and task scope
 
-A new conversation starts in Web mode. Selecting Local mode activates the resolved `LOCAL_ROOT` for later repository tasks in that same conversation until the user explicitly switches back to Web mode.
+A new conversation starts in Web mode. Selecting Local mode activates the resolved `LOCAL_ROOT` as the repository baseline for later repository tasks in that same conversation until the user explicitly switches back to Web mode. This routing choice does **not** persist permission to mutate local source: every task that would edit/create/delete/overwrite source files needs explicit current-task local-source-mutation authorization.
 
 Development-location resolution must happen before any **repository-affecting** RDC/local-filesystem discovery or repository operation. Interaction-only RDC use is routed separately by `references/interaction-routing.md` and may occur while `workspace_mode=web`; it must not inspect a local checkout or influence the Web source baseline. Do not use RDC to look for a local checkout first and then infer that the conversation is in Local mode. An explicit request to synchronize a verified Web-mode push to the Mac permits a downstream local synchronization phase only after Web publication has completed; the local repository must be updated from the exact verified remote commit rather than consulted as a competing development baseline.
 

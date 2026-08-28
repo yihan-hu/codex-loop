@@ -13,6 +13,8 @@ RDC is a host execution/interaction transport and does not select repository dev
 
 ## Local repository tool behavior
 
+- Treat Local mode and `LOCAL_ROOT` authorization as routing/access state, not source-write consent. Before the first edit/create/delete/overwrite/reformat of local source in each task, require explicit current-task local-source-mutation authorization. Do not infer it from earlier tasks, RDC availability, prior successful writes, a read-only inspection request, synchronization intent, or generic `push` wording.
+- A publish-only request may use native Git to publish already-existing audited local content when otherwise authorized, but it must not silently change source files to make the push succeed. If source integration or conflict resolution would be required, stop and request explicit local mutation authorization for that task.
 - Run repository-affecting RDC terminal commands with a working directory inside an allowed root. Reject commands whose explicit repository/file path arguments, redirections, archive targets, Git worktrees, package outputs, or subprocess paths escape the allowlist.
 - Restrict file search roots to allowed roots. Never start whole-disk, home-directory, or unrelated-parent searches to discover a repository.
 - Restrict reads, writes, moves, edits, archive extraction, packaging, and generated artifacts to allowed roots.

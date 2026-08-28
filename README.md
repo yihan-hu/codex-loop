@@ -54,7 +54,7 @@ Use local development for this repository.
 Use Codex Loop locally under /Users/alice/PiWork and fix this bug.
 ```
 
-Once Local mode is selected, later repository tasks in the same conversation keep using Local mode unless you explicitly switch back to Web mode. A new conversation starts in Web mode again.
+Once Local mode is selected, later repository tasks in the same conversation keep using that local repository as the baseline unless you explicitly switch back to Web mode. **That does not carry forward permission to modify local source.** Each task that would edit/create/delete/overwrite local source files must explicitly authorize local mutation again, for example: `Fix this locally and push.` A generic `push`, read-only inspection, RDC availability, or earlier local edits do not authorize new source changes. A new conversation starts in Web mode again.
 
 ## Local mode requirements
 

@@ -19,8 +19,9 @@ Request the capabilities needed by the task, not every integration the host happ
 
 - Web repository edit only: current writable Web workspace; no RDC requirement.
 - Web-mode GitHub publication: Google Drive staging access, GitHub connector access, and the repository's audited Actions prerequisites.
-- Local repository edit: RDC access plus resolved/authorized `LOCAL_ROOT`.
-- Local native-Git publication: the Local edit capabilities plus host-owned native Git authentication/network access.
+- Local repository read/inspection: RDC access plus resolved/authorized `LOCAL_ROOT`; this does not authorize source mutation.
+- Local repository edit: the Local read capabilities plus explicit current-task local-source-mutation authorization.
+- Local native-Git publication of already-existing audited content: the Local read capabilities plus host-owned native Git authentication/network access; source integration/conflict resolution additionally requires explicit current-task local-source-mutation authorization.
 - `local_chrome`: explicit user authorization for computer use in the current task, plus local Chrome availability and a supported host Chrome bridge or RDC-backed Chrome automation.
 - `local_mac_gui`: explicit user authorization for computer use in the current task, RDC, plus any macOS Accessibility/Screen Recording permissions genuinely needed by the chosen action/observation transport.
 
