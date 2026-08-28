@@ -45,6 +45,25 @@ class InteractionRoutingContractTests(unittest.TestCase):
         self.assertIn("must not touch the local checkout", boundary)
         self.assertIn("never change them silently", boundary)
 
+    def test_computer_use_requires_explicit_current_task_authorization(self):
+        skill = (ROOT / "SKILL.md").read_text()
+        routing = (ROOT / "references" / "interaction-routing.md").read_text()
+        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
+        self.assertIn("Explicit computer-use authorization gate", skill)
+        self.assertIn("explicitly authorized computer use for the current task", routing)
+        self.assertIn("Do **not** infer authorization", routing)
+        self.assertIn("do not inspect tabs/windows", preflight)
+
+    def test_any_workspace_resident_skill_or_package_does_not_imply_browser_ui_install(self):
+        skill = (ROOT / "SKILL.md").read_text()
+        deployment = (ROOT / "references" / "skill-deployment.md").read_text()
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("For **any** Skill or Skill installation package", skill)
+        self.assertIn("Workspace-resident Skill/package update", deployment)
+        self.assertIn("For any Skill or Skill installation package", deployment)
+        self.assertIn("all Skills and Skill installation packages", readme)
+        self.assertIn("do not invent a browser UI deployment step", readme)
+
     def test_readme_explains_all_three_layers(self):
         readme = (ROOT / "README.md").read_text()
         self.assertIn("Workspace mode versus interaction target", readme)

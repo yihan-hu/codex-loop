@@ -8,8 +8,8 @@ The purpose is to avoid discovering predictable permission blockers halfway thro
 
 1. Resolve `workspace_mode` and the intended `interaction_target` first.
 2. Infer the capabilities required by the reasonably planned workflow, including downstream steps the user already requested such as publish, sync, browser validation, or local GUI work.
-3. Inspect only the relevant live connection/capability state.
-4. Batch missing connection, authorization, or setup requests into one user-facing preflight whenever the host supports doing so.
+3. Inspect only the relevant live connection/capability state. For `local_chrome` or `local_mac_gui`, checking that a transport is connected is not permission to interact with the user's computer; do not inspect tabs/windows or take GUI/browser actions before explicit current-task authorization.
+4. Batch missing connection, explicit computer-use authorization, or setup requests into one user-facing preflight whenever the host supports doing so.
 5. After required capabilities are available, continue the task without re-asking for capabilities that remain valid.
 6. Re-run preflight only if the workflow expands to a new capability or an already-checked capability becomes unavailable.
 
@@ -21,8 +21,8 @@ Request the capabilities needed by the task, not every integration the host happ
 - Web-mode GitHub publication: Google Drive staging access, GitHub connector access, and the repository's audited Actions prerequisites.
 - Local repository edit: RDC access plus resolved/authorized `LOCAL_ROOT`.
 - Local native-Git publication: the Local edit capabilities plus host-owned native Git authentication/network access.
-- `local_chrome`: local Chrome availability plus a supported host Chrome bridge or RDC-backed Chrome automation.
-- `local_mac_gui`: RDC plus any macOS Accessibility/Screen Recording permissions genuinely needed by the chosen action/observation transport.
+- `local_chrome`: explicit user authorization for computer use in the current task, plus local Chrome availability and a supported host Chrome bridge or RDC-backed Chrome automation.
+- `local_mac_gui`: explicit user authorization for computer use in the current task, RDC, plus any macOS Accessibility/Screen Recording permissions genuinely needed by the chosen action/observation transport.
 
 ## What may persist
 

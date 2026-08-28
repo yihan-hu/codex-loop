@@ -24,6 +24,14 @@ Choose the narrowest target needed by the task:
 
 A valid combination is `workspace_mode=web` plus `interaction_target=local_chrome`. In that case source edits, tests, packaging, and publication remain Web-mode operations even though browser validation happens on the Mac.
 
+## Explicit computer-use authorization
+
+Do not perform the first `local_chrome` or `local_mac_gui` interaction action until the user has explicitly authorized computer use for the current task. Explicit authorization may be embedded in the task itself, for example: “use my local Chrome to verify the signed-in flow” or “use computer use on my Mac for this step.”
+
+Do **not** infer authorization from RDC/Chrome availability, prior computer-use success, an earlier task's authorization, a persisted local configuration, or the model's judgment that GUI/browser interaction would be useful. Capability preflight may identify that computer use would be needed and ask for authorization, but it must not probe tabs/windows or take other interaction actions before authorization is granted.
+
+Once authorized, keep the authorization scoped to the stated task and target. Low-risk actions within that scope may proceed without re-asking for every click or tab operation; host-enforced confirmations for sensitive actions remain separate and mandatory.
+
 ## `local_chrome` transport order
 
 Keep ChatGPT as the reasoning/orchestration authority; do not launch a local Codex model/agent merely to control the browser.

@@ -25,9 +25,11 @@ Codex Loop is not Codex CLI and does not contain a model runtime. ChatGPT remain
 
 ## Install as a ChatGPT Skill
 
-This repository is the Skill source. A Git checkout or ordinary source ZIP is not automatically an installed ChatGPT Skill. Package the repository with the standard ChatGPT Skill packaging flow into a validated archive named exactly `skill.zip`, then upload/update that package in the ChatGPT Skills UI (or use a supported install/update action when your environment exposes one).
+This repository is the Skill source. In a normal external deployment, a Git checkout or ordinary source ZIP is not automatically an installed ChatGPT Skill: package the repository into a validated `skill.zip`, then use a supported install/update action or the ChatGPT Skills UI.
 
-Keep source publication and Skill installation separate: pushing this repository to GitHub does not update an installed copy by itself.
+There is one important workspace-hosted rule that applies to **all Skills and Skill installation packages**: if the Skill/package is already present or active in the current workspace or host-managed Skill environment, do not treat wording such as “install”, “update”, or “install in UI” as an instruction to automate the browser. Reuse the existing workspace/host resource and perform the requested source/package update or publication through supported non-browser capabilities first. Use the actual ChatGPT Skills UI only when the user explicitly asks for that UI operation or the host requires it and the user explicitly authorizes computer use.
+
+Keep source publication and a separately installed external copy conceptually distinct; do not invent a browser UI deployment step merely because installation wording was used.
 
 ## Quick start
 
@@ -117,6 +119,8 @@ interaction_target:  none | cloud_browser | local_chrome | local_mac_gui
 For example, `workspace_mode=web` plus `interaction_target=local_chrome` means the repository remains in the current ChatGPT workspace while ChatGPT uses your Mac only to interact with your signed-in local Chrome. Using RDC for that interaction does not make the Mac checkout authoritative.
 
 For `local_chrome`, Codex Loop keeps ChatGPT as the reasoning authority and does not launch a local Codex agent. It prefers an official host-exposed Chrome/Computer Use bridge when available; otherwise on macOS it can use RDC-backed structured Chrome automation. Generic screenshot plus mouse/keyboard automation is a fallback only when structured control is insufficient.
+
+**Computer use is opt-in per task.** Codex Loop must not interact with local Chrome or the macOS GUI until you explicitly authorize computer use for that task, for example: `Use my local Chrome to verify this signed-in flow.` A connected RDC/Chrome session, prior computer-use success, or the agent deciding that browser interaction would be useful is not authorization. Once authorized, low-risk actions within that task scope can continue without asking before every individual click/tab action; host-required sensitive confirmations still apply.
 
 The RDC-backed Chrome path has been validated end to end with a harmless test: create `about:blank`, independently confirm the tab exists, close only that test tab, then independently confirm it is gone.
 
