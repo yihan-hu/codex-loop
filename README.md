@@ -1,13 +1,17 @@
 # Codex Loop
 
-Codex Loop is a ChatGPT Skill that applies a Codex-style coding-agent loop to repository work while keeping ChatGPT as the host for reasoning, tools, approvals, connectors, and conversation state.
+Codex Loop is a ChatGPT Skill that applies Codex-style objective continuation to non-trivial multi-step work across domains while keeping ChatGPT as the host for reasoning, tools, approvals, connectors, and conversation state.
 
-It combines a deterministic local runtime with host-visible execution so repository changes can be observed, validated, reviewed, committed, published, and audited without launching Codex CLI or another model runtime.
+It uses broad invocation with adaptive direct-vs-durable lifecycle assessment. Trivial one-step work stays lightweight; dependency-bearing work can preserve objective state, evidence, review, external actions, and completion across multiple stages without launching Codex CLI or another model runtime.
 
 ## What it can do
 
-Use Codex Loop for end-to-end repository tasks such as:
+Use Codex Loop for objectives such as:
 
+- staged research or analysis that moves from evidence gathering to synthesis, drafting, and audit;
+- scientific or long-form writing workflows where source fidelity, revisions, and completion criteria must survive several stages;
+- document, slide, spreadsheet, and other artifact workflows that include build, render/inspect, QA, and export;
+- cross-tool operational work where later actions depend on earlier observed state;
 - implementing features and refactors;
 - fixing bugs, tests, and CI failures;
 - investigating or reviewing a codebase;
@@ -37,11 +41,11 @@ Source publication and deployment are still separate evidence states. Surfacing 
 
 ## Quick start
 
-Codex Loop is designed for **implicit invocation**. In normal use, you should not need to type `@Codex Loop` or name the Skill. ChatGPT should select it automatically for repository/software-development work, Git lifecycle commands such as commit/push/publish, workspace/GitHub/Mac synchronization, Skill packaging/install/update work, and Computer Use tasks involving browser or GUI interaction. Short follow-ups such as `push`, `sync`, or `open this in Chrome` should continue through Codex Loop when the active task is clear from context.
+Codex Loop is designed for **implicit invocation**. In normal use, you should not need to type `@Codex Loop` or name the Skill. ChatGPT should select it broadly for non-trivial objectives that plausibly contain multiple dependent steps or need durable evidence/state, iterative review, delegation, external-action bookkeeping, managed processes, or cross-tool coordination. That includes research, analysis, writing, scientific work, artifact creation, operations, repository/software development, Git lifecycle work, Skill maintenance, and Computer Use. The bundled lifecycle assessment then decides whether execution stays direct or bootstraps durable state.
 
-Automatic invocation does **not** bypass permissions. Local source mutation and actual Computer Use remain explicitly authorized per task under the existing safety gates. Selecting Codex Loop for `open/click/type/navigate` work does not itself authorize control of local Chrome or macOS.
+Short follow-ups such as `revise`, `verify`, `export`, `push`, `sync`, or `open this in Chrome` should continue through Codex Loop when the active objective is clear from context. Automatic invocation does **not** bypass permissions: local source mutation and actual Computer Use remain explicitly authorized per task under the existing safety gates.
 
-After installing the Skill, ordinary coding requests use **Web mode** by default in every new conversation. Work happens in the current ChatGPT workspace and the result is returned with normal downloadable files or links.
+For repository or Skill-development requests, **Web mode** is the default development location in every new conversation. Pure research, writing, analysis, artifact, or operations objectives do not need Web/Local repository routing unless a later step actually becomes development-location-sensitive.
 
 **Recommended path:** keep ordinary repository development in the ChatGPT/chatbox workspace and connect that Web workspace to GitHub when publication is needed. This is usually faster and simpler than Mac Local mode because it avoids the extra RDC hop, host-filesystem authorization, native-Git host state, and Mac-to-workspace synchronization steps.
 
@@ -52,11 +56,12 @@ For Skill maintenance, an installed Skill may be copied into a fresh workspace o
 Example prompts (explicit Skill naming is optional):
 
 ```text
+Review these papers, synthesize the evidence, draft the grant section, and audit it against the sources.
+Turn this outline into a slide deck, render it, inspect the output, and fix layout issues.
+Analyze this spreadsheet, build the requested model and charts, then verify the final workbook.
 Fix this bug and run the relevant tests.
-Push the current workspace to GitHub.
-Sync the pushed commit back here.
+Push the current workspace to GitHub and verify the remote commit.
 Use my local Chrome to verify this signed-in flow.
-Click through the macOS setup and verify the result.
 ```
 
 You do not need Remote Desktop Commander for ordinary Web-mode repository work. However, Web mode may still use RDC for **interaction-only** tasks such as controlling your local Chrome or macOS UI; that does not move the repository source of truth onto the Mac.

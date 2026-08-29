@@ -1,8 +1,8 @@
 interface:
   display_name: Codex Loop
-  short_description: Default coding, Git sync, and computer-use workflow
-  default_prompt: Use $codex-loop to complete this development, Git/sync, or computer-use
-    task end to end with the bundled deterministic runtime and host tools available here.
+  short_description: Adaptive lifecycle for multi-step objectives
+  default_prompt: Use $codex-loop to carry this objective end to end, adapting between direct
+    and durable execution and composing with the relevant domain workflow and host tools.
   icon_small: assets/icon.svg
   icon_large: assets/icon.svg
 policy:

@@ -19,6 +19,16 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(view["mode"], "durable")
         self.assertEqual(view["activation_reasons"], ["workspace_observation", "delegation"])
 
+    def test_multiple_dependent_steps_alone_escalates_without_repository_signals(self):
+        view = assess_runtime_need(multiple_dependent_steps=True)
+        self.assertEqual(view["mode"], "durable")
+        self.assertEqual(view["activation_reasons"], ["multiple_dependent_steps"])
+
+    def test_durable_evidence_alone_escalates_without_repository_signals(self):
+        view = assess_runtime_need(durable_evidence=True)
+        self.assertEqual(view["mode"], "durable")
+        self.assertEqual(view["activation_reasons"], ["durable_evidence"])
+
     def test_unknown_signal_fails_closed(self):
         with self.assertRaises(ValueError):
             assess_runtime_need({"complexity_level": True})
@@ -73,6 +83,17 @@ class LifecycleTests(unittest.TestCase):
             completion_status="PASS",
         )
         self.assertEqual(state["requirements"]["completion_audit"], "satisfied")
+
+
+    def test_lifecycle_assess_cli_accepts_non_repository_multistep_signal(self):
+        cli = Path(__file__).resolve().parents[2] / "scripts" / "codex_loop.py"
+        proc = subprocess.run(
+            [sys.executable, str(cli), "lifecycle-assess", "--multiple-dependent-steps"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True,
+        )
+        data = json.loads(proc.stdout)["data"]
+        self.assertEqual(data["mode"], "durable")
+        self.assertEqual(data["activation_reasons"], ["multiple_dependent_steps"])
 
     def test_lifecycle_assess_cli_is_pre_runtime_and_task_independent(self):
         cli = Path(__file__).resolve().parents[2] / "scripts" / "codex_loop.py"
