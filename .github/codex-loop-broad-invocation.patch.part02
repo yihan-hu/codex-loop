@@ -1,0 +1,114 @@
+ctual Computer Use remain explicitly authorized per task under the existing safety gates. Selecting Codex Loop for `open/click/type/navigate` work does not itself authorize control of local Chrome or macOS.
++Short follow-ups such as `revise`, `verify`, `export`, `push`, `sync`, or `open this in Chrome` should continue through Codex Loop when the active objective is clear from context. Automatic invocation does **not** bypass permissions: local source mutation and actual Computer Use remain explicitly authorized per task under the existing safety gates.
+ 
+-After installing the Skill, ordinary coding requests use **Web mode** by default in every new conversation. Work happens in the current ChatGPT workspace and the result is returned with normal downloadable files or links.
++For repository or Skill-development requests, **Web mode** is the default development location in every new conversation. Pure research, writing, analysis, artifact, or operations objectives do not need Web/Local repository routing unless a later step actually becomes development-location-sensitive.
+ 
+ **Recommended path:** keep ordinary repository development in the ChatGPT/chatbox workspace and connect that Web workspace to GitHub when publication is needed. This is usually faster and simpler than Mac Local mode because it avoids the extra RDC hop, host-filesystem authorization, native-Git host state, and Mac-to-workspace synchronization steps.
+ 
+@@ -52,11 +56,12 @@
+ Example prompts (explicit Skill naming is optional):
+ 
+ ```text
++Review these papers, synthesize the evidence, draft the grant section, and audit it against the sources.
++Turn this outline into a slide deck, render it, inspect the output, and fix layout issues.
++Analyze this spreadsheet, build the requested model and charts, then verify the final workbook.
+ Fix this bug and run the relevant tests.
+-Push the current workspace to GitHub.
+-Sync the pushed commit back here.
++Push the current workspace to GitHub and verify the remote commit.
+ Use my local Chrome to verify this signed-in flow.
+-Click through the macOS setup and verify the result.
+ ```
+ 
+ You do not need Remote Desktop Commander for ordinary Web-mode repository work. However, Web mode may still use RDC for **interaction-only** tasks such as controlling your local Chrome or macOS UI; that does not move the repository source of truth onto the Mac.
+--- a/agents/openai.yaml
++++ b/agents/openai.yaml
+@@ -1,8 +1,8 @@
+ interface:
+   display_name: Codex Loop
+-  short_description: Default coding, Git sync, and computer-use workflow
+-  default_prompt: Use $codex-loop to complete this development, Git/sync, or computer-use
+-    task end to end with the bundled deterministic runtime and host tools available here.
++  short_description: Adaptive lifecycle for multi-step objectives
++  default_prompt: Use $codex-loop to carry this objective end to end, adapting between direct
++    and durable execution and composing with the relevant domain workflow and host tools.
+   icon_small: assets/icon.svg
+   icon_large: assets/icon.svg
+ policy:
+--- a/tests/compat/test_lifecycle.py
++++ b/tests/compat/test_lifecycle.py
+@@ -19,6 +19,16 @@
+         self.assertEqual(view["mode"], "durable")
+         self.assertEqual(view["activation_reasons"], ["workspace_observation", "delegation"])
+ 
++    def test_multiple_dependent_steps_alone_escalates_without_repository_signals(self):
++        view = assess_runtime_need(multiple_dependent_steps=True)
++        self.assertEqual(view["mode"], "durable")
++        self.assertEqual(view["activation_reasons"], ["multiple_dependent_steps"])
++
++    def test_durable_evidence_alone_escalates_without_repository_signals(self):
++        view = assess_runtime_need(durable_evidence=True)
++        self.assertEqual(view["mode"], "durable")
++        self.assertEqual(view["activation_reasons"], ["durable_evidence"])
++
+     def test_unknown_signal_fails_closed(self):
+         with self.assertRaises(ValueError):
+             assess_runtime_need({"complexity_level": True})
+@@ -74,6 +84,17 @@
+         )
+         self.assertEqual(state["requirements"]["completion_audit"], "satisfied")
+ 
++
++    def test_lifecycle_assess_cli_accepts_non_repository_multistep_signal(self):
++        cli = Path(__file__).resolve().parents[2] / "scripts" / "codex_loop.py"
++        proc = subprocess.run(
++            [sys.executable, str(cli), "lifecycle-assess", "--multiple-dependent-steps"],
++            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True,
++        )
++        data = json.loads(proc.stdout)["data"]
++        self.assertEqual(data["mode"], "durable")
++        self.assertEqual(data["activation_reasons"], ["multiple_dependent_steps"])
++
+     def test_lifecycle_assess_cli_is_pre_runtime_and_task_independent(self):
+         cli = Path(__file__).resolve().parents[2] / "scripts" / "codex_loop.py"
+         proc = subprocess.run(
+--- /dev/null
++++ b/tests/compat/test_invocation_contract.py
+@@ -0,0 +1,36 @@
++import re
++import unittest
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[2]
++
++
++class InvocationContractTests(unittest.TestCase):
++    def test_frontmatter_routes_broad_multistep_objectives(self):
++        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
++        match = re.search(r'^description: "(.*)"$', skill, re.MULTILINE)
++        self.assertIsNotNone(match)
++        description = match.group(1).lower()
++        for term in ("domain-agnostic", "multi-step", "research", "writing", "artifact", "coding", "adaptive"):
++            self.assertIn(term, description)
++        self.assertNotIn("default coding and computer-use workflow", description)
++
++    def test_body_declares_broad_invocation_and_adaptive_execution(self):
++        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
++        self.assertIn("**Broad invocation, adaptive execution.**", skill)
++        self.assertIn("Do not pre-filter Codex Loop by domain before this assessment.", skill)
++        self.assertIn("Multiple dependent steps or a need for durable evidence are sufficient activation signals even when no code or repository is involved", skill)
++
++    def test_repository_location_rules_are_conditional(self):
++        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
++        self.assertIn("This section applies only when the active objective includes repository/filesystem work", skill)
++        self.assertIn("skip `workspace_mode` and Web-vs-Local development machinery", skill)
++
++    def test_implicit_invocation_stays_enabled(self):
++        metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
++        self.assertIn("short_description: Adaptive lifecycle for multi-step objectives", metadata)
++        self.assertIn("allow_implicit_invocation: true", metadata)
++
++
++if __name__ == "__main__":
++    unittest.main()
