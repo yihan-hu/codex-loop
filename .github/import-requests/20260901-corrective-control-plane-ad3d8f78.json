@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "transfer_id": "20260901-corrective-control-plane-ad3d8f78",
+  "file_id": "1SX6kDCI5Tl00r4FVIEIoEc-1xoYJTkOi",
+  "size": 303998,
+  "sha256": "ad3d8f781c0fa9d953c08b7b8a2389f2103d00cff55dfc3d92dde33771099817",
+  "expected_base": "64be90713b0b4d76996b6ec28d4d1cc55036d329",
+  "target_branch": "main"
+}
