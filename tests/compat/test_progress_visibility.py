@@ -149,6 +149,23 @@ class ProgressVisibilityTests(unittest.TestCase):
                 self.assertNotEqual(proc.returncode, 0)
                 self.assertFalse(payload["ok"])
 
+    def test_top_level_help_exposes_host_adapter_progress_commands(self):
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        proc = subprocess.run(
+            [sys.executable, str(CLI), "--help"],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Host-adapter commands:", proc.stdout)
+        self.assertIn("progress-config", proc.stdout)
+        self.assertIn("progress-policy", proc.stdout)
+        self.assertIn("skill-deploy-handoff", proc.stdout)
+
     def test_skill_and_docs_bind_progress_policy_to_durable_lifecycle(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         ref = (ROOT / "references" / "progress-visibility.md").read_text(encoding="utf-8")

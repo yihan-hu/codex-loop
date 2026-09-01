@@ -56,6 +56,37 @@ from codex_loop_runtime.workspace_registry import (
 )
 
 
+HOST_ADAPTER_COMMANDS = (
+    ('lifecycle-assess', 'decide direct vs durable execution and expose effective progress policy'),
+    ('next', 'project the bounded working set for the active durable task'),
+    ('progress-config', 'show or update private progress-visibility preferences'),
+    ('progress-policy', 'resolve effective progress behavior for direct or durable work'),
+    ('persistence-export', 'export private cross-conversation recovery state'),
+    ('persistence-validate', 'validate a recovery manifest'),
+    ('persistence-cleanup-plan', 'plan recovery-manifest cleanup'),
+    ('objective-audit', 'record requirement-by-requirement completion evidence'),
+    ('workspace-register', 'register a private host workspace alias'),
+    ('workspace-registry-list', 'list private host workspace aliases'),
+    ('workspace-resolve', 'resolve a registered workspace under current grants'),
+    ('workspace-grant', 'record current-conversation workspace authorization'),
+    ('workspace-grants', 'show current-conversation workspace grants'),
+    ('workspace-remove', 'remove a private host workspace alias'),
+    ('workspace-sync-offer', 'prepare an exact-revision workspace sync offer'),
+    ('skill-deploy-handoff', 'prepare current-workspace Skill deployment reconciliation'),
+    ('relay-frame', 'frame a guarded model-relay payload'),
+    ('relay-receive', 'receive and verify a guarded model-relay payload'),
+)
+
+
+def _print_top_level_help() -> int:
+    print(kernel.build_parser().format_help().rstrip())
+    print('\nHost-adapter commands:')
+    width = max(len(name) for name, _ in HOST_ADAPTER_COMMANDS)
+    for name, description in HOST_ADAPTER_COMMANDS:
+        print(f'  {name:<{width}}  {description}')
+    return 0
+
+
 def _cwd(raw: str | None) -> Path:
     return Path(raw or os.getcwd()).resolve()
 
@@ -533,6 +564,8 @@ def main() -> int:
     try:
         if not argv:
             return _delegate(argv)
+        if argv[0] in {'-h', '--help'}:
+            return _print_top_level_help()
         if argv[0] == 'lifecycle-assess':
             return _cmd_lifecycle_assess(argv)
         if argv[0] == 'next':
