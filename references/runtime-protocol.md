@@ -287,9 +287,21 @@ ui_state             = UI_NOT_OBSERVED
 deployment_state     = DEPLOY_PENDING
 ```
 
-`skill-deploy-handoff` is planning evidence only. It sets `handoff_is_ui_evidence=false` and `handoff_is_deployment_evidence=false`; callers must not turn its JSON or assistant prose into a fictional UI event.
+`skill-deploy-handoff` is planning evidence only. It sets `handoff_is_ui_evidence=false` and `handoff_is_deployment_evidence=false`; callers must not turn its JSON or assistant prose into a fictional UI event. For `skill-name=codex-loop`, the result is a **terminal self-update handoff**: `handoff_mode=terminal_self_update`, `terminal_owner=skill-creator/host`, `codex_loop_resume_allowed=false`, and `reconcile_on_next_turn=true`. The runtime also activates a terminal barrier so later Codex Loop commands in that same turn fail closed.
 
-After `skill-creator` or an equivalent native host primitive actually exposes/initiates the Skill update surface, record that observation:
+Invoke `skill-creator`/the native host install surface as the final current-turn action. Do not run Codex Loop again and do not append a Codex Loop closing/status response after the native surface is initiated. On a later user/host turn, release the barrier before reconciliation:
+
+```bash
+python3 scripts/codex_loop.py skill-deploy-resume \
+  --cwd REPO \
+  --skill-name codex-loop \
+  --repository OWNER/REPO \
+  --commit FULL_40_HEX_SHA \
+  --later-host-turn-observed \
+  --evidence "new user/host turn after native install handoff"
+```
+
+`skill-deploy-resume` does not claim UI or deployment success; it only proves that Codex Loop is no longer continuing in the initiating turn. After that later-turn resume, if `skill-creator` or an equivalent native host primitive actually exposed/initiated the Skill update surface, record that observation:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-surface-record \

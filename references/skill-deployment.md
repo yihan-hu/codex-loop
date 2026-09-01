@@ -101,12 +101,25 @@ python3 scripts/codex_loop.py skill-deploy-handoff \
   --commit FULL_40_HEX_SHA
 ```
 
-The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. It returns `NATIVE_UPDATE_REQUIRED`, `NATIVE_SURFACE_NOT_OBSERVED`, `UI_NOT_OBSERVED`, and `DEPLOY_PENDING`. Those values are deliberately completion-blocking. Repeated handoff calls for the same Skill/commit deduplicate to the same action.
+The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. It returns `NATIVE_UPDATE_REQUIRED`, `NATIVE_SURFACE_NOT_OBSERVED`, `UI_NOT_OBSERVED`, and `DEPLOY_PENDING`. Those values are deliberately completion-blocking. Repeated handoff calls for the same Skill/commit deduplicate to the same action. For `skill-name=codex-loop`, it additionally returns `handoff_mode=terminal_self_update`, `terminal_owner=skill-creator/host`, `codex_loop_resume_allowed=false`, and `reconcile_on_next_turn=true`, and installs a runtime barrier against further Codex Loop commands in that turn.
 
 Resolve the handoff in this order:
 
-1. For a Skill creation/update task, invoke the platform `skill-creator` workflow with the validated package/source generation bound to the same pushed commit. If the host has an explicitly supported native host-managed update primitive, it may be used instead. Do not replace either with assistant-authored instructions that merely tell the user to click Save/Update.
-2. Only after the host actually exposes/initiates that native Skill surface, record the observation:
+1. For a Skill creation/update task, invoke the platform `skill-creator` workflow with the validated package/source generation bound to the same pushed commit. If the host has an explicitly supported native host-managed update primitive, it may be used instead. Do not replace either with assistant-authored instructions that merely tell the user to click Save/Update. **For Codex Loop updating itself, this invocation is the final action of the current turn.** Do not execute another Codex Loop command and do not append a Codex Loop closing/status message after the native surface is initiated.
+2. For a Codex Loop self-update, wait for a later user/host turn before reconciliation. At the start of that later turn, release the terminal barrier:
+
+```bash
+python3 scripts/codex_loop.py skill-deploy-resume \
+  --cwd REPO \
+  --skill-name codex-loop \
+  --repository OWNER/REPO \
+  --commit FULL_40_HEX_SHA \
+  --later-host-turn-observed \
+  --evidence "new user/host turn after native install handoff"
+```
+
+   `skill-deploy-resume` is a turn-boundary acknowledgement, not UI or deployment evidence. It exists to prevent same-turn Codex Loop continuation from displacing a just-surfaced native install control.
+3. Only after the later-turn resume (for self-update) and after the host actually exposes/initiates that native Skill surface, record the observation:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-surface-record \
@@ -119,7 +132,7 @@ python3 scripts/codex_loop.py skill-deploy-surface-record \
 ```
 
    This advances the external action to `dispatched` and returns `NATIVE_SURFACE_OBSERVED` plus `UI_SURFACED`; deployment is still `DEPLOY_PENDING`. For a truly host-managed update that requires no UI, use `--surface-kind host_managed_update`, which records `UI_NOT_REQUIRED` rather than pretending UI was shown.
-3. Only after host-visible evidence shows the intended revision is active, record deployment completion:
+4. Only after host-visible evidence shows the intended revision is active, record deployment completion:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-complete \
@@ -131,9 +144,9 @@ python3 scripts/codex_loop.py skill-deploy-complete \
 ```
 
    `skill-deploy-complete` refuses to run while the action is merely `planned`; a native surface must have actually been dispatched/observed first.
-4. If no native update/install surface can be invoked or observed, leave the action unresolved and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED`. Do not downgrade this into a closing note and do not call the task deployed.
+5. If no native update/install surface can be invoked or observed, leave the action unresolved and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED`. Do not downgrade this into a closing note and do not call the task deployed.
 
-`SOURCE_PUSHED`, `SKILL_PACKAGED`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored Save/Update instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence.
+`SOURCE_PUSHED`, `SKILL_PACKAGED`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored Save/Update instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence. For Codex Loop self-update, the native install surface is also a **terminal ownership boundary for the current turn**: the next Codex Loop lifecycle action belongs to a later host turn and starts with `skill-deploy-resume`.
 
 This rule does not grant browser/computer-use authorization. If completing the update requires interacting with ChatGPT through Chrome or macOS UI, the normal explicit computer-use authorization gate still applies.
 

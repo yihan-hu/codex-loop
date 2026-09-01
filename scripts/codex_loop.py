@@ -94,6 +94,7 @@ HOST_ADAPTER_COMMANDS = (
     ('workspace-remove', 'remove a private host workspace alias'),
     ('workspace-sync-offer', 'prepare an exact-revision workspace sync offer'),
     ('skill-deploy-handoff', 'plan native current-workspace Skill update reconciliation'),
+    ('skill-deploy-resume', 'release a terminal Codex Loop self-update barrier on a later host turn'),
     ('skill-deploy-surface-record', 'record an actually observed native Skill update/install surface'),
     ('skill-deploy-complete', 'record observed activation of the intended Skill revision'),
     ('deployment-provenance-verify', 'verify installed Skill bundle provenance'),
@@ -456,8 +457,16 @@ def _cmd_deployment_provenance_verify(argv: list[str]) -> int:
     return 0
 
 
+_SELF_UPDATE_BARRIER_KEY = 'skill_self_update_terminal_barrier'
+
+
 def _skill_deploy_identity(skill_name: str, commit: str) -> str:
     return f'chatgpt-skill:{skill_name}@{commit}'
+
+
+def _self_update_barrier(store) -> dict | None:
+    value = store.get_meta(_SELF_UPDATE_BARRIER_KEY, None)
+    return value if isinstance(value, dict) and value.get('active') is True else None
 
 
 def _skill_deploy_action(store, identity: str) -> dict:
@@ -505,10 +514,18 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
     _cwd_path, _root, store = _scope_from_argv(argv)
     store.ensure_active()
     identity = _skill_deploy_identity(skill_name, commit)
+    is_self_update = skill_name == 'codex-loop'
+    planned_details = {
+        'handoff_mode': 'terminal_self_update' if is_self_update else 'native_skill_update',
+        'terminal_owner': 'skill-creator/host' if is_self_update else None,
+        'reconcile_on_next_turn': bool(is_self_update),
+        'same_turn_codex_loop_resume_allowed': False if is_self_update else None,
+    }
     action_id = store.record_external(
         'chatgpt_skill_update',
         'planned',
         identity,
+        details=planned_details,
         action_class='external_non_idempotent',
     )
     action = store.external_action(action_id)
@@ -529,6 +546,17 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         native_surface_state = 'NATIVE_SURFACE_NOT_OBSERVED'
         ui_state = 'UI_NOT_OBSERVED'
         deployment_state = 'DEPLOY_PENDING'
+    terminal_handoff_active = bool(is_self_update and action_state == 'planned')
+    if terminal_handoff_active:
+        store.set_meta(_SELF_UPDATE_BARRIER_KEY, {
+            'active': True,
+            'skill_name': skill_name,
+            'repository': repository,
+            'commit': commit,
+            'identity': identity,
+            'external_action_id': action_id,
+            'terminal_owner': 'skill-creator/host',
+        })
     emit_ok({
         'skill_name': skill_name,
         'repository': repository,
@@ -540,14 +568,71 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'deployment_state': deployment_state,
         'target': 'current_chatgpt_workspace_skill',
         'native_handoff_owner': 'skill-creator/host',
-        'required_action': 'invoke_skill_creator_or_equivalent_native_skill_update_flow',
+        'required_action': 'invoke_skill_creator_as_final_current_turn_action' if terminal_handoff_active else 'invoke_skill_creator_or_equivalent_native_skill_update_flow',
         'host_managed_alternative': 'supported_host_managed_skill_update',
+        'handoff_mode': 'terminal_self_update' if terminal_handoff_active else 'native_skill_update',
+        'terminal_owner': 'skill-creator/host' if terminal_handoff_active else None,
+        'codex_loop_resume_allowed': False if terminal_handoff_active else True,
+        'same_turn_codex_loop_followup_forbidden': terminal_handoff_active,
+        'reconcile_on_next_turn': terminal_handoff_active,
+        'next_turn_reconcile_command': 'skill-deploy-resume' if terminal_handoff_active else None,
         'handoff_is_ui_evidence': False,
         'handoff_is_deployment_evidence': False,
         'browser_automation_authorized': False,
         'completion_blocking_until_reconciled': True,
         'external_action_id': action_id,
         'external_action_state': action_state,
+    })
+    return 0
+
+
+def _cmd_skill_deploy_resume(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py skill-deploy-resume')
+    p.add_argument('--cwd')
+    p.add_argument('--task-id')
+    p.add_argument('--skill-name', required=True)
+    p.add_argument('--repository', required=True)
+    p.add_argument('--commit', required=True)
+    p.add_argument('--later-host-turn-observed', action='store_true')
+    p.add_argument('--evidence', required=True)
+    args = p.parse_args(argv[1:])
+    skill_name = args.skill_name.strip().lower()
+    repository = args.repository.strip()
+    commit = args.commit.strip().lower()
+    if skill_name != 'codex-loop':
+        raise ValueError('skill-deploy-resume is reserved for the terminal Codex Loop self-update handoff')
+    if not _REPOSITORY_RE.fullmatch(repository):
+        raise ValueError('--repository must be an exact GitHub OWNER/REPO name')
+    if not _FULL_COMMIT_RE.fullmatch(commit):
+        raise ValueError('--commit must be a full 40-hex Git commit SHA')
+    evidence = args.evidence.strip()
+    if not args.later_host_turn_observed:
+        raise ValueError('terminal self-update reconciliation may resume only on a later host turn; pass --later-host-turn-observed after a new user/host turn is actually observed')
+    if not evidence:
+        raise ValueError('--evidence must contain concise observable evidence of the later host turn')
+    _cwd_path, _root, store = _scope_from_argv(argv)
+    store.ensure_active()
+    identity = _skill_deploy_identity(skill_name, commit)
+    barrier = _self_update_barrier(store)
+    if barrier is None:
+        raise ValueError('no active terminal Codex Loop self-update barrier exists')
+    if barrier.get('identity') != identity or barrier.get('repository') != repository:
+        raise ValueError('terminal self-update barrier does not match this Skill/repository/commit')
+    action = _skill_deploy_action(store, identity)
+    if action['state'] not in {'planned', 'dispatched', 'outcome_unknown'}:
+        raise ValueError(f"Skill deployment action is already {action['state']}; terminal barrier cannot be resumed")
+    store.set_meta(_SELF_UPDATE_BARRIER_KEY, None)
+    emit_ok({
+        'skill_name': skill_name,
+        'repository': repository,
+        'commit': commit,
+        'handoff_mode': 'terminal_self_update',
+        'terminal_barrier_state': 'RELEASED_ON_LATER_TURN',
+        'later_host_turn_observed': True,
+        'reconciliation_evidence': evidence,
+        'deployment_state': 'DEPLOY_PENDING',
+        'next_action': 'reconcile observed native surface and installed revision; do not infer either',
+        'external_action_id': action['action_id'],
     })
     return 0
 
@@ -862,9 +947,27 @@ def _delegate(argv: list[str]) -> int:
         sys.argv = old
 
 
+def _enforce_terminal_self_update_barrier(argv: list[str]) -> None:
+    if not argv or argv[0] == 'skill-deploy-resume':
+        return
+    try:
+        _cwd_path, _root, store = _scope_from_argv(argv)
+    except Exception:
+        return
+    barrier = _self_update_barrier(store)
+    if barrier is None:
+        return
+    raise RuntimeError(
+        'terminal Codex Loop self-update handoff is active; do not run another Codex Loop command in the same turn. '
+        'Let skill-creator/the host own the native install surface. On a later user/host turn, run skill-deploy-resume '
+        'with --later-host-turn-observed before reconciliation.'
+    )
+
+
 def main() -> int:
     argv = sys.argv[1:]
     try:
+        _enforce_terminal_self_update_barrier(argv)
         if not argv:
             return _delegate(argv)
         if argv[0] in {'-h', '--help'}:
@@ -913,6 +1016,8 @@ def main() -> int:
             return _cmd_workspace_sync_offer(argv)
         if argv[0] == 'skill-deploy-handoff':
             return _cmd_skill_deploy_handoff(argv)
+        if argv[0] == 'skill-deploy-resume':
+            return _cmd_skill_deploy_resume(argv)
         if argv[0] == 'skill-deploy-surface-record':
             return _cmd_skill_deploy_surface_record(argv)
         if argv[0] == 'skill-deploy-complete':

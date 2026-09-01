@@ -62,15 +62,39 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertEqual(data["ui_state"], "UI_NOT_OBSERVED")
             self.assertEqual(data["deployment_state"], "DEPLOY_PENDING")
             self.assertEqual(data["native_handoff_owner"], "skill-creator/host")
-            self.assertEqual(data["required_action"], "invoke_skill_creator_or_equivalent_native_skill_update_flow")
+            self.assertEqual(data["required_action"], "invoke_skill_creator_as_final_current_turn_action")
+            self.assertEqual(data["handoff_mode"], "terminal_self_update")
+            self.assertEqual(data["terminal_owner"], "skill-creator/host")
+            self.assertFalse(data["codex_loop_resume_allowed"])
+            self.assertTrue(data["same_turn_codex_loop_followup_forbidden"])
+            self.assertTrue(data["reconcile_on_next_turn"])
+            self.assertEqual(data["next_turn_reconcile_command"], "skill-deploy-resume")
             self.assertFalse(data["handoff_is_ui_evidence"])
             self.assertFalse(data["handoff_is_deployment_evidence"])
             self.assertFalse(data["browser_automation_authorized"])
             self.assertTrue(data["completion_blocking_until_reconciled"])
 
-            blocked, _ = call(root, "completion")
-            self.assertEqual(blocked["data"]["status"], "CONTINUE")
-            self.assertEqual(blocked["data"]["details"]["unresolved_external"], 1)
+            blocked, proc = call(root, "completion", check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("terminal Codex Loop self-update handoff is active", blocked["error"]["message"])
+
+            same_turn_surface, proc = call(
+                root,
+                "skill-deploy-surface-record",
+                "--skill-name",
+                "codex-loop",
+                "--repository",
+                "owner/repo",
+                "--commit",
+                commit,
+                "--surface-kind",
+                "skill_creator_install_ui",
+                "--evidence",
+                "UI flashed in the same turn",
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("terminal Codex Loop self-update handoff is active", same_turn_surface["error"]["message"])
 
     def test_native_surface_and_deployment_are_separate_observed_states(self):
         commit = "0123456789abcdef0123456789abcdef01234567"
@@ -79,6 +103,20 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root)
             handoff, _ = call(root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo", "--commit", commit)
+            resumed, _ = call(
+                root,
+                "skill-deploy-resume",
+                "--skill-name",
+                "codex-loop",
+                "--repository",
+                "owner/repo",
+                "--commit",
+                commit,
+                "--later-host-turn-observed",
+                "--evidence",
+                "a later user turn is now active",
+            )
+            self.assertEqual(resumed["data"]["terminal_barrier_state"], "RELEASED_ON_LATER_TURN")
 
             surface, _ = call(
                 root,
@@ -143,6 +181,19 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root, criterion=False)
             call(root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo", "--commit", commit)
+            call(
+                root,
+                "skill-deploy-resume",
+                "--skill-name",
+                "codex-loop",
+                "--repository",
+                "owner/repo",
+                "--commit",
+                commit,
+                "--later-host-turn-observed",
+                "--evidence",
+                "later host turn observed",
+            )
             out, proc = call(
                 root,
                 "skill-deploy-complete",
@@ -166,6 +217,19 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root, criterion=False)
             call(root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo", "--commit", commit)
+            call(
+                root,
+                "skill-deploy-resume",
+                "--skill-name",
+                "codex-loop",
+                "--repository",
+                "owner/repo",
+                "--commit",
+                commit,
+                "--later-host-turn-observed",
+                "--evidence",
+                "later host turn observed",
+            )
             call(
                 root,
                 "skill-deploy-surface-record",
@@ -210,6 +274,30 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             second, _ = call(root, "skill-deploy-handoff", "--skill-name", "epi-prose", "--repository", "owner/repo", "--commit", commit)
             self.assertEqual(first["data"]["external_action_id"], second["data"]["external_action_id"])
 
+    def test_self_update_resume_requires_explicit_later_turn_observation(self):
+        commit = "c" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            self.bootstrap(root, criterion=False)
+            call(root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo", "--commit", commit)
+            out, proc = call(
+                root,
+                "skill-deploy-resume",
+                "--skill-name",
+                "codex-loop",
+                "--repository",
+                "owner/repo",
+                "--commit",
+                commit,
+                "--evidence",
+                "same turn cannot count",
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("only on a later host turn", out["error"]["message"])
+
+
     def test_handoff_rejects_short_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -242,13 +330,19 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         self.assertIn("handoff itself is not UI evidence", skill)
         self.assertIn("Native Skill update surface", deployment)
         self.assertIn("Codex Loop must never emulate", deployment)
+        self.assertIn("skill-deploy-resume", deployment)
+        self.assertIn("same-turn", deployment)
         self.assertIn("skill-deploy-surface-record", deployment)
         self.assertIn("skill-deploy-complete", deployment)
         self.assertIn("Post-push active Skill reconciliation", web_publish)
+        self.assertIn("terminal self-update", web_publish)
         self.assertIn("skill-creator", web_publish)
         self.assertIn("UI_SURFACED", runtime)
+        self.assertIn("skill-deploy-resume", runtime)
         self.assertIn("active workspace Skill", completion)
+        self.assertIn("terminal handoff", completion)
         self.assertIn("native Skill installation/update surface", readme)
+        self.assertIn("terminal self-update", readme)
 
 
 if __name__ == "__main__":
