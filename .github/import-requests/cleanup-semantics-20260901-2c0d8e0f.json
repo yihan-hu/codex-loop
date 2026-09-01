@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "transfer_id": "cleanup-semantics-20260901-2c0d8e0f",
+  "file_id": "18y_-QNz--A8MPp9isgcHqZbLd6ivDF-0",
+  "size": 280220,
+  "sha256": "9d07ef7a6e149c1c31903009fe90d08a12ac5b7281365617630c0bb5929c6dcc",
+  "expected_base": "afd320624d1a05495088b55de1a489da10ad7e83",
+  "target_branch": "main"
+}
