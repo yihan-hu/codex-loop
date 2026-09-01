@@ -21,6 +21,7 @@ Request the capabilities needed by the task, not every integration the host happ
 
 - Web repository edit only: current writable Web workspace; no RDC requirement.
 - Web-mode GitHub publication: Google Drive staging access, GitHub connector access, and the repository's audited Actions prerequisites.
+- Optional cross-conversation persistence: check Google Drive only when the user enabled persistence or made recoverability a requirement. Persistence is off by default; a disconnected Drive must not block ordinary tasks. Credentials remain host-owned.
 - Local repository read/inspection: RDC access plus resolved/authorized `LOCAL_ROOT`; this does not authorize source mutation.
 - Local repository edit: the Local read capabilities plus explicit current-task local-source-mutation authorization.
 - Local native-Git publication of already-existing audited content: the Local read capabilities plus host-owned native Git authentication/network access; source integration/conflict resolution additionally requires explicit current-task local-source-mutation authorization.

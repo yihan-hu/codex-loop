@@ -79,6 +79,18 @@ Use Codex Loop locally under /Users/alice/PiWork and fix this bug.
 
 Once Local mode is selected, later repository tasks in the same conversation keep using that local repository as the baseline unless you explicitly switch back to Web mode. **That does not carry forward permission to modify local source.** Each task that would edit/create/delete/overwrite local source files must explicitly authorize local mutation again, for example: `Fix this locally and push.` A generic `push`, read-only inspection, RDC availability, or earlier local edits do not authorize new source changes. A new conversation starts in Web mode again.
 
+## Optional cross-conversation persistence
+
+Web conversations and ephemeral workspaces are not a durable storage contract. Codex Loop therefore supports an **optional, default-off `state_only` persistence adapter** for long objectives. The first adapter is Google Drive, but Drive is only the storage transport: ChatGPT owns OAuth and connector credentials, while Codex Loop creates a small schema-whitelisted recovery manifest. Nothing about the user's Drive connection, folder IDs, task manifests, tokens, or connector session is committed to GitHub.
+
+`python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_drive --repository OWNER/REPO` creates the private temporary manifest for a durable task. The host can upload it to a private `Codex Loop/.runtime/...` folder. A later conversation downloads it and runs `persistence-validate`; the recovered data is evidence for bootstrap/reconciliation, never a second source of truth. The manifest deliberately excludes chain of thought, hidden instructions, credentials, raw tool transcripts, local roots, and raw external-action identities.
+
+Cleanup uses refreshable TTLs plus opportunistic garbage collection. Expired clean objects are moved to Trash rather than permanently deleted; an expired manifest with unresolved dispatched/outcome-unknown external actions is retained until reconciliation. Missing Drive access degrades recoverability only and does not block normal work unless the user explicitly required cross-conversation recovery. See `references/persistence.md`.
+
+## Architecture fidelity governance
+
+Codex Loop tracks not only source lineage but also behavioral/control-plane alignment with upstream Codex. `references/architecture-fidelity.yaml` records watched upstream surfaces and whether Codex Loop is aligned, partial, host-gapped, or intentionally divergent, together with the degradation and upgrade path. Upstream audits review **Source Delta + Control-plane Delta + Concept Delta**; unresolved `NEEDS_REVIEW` entries fail the audit. The governing rule is semantic parity before implementation parity.
+
 ## Local mode requirements (backup path)
 
 Local mode requires a connected **Remote Desktop Commander (RDC)** integration because ChatGPT needs a host-authorized bridge to the persistent filesystem and native Git installation on your computer. The end-to-end path documented and verified in this repository is macOS + RDC + native Git; other hosts should be treated as unverified until their equivalent behavior is tested.

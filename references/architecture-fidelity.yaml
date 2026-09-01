@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "observed_upstream": {
+    "repository": "openai/codex",
+    "commit": "2b7c279735d0d096cf7b34fe98938f46792f4d4f",
+    "observed_date": "2026-09-01",
+    "note": "Architecture observation pin; independent from the frozen exact-resource maintenance baseline in source-map.yaml."
+  },
+  "review_statuses": [
+    "ALIGNED",
+    "PARTIAL",
+    "HOST_GAP",
+    "LOCAL_DIVERGENCE",
+    "NOT_APPLICABLE",
+    "NEEDS_REVIEW"
+  ],
+  "watch_surfaces": [
+    {
+      "id": "workspace_members",
+      "layer": "source",
+      "paths": [
+        "codex-rs/Cargo.toml"
+      ],
+      "required_patterns": [
+        "ext/goal",
+        "ext/queue",
+        "ext/extension-api",
+        "agent-graph-store"
+      ],
+      "status": "ALIGNED"
+    },
+    {
+      "id": "extension_lifecycle",
+      "layer": "control_plane",
+      "paths": [
+        "codex-rs/ext/extension-api/src/contributors.rs"
+      ],
+      "required_patterns": [
+        "ThreadLifecycleContributor",
+        "TurnLifecycleContributor",
+        "ToolLifecycleContributor",
+        "TokenUsageContributor"
+      ],
+      "status": "PARTIAL",
+      "divergence": "ChatGPT Skills do not expose Codex's native thread/turn lifecycle contributor API.",
+      "upgrade_path": "Project Codex Loop events from authoritative runtime state and replace host-gap adapters when equivalent lifecycle hooks become available."
+    },
+    {
+      "id": "app_server_events",
+      "layer": "control_plane",
+      "paths": [
+        "codex-rs/app-server-protocol/src/protocol/common.rs"
+      ],
+      "required_patterns": [
+        "turn/started",
+        "turn/completed",
+        "item/started",
+        "item/completed"
+      ],
+      "status": "PARTIAL",
+      "divergence": "The Skill cannot own an independent app-server notification stream or UI spinner.",
+      "upgrade_path": "Keep progress as a projection layer; bind it to native host events if exposed."
+    },
+    {
+      "id": "goal_and_idle_dispatch",
+      "layer": "concept",
+      "paths": [
+        "codex-rs/ext/goal/src/extension.rs",
+        "codex-rs/ext/queue/src/service.rs"
+      ],
+      "required_patterns": [
+        "ThreadLifecycleContributor",
+        "ThreadIdleInput"
+      ],
+      "status": "HOST_GAP",
+      "divergence": "The current Web Skill surface has no start_turn_if_idle primitive for automatic continuation.",
+      "upgrade_path": "Keep durable objective/manual resume semantics behind a continuation adapter that can swap to automatic idle dispatch later."
+    },
+    {
+      "id": "token_and_rollout_budget",
+      "layer": "concept",
+      "paths": [
+        "codex-rs/features/src/feature_configs.rs"
+      ],
+      "required_patterns": [
+        "TokenBudgetConfigToml",
+        "RolloutBudgetConfigToml",
+        "auto_compact_fallback_prompt"
+      ],
+      "status": "HOST_GAP",
+      "divergence": "Exact remaining context/token budget is not exposed to the Skill runtime.",
+      "upgrade_path": "Use host budget metadata when available; otherwise only heuristic precautionary checkpoints and never invent token counts."
+    },
+    {
+      "id": "turn_suspension",
+      "layer": "concept",
+      "paths": [
+        "codex-rs/core/src/session/turn_suspension.rs"
+      ],
+      "required_patterns": [
+        "suspend_turn_and_shutdown",
+        "flush"
+      ],
+      "status": "PARTIAL",
+      "divergence": "Codex Loop has checkpoint/re-entry but cannot transfer ownership between Codex workers.",
+      "upgrade_path": "Preserve flush-before-stop, external-action reconciliation and safe resume semantics without claiming host suspension authority."
+    },
+    {
+      "id": "history_notes",
+      "layer": "concept",
+      "paths": [
+        "codex-rs/ext/history-notes/src/tools.rs"
+      ],
+      "required_patterns": [
+        "history",
+        "notes",
+        "list_windows",
+        "read_item"
+      ],
+      "status": "PARTIAL",
+      "divergence": "No Codex backend history/notes service exists in ChatGPT Skill runtime.",
+      "upgrade_path": "Use optional schema-whitelisted persistence and evidence drill-down; prefer native history APIs if exposed."
+    },
+    {
+      "id": "agent_graph_store",
+      "layer": "concept",
+      "paths": [
+        "codex-rs/agent-graph-store/src/lib.rs"
+      ],
+      "required_patterns": [
+        "AgentGraphStore"
+      ],
+      "status": "LOCAL_DIVERGENCE",
+      "divergence": "Current logical isolation is serialized local fallback, not native Codex Multi-Agent V2.",
+      "upgrade_path": "Keep agent topology semantics separable from execution and route to native host subagents when available."
+    },
+    {
+      "id": "multi_agent_v2",
+      "layer": "concept",
+      "paths": [
+        "codex-rs/features/src/feature_configs.rs"
+      ],
+      "required_patterns": [
+        "MultiAgentV2ConfigToml"
+      ],
+      "status": "LOCAL_DIVERGENCE",
+      "divergence": "Current logical isolation is serialized local fallback, not native Codex Multi-Agent V2.",
+      "upgrade_path": "Keep agent topology semantics separable from execution and route to native host subagents when available."
+    },
+    {
+      "id": "context_fragments",
+      "layer": "control_plane",
+      "paths": [
+        "codex-rs/context-fragments/src/fragment.rs"
+      ],
+      "required_patterns": [
+        "ContextualUserFragment",
+        "content_kind",
+        "markers"
+      ],
+      "status": "PARTIAL",
+      "divergence": "Codex Loop uses bounded context projections without the full upstream fragment ownership/type system.",
+      "upgrade_path": "Add owner/scope/freshness/replace semantics only when multiple injected projections require them."
+    },
+    {
+      "id": "optional_cloud_persistence",
+      "layer": "concept",
+      "paths": [],
+      "required_patterns": [],
+      "status": "LOCAL_DIVERGENCE",
+      "divergence": "Google Drive persistence is a ChatGPT Web reliability adapter, not an upstream Codex storage implementation.",
+      "upgrade_path": "Keep a backend-neutral persistence interface so a future native host durable store can replace Drive without changing task semantics."
+    }
+  ]
+}

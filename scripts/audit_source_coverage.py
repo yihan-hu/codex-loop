@@ -12,7 +12,7 @@ PATHS={
 }
 def parse(path:Path): return sorted(set(MOD_RE.findall(path.read_text(encoding='utf-8'))))
 def main():
- p=argparse.ArgumentParser(); p.add_argument('--upstream'); args=p.parse_args(); skill=Path(__file__).resolve().parents[1]; data=json.loads((skill/'references/source-map.yaml').read_text()); errors=[]
+ p=argparse.ArgumentParser(); p.add_argument('--upstream'); p.add_argument('--architecture-upstream'); args=p.parse_args(); skill=Path(__file__).resolve().parents[1]; data=json.loads((skill/'references/source-map.yaml').read_text()); errors=[]
  for scope,mapping in data['coverage_scopes'].items():
   if not mapping: errors.append(f'{scope}: empty mapping')
   if args.upstream:
@@ -53,7 +53,32 @@ def main():
   for rel in tests.get('upstream',[]):
    if not str(rel).startswith('codex-rs/'):
     errors.append(f"{entry.get('local')}: invalid upstream test lineage: {rel}")
- result={'ok':not errors,'audited_commit':data['upstream']['audited_commit'],'scopes':{k:len(v) for k,v in data['coverage_scopes'].items()},'mapped_ports':len(local_ports),'runtime_modules':len(mapped_runtime),'exact_resources':len(exact_resources),'errors':errors}
+ architecture_path=skill/'references/architecture-fidelity.yaml'
+ if not architecture_path.is_file():
+  errors.append('architecture fidelity manifest missing')
+  architecture={}
+ else:
+  architecture=json.loads(architecture_path.read_text())
+ statuses=set(architecture.get('review_statuses',[]))
+ for entry in architecture.get('watch_surfaces',[]):
+  entry_id=entry.get('id','<missing>'); status=entry.get('status')
+  if status not in statuses: errors.append(f'architecture:{entry_id}: unknown review status {status}')
+  if status=='NEEDS_REVIEW': errors.append(f'architecture:{entry_id}: unresolved NEEDS_REVIEW')
+  if status in {'PARTIAL','HOST_GAP','LOCAL_DIVERGENCE'}:
+   if not entry.get('divergence'): errors.append(f'architecture:{entry_id}: divergence is required for {status}')
+   if not entry.get('upgrade_path'): errors.append(f'architecture:{entry_id}: upgrade_path is required for {status}')
+  if args.architecture_upstream:
+   base=Path(args.architecture_upstream)
+   for rel in entry.get('paths',[]):
+    path=base/rel
+    if not path.is_file():
+     errors.append(f'architecture:{entry_id}: watched upstream path missing: {rel}')
+     continue
+    text=path.read_text(encoding='utf-8')
+    for pattern in entry.get('required_patterns',[]):
+     if pattern not in text:
+      errors.append(f'architecture:{entry_id}: required upstream pattern missing in {rel}: {pattern}')
+ result={'ok':not errors,'audited_commit':data['upstream']['audited_commit'],'architecture_observed_commit':architecture.get('observed_upstream',{}).get('commit'),'architecture_surfaces':len(architecture.get('watch_surfaces',[])),'scopes':{k:len(v) for k,v in data['coverage_scopes'].items()},'mapped_ports':len(local_ports),'runtime_modules':len(mapped_runtime),'exact_resources':len(exact_resources),'errors':errors}
  print(json.dumps(result,sort_keys=True))
  raise SystemExit(0 if not errors else 1)
 if __name__=='__main__': main()

@@ -28,3 +28,9 @@ Canonical workspace binding, commit/tree-bound release receipts, and native-Git 
 ## Local guarded model-relay extension
 
 `GUARDED_SINGLE_SHOT_RELAY` is a Codex Loop local extension for a user-explicit alternate data plane. It supplies deterministic framing, narrow ASCII-whitespace normalization, strict Base64 decode, size/SHA-256 verification, and atomic destination publication. The ChatGPT host still owns model/tool dispatch and cross-surface carriage; the extension does not claim an upstream Codex file-transfer primitive or host network authority.
+
+## Architecture/control-plane watch
+
+The core-module source map is intentionally complemented by `references/architecture-fidelity.yaml`. This closes the blind spot where important Codex behavior moves into `ext/*`, app-server protocol, feature registries, thread stores, agent graph, budgets, or lifecycle contributors without adding a new `codex-core` direct module.
+
+Run `python scripts/audit_source_coverage.py` for the repository-side governance checks. When a checkout of the architecture observation pin is available, pass it separately with `--architecture-upstream /path/to/openai-codex` to assert watched paths and anchor patterns. Do not substitute the architecture observation pin for the exact-resource maintenance pin used by `source-verify`.

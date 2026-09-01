@@ -183,6 +183,18 @@ Allowed statuses are `proven`, `contradicted`, `incomplete`, `weak`, and `missin
 
 The runtime deliberately does not understand domain-specific workflow internals. If the objective names another Skill, gate, invariant, or deliverable, record the authoritative evidence proving that requirement rather than adding a domain-specific dependency mechanism to Codex Loop.
 
+## Optional state-only persistence
+
+Persistence is off by default and Drive credentials remain host-owned. For an explicitly enabled durable task:
+
+```bash
+python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_drive --repository OWNER/REPO
+python3 scripts/codex_loop.py persistence-validate --manifest /PRIVATE/TEMP/state-only.json
+python3 scripts/codex_loop.py persistence-cleanup-plan --manifest /PRIVATE/TEMP/state-only.json
+```
+
+`persistence-export` writes only to the task-private runtime directory and returns a path for host connector upload. `--backend off` creates no file and reports the default-disabled policy. The Google Drive connector owns upload/download/list/Trash operations and all authentication. A validated manifest is recovery evidence only; reconcile current workspace, instructions, and external actions before resuming. See `references/persistence.md`.
+
 ## External/host actions
 
 ```bash

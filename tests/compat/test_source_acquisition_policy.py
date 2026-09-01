@@ -60,6 +60,17 @@ class SourceAcquisitionPolicyTests(unittest.TestCase):
         self.assertIn("sha256sum", workflow)
         self.assertIn("name: codex-loop-source", workflow)
 
+    def test_verified_incremental_replay_and_receipt_bound_source_are_documented(self):
+        acquisition = (ROOT / "references" / "source-acquisition.md").read_text()
+        workflow = (ROOT / ".github" / "workflows" / "workspace-import.yml").read_text()
+        self.assertIn("verified incremental replay", acquisition.lower())
+        self.assertIn("complete Git tree SHA", acquisition)
+        self.assertIn("receipt-bound source artifact", acquisition)
+        self.assertIn("Build published source artifact", workflow)
+        self.assertIn("published_source_sha256", workflow)
+        self.assertIn("published-source-${{ github.run_id }}", workflow)
+
+
 
 if __name__ == "__main__":
     unittest.main()

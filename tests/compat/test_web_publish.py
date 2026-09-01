@@ -58,8 +58,8 @@ class WebPublishContractTests(unittest.TestCase):
         description_line = next(line for line in skill.splitlines() if line.startswith("description: "))
         description = description_line.removeprefix("description: ").strip().strip(chr(34))
         self.assertLessEqual(len(description), 1024)
-        self.assertIn("Web-mode GitHub publishing", description)
-        self.assertIn("Local-mode native-Git publishing", description)
+        self.assertIn("Git/deployment", description)
+        self.assertIn("Web/Local routing", description)
 
     def test_public_docs_explain_web_publish_prerequisites(self):
         readme = (ROOT / "README.md").read_text()

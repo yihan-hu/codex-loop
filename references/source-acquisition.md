@@ -38,7 +38,11 @@ Do not substitute any of the following as the ordinary Web acquisition path:
 - model-carried text/Base64 source relay;
 - an installed Skill copy when the user explicitly asked for GitHub source.
 
-If the exact commit has no usable download run, dispatch the audited workflow when the host exposes a workflow-dispatch capability and then verify the resulting `head_sha`. If the host cannot dispatch or observe a suitable run, stop with a precise acquisition blocker. Do not mutate repository source merely to manufacture a different commit whose artifact is easier to observe.
+If the exact commit has no usable download run, dispatch the audited workflow when the host exposes a workflow-dispatch capability and then verify the resulting `head_sha`. If that is unavailable, a **verified incremental replay** is allowed only when all of the following are proven: (1) a usable commit-bound source artifact exists for a known ancestor; (2) every intervening mutation is represented by an auditable deterministic patch or workflow-owned transformation with fixed size/hash or equivalent integrity evidence; (3) the transformation is replayed only inside a fresh Web workspace; and (4) the resulting complete Git tree SHA is computed locally and exactly equals the intended GitHub commit's tree SHA. A spot-check or per-file reconstruction is never sufficient. Record the ancestor commit, artifact digest/archive hash, replay transformation hashes, target commit, and final tree SHA as acquisition evidence.
+
+The Web import workflow may also publish a **receipt-bound source artifact** after creating its final source commit. Such an artifact is acceptable even though the Actions run itself is keyed by the earlier trigger commit only when the same run's receipt explicitly binds the artifact/archive hash, published commit, and published tree, and GitHub readback confirms that published commit/tree. This prevents bot-generated source commits from becoming unrecoverable merely because `GITHUB_TOKEN` pushes do not recursively trigger the download workflow.
+
+If neither an exact-commit artifact, a receipt-bound published artifact, nor a fully verified incremental replay is available, stop with a precise acquisition blocker. Do not mutate repository source merely to manufacture a different commit whose artifact is easier to observe.
 
 Useful fail-precise classifications are descriptive, not additional runtime state:
 
@@ -77,7 +81,7 @@ The installed-Skill bootstrap exception does not bypass Local-mode authorization
 Before treating source acquisition as complete, retain enough evidence to answer:
 
 - Which repository and exact revision were intended?
-- Which acquisition method was used (`github_actions_artifact` or `installed_skill_bootstrap`)?
+- Which acquisition method was used (`github_actions_artifact`, `receipt_bound_artifact`, `verified_incremental_replay`, or `installed_skill_bootstrap`)?
 - What proved the source bytes belonged to that revision?
 - What integrity checks passed?
 - Which fresh workspace became the sole mutable baseline?

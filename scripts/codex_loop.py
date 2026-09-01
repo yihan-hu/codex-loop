@@ -21,6 +21,13 @@ from codex_loop_runtime.completion import record_objective_audit
 from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
 from codex_loop_runtime.lifecycle import DURABLE_SIGNAL_KEYS, assess_runtime_need
+from codex_loop_runtime.persistence import (
+    build_state_manifest,
+    cleanup_decision,
+    load_state_manifest,
+    persistence_policy,
+    write_state_manifest,
+)
 from codex_loop_runtime.model_relay import (
     DEFAULT_GUARD_BYTES,
     DEFAULT_LINE_WIDTH,
@@ -296,6 +303,56 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
 
 
 
+def _cmd_persistence_export(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py persistence-export')
+    p.add_argument('--cwd')
+    p.add_argument('--task-id')
+    p.add_argument('--backend', default='off', choices=['off', 'google_drive'])
+    p.add_argument('--repository')
+    p.add_argument('--ttl-days', type=int)
+    args = p.parse_args(argv[1:])
+    if args.backend == 'off':
+        emit_ok(persistence_policy('off'))
+        return 0
+    cwd, root, store = _scope_from_argv(argv)
+    manifest = build_state_manifest(root, cwd, store, backend=args.backend, repository=args.repository, ttl_days=args.ttl_days)
+    path = write_state_manifest(store, manifest)
+    emit_ok({
+        'backend': args.backend,
+        'mode': 'state_only',
+        'manifest_path': str(path),
+        'expires_at': manifest['expires_at'],
+        'next': 'host may upload this private temporary file through the connected Google Drive connector; credentials remain host-owned',
+    })
+    return 0
+
+
+def _cmd_persistence_validate(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py persistence-validate')
+    p.add_argument('--manifest', required=True)
+    args = p.parse_args(argv[1:])
+    manifest = load_state_manifest(Path(args.manifest).resolve())
+    emit_ok({
+        'valid': True,
+        'schema_version': manifest['schema_version'],
+        'task_status': manifest.get('task', {}).get('status'),
+        'repository': manifest.get('workspace', {}).get('repository'),
+        'expires_at': manifest['expires_at'],
+        'resume': manifest.get('resume', {}),
+        'rule': 'treat this as recovery evidence; reconcile current workspace/tool/external state before resuming',
+    })
+    return 0
+
+
+def _cmd_persistence_cleanup_plan(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py persistence-cleanup-plan')
+    p.add_argument('--manifest', required=True)
+    args = p.parse_args(argv[1:])
+    manifest = load_state_manifest(Path(args.manifest).resolve())
+    emit_ok(cleanup_decision(manifest))
+    return 0
+
+
 def _cmd_objective_audit(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py objective-audit')
     p.add_argument('--cwd')
@@ -432,6 +489,12 @@ def main() -> int:
             return _cmd_validate(argv)
         if argv[0] == 'validation-record':
             return _cmd_validation_record(argv)
+        if argv[0] == 'persistence-export':
+            return _cmd_persistence_export(argv)
+        if argv[0] == 'persistence-validate':
+            return _cmd_persistence_validate(argv)
+        if argv[0] == 'persistence-cleanup-plan':
+            return _cmd_persistence_cleanup_plan(argv)
         if argv[0] == 'objective-audit':
             return _cmd_objective_audit(argv)
         if argv[0] == 'workspace-register':

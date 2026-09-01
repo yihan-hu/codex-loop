@@ -186,6 +186,12 @@ When the user changes requirements mid-task, record the change with `steer`, re-
 
 On cancellation, use `cancel`; stop new mutations and do not automatically revert workspace changes. The runtime closes only external actions that are still `planned` (never dispatched) as resolved `cancelled before dispatch`; actions already `dispatched` or `outcome_unknown` must be reconciled from real external observations before cleanup. After cancellation, allow only observation/cleanup and terminal-outcome reconciliation, never new progress work. Use `checkpoint` before long/noisy transitions. `checkpoint-restore` reconciles current workspace/instruction state; current facts override stale checkpoint assumptions.
 
+### Optional cross-conversation persistence
+
+Cross-conversation persistence is **off by default**. When the user explicitly enables it or explicitly requires a Web objective to survive conversation/workspace loss, read `references/persistence.md`. Prefer the `state_only` mode: `persistence-export --backend google_drive` creates a schema-whitelisted private recovery manifest, while the ChatGPT host owns Google Drive authentication and performs upload/download/list/Trash actions through the connector. Never persist OAuth material, cookies, approval/session tokens, hidden system/developer instructions, chain of thought, raw tool transcripts, environment secrets, local filesystem roots, or raw external-action identities. Drive is a recoverability adapter, not a second task truth source; current workspace/tool/external observations always win on resume.
+
+A disconnected or unavailable Drive connector is a capability degradation, not a correctness failure, unless the user explicitly made cross-conversation recoverability an acceptance requirement. Cleanup is TTL-based and opportunistic, trash-first, and must retain expired manifests that still carry unresolved external-action state. Do not implement permanent deletion in the runtime.
+
 ## External actions
 
 For important host actions such as GitHub writes, track `planned -> dispatched -> terminal_success|terminal_failure|outcome_unknown` when their outcome affects completion. Non-idempotent actions require a stable identity; repeated planning for the same `(kind, identity)` reuses the existing action instead of creating a duplicate. A non-idempotent terminal state must advance an existing dispatched action. Never blindly retry `outcome_unknown`; inspect the real external state first. Unresolved terminal failures require evidence-based resolution before completion.
@@ -200,7 +206,7 @@ Do not invent or auto-execute a parallel custom-hook configuration. The local ru
 
 ## Source fidelity
 
-When maintaining this Skill, follow `references/upstream-policy.md` and `references/source-map.yaml`: prefer exact vendor/extract or the smallest faithful port, never copy dead Rust merely to increase reuse, and never call a cross-language port a minimal patch. Run `source-verify` and `scripts/audit_source_coverage.py` after upstream-derived changes.
+When maintaining this Skill, follow `references/upstream-policy.md`, `references/source-map.yaml`, and `references/architecture-fidelity.yaml`. **Semantic parity comes before implementation parity:** identify the upstream behavioral invariant and control-plane/lifecycle primitive before choosing an implementation. Every material partial alignment or local divergence must record the host gap/degradation and a future upgrade path. An upstream audit is not complete until Source Delta, Control-plane Delta, and Concept Delta have all been reviewed; any `NEEDS_REVIEW` architecture surface blocks audit PASS. Prefer exact vendor/extract or the smallest faithful port, never copy dead Rust merely to increase reuse, and never call a cross-language port a minimal patch. Run `source-verify` and `scripts/audit_source_coverage.py` after upstream-derived changes.
 
 Do not run source-fidelity checks mechanically on every push. Run `source-verify` when exact vendored/extracted resources or their verification/audit definitions change. Run `scripts/audit_source_coverage.py` when the source map, extraction map, audited upstream baseline, or mapped runtime inventory changes. Ordinary documentation/tests and `LOCAL_EXTENSION`-only changes that do not alter those mappings do not need either check.
 
