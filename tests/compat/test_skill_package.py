@@ -1,8 +1,11 @@
 import importlib.util
+import json
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+
+from scripts.codex_loop_runtime.deployment_manifest import DEPLOYMENT_MANIFEST_REL, git_tree_sha
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "tools" / "build_skill_zip.py"
@@ -14,7 +17,13 @@ SPEC.loader.exec_module(MODULE)
 
 class SkillPackageTests(unittest.TestCase):
     def _build(self, path: Path):
-        return MODULE.build_skill_zip(ROOT, path)
+        return MODULE.build_skill_zip(
+            ROOT,
+            path,
+            repository="yihan-hu/codex-loop",
+            commit="a" * 40,
+            tree=git_tree_sha(ROOT),
+        )
 
     def test_runtime_package_is_deterministic(self):
         with tempfile.TemporaryDirectory() as td:
@@ -32,14 +41,15 @@ class SkillPackageTests(unittest.TestCase):
                 names = [name for name in archive.namelist() if not name.endswith("/")]
             self.assertEqual({name.split("/", 1)[0] for name in names}, {"codex-loop"})
             self.assertEqual(names.count("codex-loop/SKILL.md"), 1)
+            self.assertIn(f"codex-loop/{DEPLOYMENT_MANIFEST_REL.as_posix()}", names)
             with zipfile.ZipFile(package) as archive:
                 modes = {((info.external_attr >> 16) & 0xFFFF) for info in archive.infolist() if not info.is_dir()}
             self.assertEqual(modes, {0o100644})
-            for forbidden in ("/.github/", "/tests/", "/tools/", "/README.md", "/.gitignore", "__pycache__", ".pyc"):
+            for forbidden in ("/.github/", "/tests/", "/tools/", "/README.md", "/.gitignore", "__pycache__", ".pyc", "host.json"):
                 self.assertFalse(any(forbidden in name or name.endswith(forbidden) for name in names), forbidden)
             self.assertEqual(result["file_count"], len(names))
 
-    def test_runtime_manifest_matches_current_allowlist(self):
+    def test_runtime_manifest_matches_current_allowlist_plus_generated_provenance(self):
         expected = []
         for name in MODULE.ROOT_FILES:
             expected.append(f"codex-loop/{name}")
@@ -48,17 +58,33 @@ class SkillPackageTests(unittest.TestCase):
                 if not path.is_file():
                     continue
                 rel = path.relative_to(ROOT)
+                if rel == DEPLOYMENT_MANIFEST_REL:
+                    continue
                 if any(part in MODULE.IGNORED_PARTS for part in rel.parts):
                     continue
                 if path.suffix in MODULE.IGNORED_SUFFIXES:
                     continue
                 expected.append(f"codex-loop/{rel.as_posix()}")
+        expected.append(f"codex-loop/{DEPLOYMENT_MANIFEST_REL.as_posix()}")
         with tempfile.TemporaryDirectory() as td:
             package = Path(td) / "skill.zip"
             self._build(package)
             with zipfile.ZipFile(package) as archive:
                 actual = [name for name in archive.namelist() if not name.endswith("/")]
         self.assertEqual(sorted(actual), sorted(expected))
+
+    def test_package_provenance_has_exact_source_identity_but_no_package_self_hash(self):
+        with tempfile.TemporaryDirectory() as td:
+            package = Path(td) / "skill.zip"
+            result = self._build(package)
+            with zipfile.ZipFile(package) as archive:
+                payload = archive.read(f"codex-loop/{DEPLOYMENT_MANIFEST_REL.as_posix()}")
+            manifest = json.loads(payload)
+            self.assertEqual(manifest["source"]["repository"], "yihan-hu/codex-loop")
+            self.assertEqual(manifest["source"]["commit"], "a" * 40)
+            self.assertEqual(manifest["source"]["tree"], git_tree_sha(ROOT))
+            self.assertEqual(manifest["bundle"]["manifest_sha256"], result["bundle_manifest_sha256"])
+            self.assertNotIn("package_sha256", payload.decode("utf-8"))
 
     def test_install_verified_metadata_is_enforced(self):
         metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")

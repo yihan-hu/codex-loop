@@ -82,7 +82,8 @@ class ProgressVisibilityTests(unittest.TestCase):
             )
             self.assertTrue(saved["data"]["saved"])
             raw = json.loads(path.read_text())
-            self.assertEqual(raw["default_local_workspace"], "piwork")
+            self.assertEqual(raw["schema_version"], 2)
+            self.assertEqual(raw["workspace"]["default_local_workspace"], "piwork")
             self.assertEqual(raw["progress_visibility"]["interval_seconds"], 22)
             self.assertEqual(raw["progress_visibility"]["tool_call_interval"], 5)
             self.assertFalse(raw["progress_visibility"]["upfront_plan"])
@@ -93,7 +94,8 @@ class ProgressVisibilityTests(unittest.TestCase):
             reset, _ = call(home, "progress-config", "--reset")
             self.assertTrue(reset["data"]["reset_to_defaults"])
             raw = json.loads(path.read_text())
-            self.assertEqual(raw["default_local_workspace"], "piwork")
+            self.assertEqual(raw["schema_version"], 2)
+            self.assertEqual(raw["workspace"]["default_local_workspace"], "piwork")
             self.assertNotIn("progress_visibility", raw)
             self.assertEqual(reset["data"]["mode"], "enhanced")
 
@@ -108,7 +110,7 @@ class ProgressVisibilityTests(unittest.TestCase):
 
             policy, _ = call(home, "progress-policy", "--lifecycle-mode", "durable")
             self.assertEqual(policy["data"]["visibility_mode"], "enhanced")
-            self.assertIn("invalid_host_config_json_using_progress_defaults", policy["data"]["config"]["warnings"])
+            self.assertIn("invalid_host_config_json_using_defaults", policy["data"]["config"]["warnings"])
 
             failed, proc = call(home, "progress-config", "--interval-seconds", "20", check=False)
             self.assertNotEqual(proc.returncode, 0)
@@ -129,7 +131,7 @@ class ProgressVisibilityTests(unittest.TestCase):
                 self.skipTest("symlinks unavailable")
             policy, _ = call(home, "progress-policy", "--lifecycle-mode", "durable")
             self.assertEqual(policy["data"]["visibility_mode"], "enhanced")
-            self.assertIn("unsafe_host_config_ignored_for_progress", policy["data"]["config"]["warnings"])
+            self.assertTrue(any(x.startswith("unsafe_host_config_using_defaults:") for x in policy["data"]["config"]["warnings"]))
 
             failed, proc = call(home, "progress-config", "--mode", "quiet", check=False)
             self.assertNotEqual(proc.returncode, 0)

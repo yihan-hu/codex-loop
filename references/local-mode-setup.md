@@ -52,7 +52,7 @@ Resolve the primary Local root in this order, but only after the user has explic
 1. Reuse the exact primary root already established earlier in the current conversation.
 2. If the user names a registered workspace alias and explicitly grants it for this conversation, resolve that alias through the workspace registry and confirm RDC access.
 3. Otherwise, use an absolute root explicitly named by the user when they select Local mode, optionally registering it when they ask to remember it.
-4. Otherwise, read the host-local `~/.codex-loop/host.json` configuration. Prefer `default_local_workspace` when present; resolve that alias through the registry. For backward compatibility, an existing `default_local_root` may be used as a migration input after explicit Local-mode intent, but it should not remain a separate long-term routing table.
+4. Otherwise, read the private Host Profile `~/.codex-loop/host.json`. Prefer `workspace.default_local_workspace`; schema-v1 `default_local_workspace` and `default_local_root` are migration inputs only. Reading the alias is allowed as a global preference, but resolving it to a local filesystem path still begins only after explicit Local-mode intent.
 5. If the host exposes a single explicit RDC-authorized workspace root as tool metadata, that root may be used after confirming it is the intended development root.
 6. Otherwise ask once for the exact absolute root and require the user to authorize that root in RDC.
 
@@ -62,27 +62,20 @@ Do not infer a root from a repository author's home directory, a stale prior con
 
 The optional config path is `~/.codex-loop/host.json`. It belongs to the user's computer, not to any repository and not to the packaged Skill.
 
-The preferred V1 form names a registry alias:
+The current schema is the unified v2 Private Host Profile described in `host-profile.md`; the workspace preference is nested:
 
 ```json
 {
-  "schema_version": 1,
-  "default_local_workspace": "piwork"
+  "schema_version": 2,
+  "workspace": {
+    "default_local_workspace": "piwork"
+  }
 }
 ```
 
-Older installations may still contain:
+Schema-v1 root `default_local_workspace` and historical `default_local_root` remain compatibility/migration inputs only; neither selects Local mode or grants access. Migrate a stable direct path by registering it as `piwork` with `kind=development_root`, then use `workspace.default_local_workspace`.
 
-```json
-{
-  "schema_version": 1,
-  "default_local_root": "/absolute/path/to/PiWork"
-}
-```
-
-`default_local_root` is a compatibility/migration input only; it does not itself select Local mode and does not grant access. Migrate a stable root by registering it as `piwork` with `kind=development_root`, then prefer `default_local_workspace`.
-
-Store only non-sensitive host preferences/defaults. In addition to local-workspace routing, `host.json` may contain global behavioral preferences such as `progress_visibility`; see `progress-visibility.md`. Never store Git/OAuth tokens, passwords, cookies, connector credentials, approval tokens, session grant nonces, or other secrets in this file.
+Store only non-sensitive preferences/locators. `host.json` may also contain progress, browser, Web-publish, and persistence preferences; see `host-profile.md`. Never store observed capability claims, Git/OAuth tokens, passwords, cookies, connector credentials, approval tokens, session grant nonces, or other secrets in this file.
 
 Because host-local files live outside the repository, normal Git commits, Web-mode source archives, Local-mode `git push`, and Skill packaging must not include them. Do not copy them into a repository merely to make them easier to discover.
 

@@ -4,6 +4,12 @@ Codex Loop is a ChatGPT Skill that applies Codex-style objective continuation to
 
 It uses broad invocation with adaptive direct-vs-durable lifecycle assessment. Trivial one-step work stays lightweight; dependency-bearing work can preserve objective state, evidence, review, external actions, and completion across multiple stages without launching Codex CLI or another model runtime.
 
+## Runtime control plane v2
+
+Codex Loop separates repeatable control-plane mechanics from host/model reasoning. The current runtime adds four coordinated surfaces: **Execution Outcome Separation** (`workload != process != cleanup`), a unified **Private Host Profile** with Cloud-Browser-first interaction preference, deterministic **Durable Resume** that reconciles current reality instead of reviving stale PASS evidence, and provenance-bound Skill packages that identify their exact Git source revision. These are thin ChatGPT-host adaptations; existing upstream host gaps remain explicitly labeled rather than being promoted to false parity.
+
+Key references: `references/execution-supervision.md`, `references/host-profile.md`, `references/persistence-resume.md`, and `references/deployment-provenance.md`.
+
 ## What it can do
 
 Use Codex Loop for objectives such as:

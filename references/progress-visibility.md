@@ -37,11 +37,11 @@ If the runtime/config surface is unavailable, fall back to the defaults above ra
 
 User preferences live in `~/.codex-loop/host.json` (or under `CODEX_LOOP_HOME` when the host overrides that root). This file is host-local/private state: it is outside the repository, outside `skill.zip`, and must never be copied into GitHub source archives.
 
-The supported node is:
+The progress node is part of the unified Private Host Profile schema v2 (see `host-profile.md`):
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "progress_visibility": {
     "mode": "enhanced",
     "interval_seconds": 15,
@@ -52,6 +52,7 @@ The supported node is:
 }
 ```
 
+`progress-config` is a compatibility facade over the same Host Profile implementation; it does not own a second config file or schema. Schema-v1 workspace defaults are migrated when the profile is next written.
 Supported modes:
 
 - `enhanced`: use the configured approximate seconds/tool-call cadence;
@@ -83,4 +84,4 @@ Reset only the progress node to built-in defaults:
 python3 scripts/codex_loop.py progress-config --reset
 ```
 
-The writer preserves unrelated top-level host configuration such as workspace defaults. A malformed existing host file is never silently overwritten. Read-only policy resolution degrades to the enhanced defaults with a warning so progress preferences cannot block substantive work.
+The writer preserves unrelated Host Profile sections such as browser, persistence, Web-publish, and workspace defaults. A malformed existing host file is never silently overwritten. Read-only policy resolution degrades to the enhanced defaults with a warning so progress preferences cannot block substantive work.

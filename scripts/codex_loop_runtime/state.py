@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .command_identity import identify_validation
+from .execution_supervision import ExecutionObservation, legacy_observation, validate_observation
 
 from .workspace import repo_root
 
@@ -68,7 +69,18 @@ CREATE TABLE IF NOT EXISTS validations (
     command_json TEXT NOT NULL,
     cwd TEXT NOT NULL DEFAULT '',
     exit_code INTEGER NOT NULL,
+    observed_exit_code INTEGER,
     passed INTEGER NOT NULL,
+    workload_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+    workload_evidence_kind TEXT NOT NULL DEFAULT 'none',
+    workload_evidence TEXT,
+    workload_adapter TEXT,
+    process_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+    process_evidence TEXT,
+    cleanup_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+    cleanup_evidence TEXT,
+    warnings_json TEXT NOT NULL DEFAULT '[]',
+    legacy_inferred INTEGER NOT NULL DEFAULT 1,
     disposition TEXT NOT NULL DEFAULT 'blocking',
     disposition_evidence TEXT,
     source TEXT NOT NULL DEFAULT 'local_runtime',
@@ -361,6 +373,35 @@ class StateStore:
                 db.execute("ALTER TABLE validations ADD COLUMN cwd TEXT NOT NULL DEFAULT ''")
             if "plan_id" not in validation_columns:
                 db.execute("ALTER TABLE validations ADD COLUMN plan_id TEXT")
+            validation_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(validations)")}
+            validation_additions = {
+                "observed_exit_code": "INTEGER",
+                "workload_status": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+                "workload_evidence_kind": "TEXT NOT NULL DEFAULT 'none'",
+                "workload_evidence": "TEXT",
+                "workload_adapter": "TEXT",
+                "process_status": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+                "process_evidence": "TEXT",
+                "cleanup_status": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+                "cleanup_evidence": "TEXT",
+                "warnings_json": "TEXT NOT NULL DEFAULT '[]'",
+                "legacy_inferred": "INTEGER NOT NULL DEFAULT 1",
+            }
+            for column, declaration in validation_additions.items():
+                if column not in validation_columns:
+                    db.execute(f"ALTER TABLE validations ADD COLUMN {column} {declaration}")
+            db.execute(
+                "UPDATE validations SET observed_exit_code=exit_code WHERE observed_exit_code IS NULL AND legacy_inferred=1"
+            )
+            db.execute(
+                "UPDATE validations SET workload_status=CASE WHEN passed=1 THEN 'PASSED' ELSE 'FAILED' END "
+                "WHERE workload_status='UNKNOWN' AND legacy_inferred=1"
+            )
+            db.execute(
+                "UPDATE validations SET workload_evidence_kind='machine_authoritative', workload_evidence=COALESCE(workload_evidence,evidence), "
+                "process_status=CASE WHEN exit_code=0 THEN 'EXITED_CLEAN' ELSE 'EXITED_NONZERO' END, "
+                "process_evidence=COALESCE(process_evidence,evidence), cleanup_status='NOT_REQUIRED' WHERE legacy_inferred=1"
+            )
             mutation_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(mutations)")}
             if "override_reason" not in mutation_columns:
                 db.execute("ALTER TABLE mutations ADD COLUMN override_reason TEXT")
@@ -423,6 +464,7 @@ class StateStore:
         git_mutation_reason: str | None = None,
         git_mutation_scope: dict[str, bool] | None = None,
         no_validation_reason: str | None = None,
+        requires_clean_process_exit: bool = False,
     ) -> None:
         task_id = validate_task_id(task_id)
         if profile not in PROFILES:
@@ -458,6 +500,7 @@ class StateStore:
         self.set_meta("criteria_auto_generated", auto_criterion)
         self.set_meta("requires_validation", bool(requires_validation))
         self.set_meta("no_validation_reason", no_validation_reason)
+        self.set_meta("requires_clean_process_exit", bool(requires_clean_process_exit))
         self.set_meta("allow_git_mutation", any(scope.values()))
         self.set_meta("git_mutation_reason", reason)
         self.set_meta("git_mutation_scope", scope)
@@ -597,6 +640,42 @@ class StateStore:
             )
         return {"plan_id": plan_id, "generation": generation, "cwd": cwd_norm, "identity": rec["sha256"]}
 
+    def _insert_validation_observation(
+        self,
+        *,
+        generation: int,
+        encoded_command: str,
+        cwd_norm: str,
+        source: str,
+        evidence: str,
+        plan_id: str | None,
+        observation: ExecutionObservation,
+    ) -> int:
+        observation = validate_observation(observation)
+        rec = observation.to_record()
+        observed_exit = rec["exit_code"]
+        compatibility_exit = int(observed_exit) if observed_exit is not None else 0
+        warnings_json = json.dumps(rec["warnings"], ensure_ascii=True, sort_keys=True)
+        with self.connect() as db:
+            cur = db.execute(
+                "INSERT INTO validations("
+                "generation,command_json,cwd,exit_code,observed_exit_code,passed,"
+                "workload_status,workload_evidence_kind,workload_evidence,workload_adapter,"
+                "process_status,process_evidence,cleanup_status,cleanup_evidence,warnings_json,legacy_inferred,"
+                "source,evidence,plan_id"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    int(generation), encoded_command, cwd_norm, compatibility_exit, observed_exit,
+                    int(observation.workload_passed), rec["workload_status"], rec["workload_evidence_kind"],
+                    scrub_persisted_text(rec.get("workload_evidence"), limit=4096),
+                    scrub_persisted_text(rec.get("workload_adapter"), limit=256), rec["process_status"],
+                    scrub_persisted_text(rec.get("process_evidence"), limit=4096), rec["cleanup_status"],
+                    scrub_persisted_text(rec.get("cleanup_evidence"), limit=4096), warnings_json,
+                    int(bool(rec.get("legacy_inferred"))), source, evidence, plan_id,
+                ),
+            )
+            return int(cur.lastrowid)
+
     def record_validation(
         self,
         generation: int,
@@ -613,20 +692,40 @@ class StateStore:
         if not clean_evidence:
             clean_evidence = f"local runtime observed exit code {int(exit_code)}"
         cwd_norm, rec = self._validation_record(argv, cwd)
-        with self.connect() as db:
-            cur = db.execute(
-                "INSERT INTO validations(generation,command_json,cwd,exit_code,passed,source,evidence,plan_id) VALUES(?,?,?,?,?,?,?,NULL)",
-                (int(generation), json.dumps(rec, sort_keys=True), cwd_norm, int(exit_code), int(exit_code == 0), source, clean_evidence),
-            )
-            return int(cur.lastrowid)
+        observation = legacy_observation(int(exit_code), clean_evidence)
+        return self._insert_validation_observation(
+            generation=int(generation),
+            encoded_command=json.dumps(rec, sort_keys=True),
+            cwd_norm=cwd_norm,
+            source=source,
+            evidence=clean_evidence,
+            plan_id=None,
+            observation=observation,
+        )
 
     def record_host_validation(
-        self, plan_id: str, generation: int, argv: list[str], exit_code: int, *, cwd: str | Path, evidence: str
+        self,
+        plan_id: str,
+        generation: int,
+        argv: list[str],
+        exit_code: int | None = None,
+        *,
+        cwd: str | Path,
+        evidence: str,
+        observation: ExecutionObservation | None = None,
     ) -> int:
         self.ensure_active()
         clean_evidence = scrub_persisted_text(evidence, limit=4096)
         if not (clean_evidence and clean_evidence.strip()):
             raise ValueError("host-observed validation requires concise observable evidence")
+        if observation is None:
+            if exit_code is None:
+                raise ValueError("legacy host validation requires exit_code when no rich execution observation is supplied")
+            observation = legacy_observation(int(exit_code), clean_evidence)
+        else:
+            observation = validate_observation(observation)
+            if exit_code is not None and observation.exit_code != int(exit_code):
+                raise ValueError("exit_code disagrees with the rich execution observation")
         plan_id = validate_task_id(plan_id)
         generation = int(generation)
         cwd_norm, rec = self._validation_record(argv, cwd)
@@ -648,9 +747,26 @@ class StateStore:
                 raise ValueError("host validation cwd does not match the planned cwd")
             if encoded != str(row["command_json"]):
                 raise ValueError("host validation command identity does not match the planned command")
+            rec_observation = observation.to_record()
+            observed_exit = rec_observation["exit_code"]
+            compatibility_exit = int(observed_exit) if observed_exit is not None else 0
+            warnings_json = json.dumps(rec_observation["warnings"], ensure_ascii=True, sort_keys=True)
             cur = db.execute(
-                "INSERT INTO validations(generation,command_json,cwd,exit_code,passed,source,evidence,plan_id) VALUES(?,?,?,?,?,'host_observed',?,?)",
-                (generation, encoded, cwd_norm, int(exit_code), int(exit_code == 0), clean_evidence, plan_id),
+                "INSERT INTO validations("
+                "generation,command_json,cwd,exit_code,observed_exit_code,passed,"
+                "workload_status,workload_evidence_kind,workload_evidence,workload_adapter,"
+                "process_status,process_evidence,cleanup_status,cleanup_evidence,warnings_json,legacy_inferred,"
+                "source,evidence,plan_id"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'host_observed',?,?)",
+                (
+                    generation, encoded, cwd_norm, compatibility_exit, observed_exit, int(observation.workload_passed),
+                    rec_observation["workload_status"], rec_observation["workload_evidence_kind"],
+                    scrub_persisted_text(rec_observation.get("workload_evidence"), limit=4096),
+                    scrub_persisted_text(rec_observation.get("workload_adapter"), limit=256),
+                    rec_observation["process_status"], scrub_persisted_text(rec_observation.get("process_evidence"), limit=4096),
+                    rec_observation["cleanup_status"], scrub_persisted_text(rec_observation.get("cleanup_evidence"), limit=4096),
+                    warnings_json, int(bool(rec_observation.get("legacy_inferred"))), clean_evidence, plan_id,
+                ),
             )
             db.execute(
                 "UPDATE validation_plans SET consumed=1,consumed_at=CURRENT_TIMESTAMP WHERE plan_id=? AND consumed=0",
@@ -699,10 +815,29 @@ class StateStore:
         eligible = [x for x in current if str(x.get("cwd") or "").strip()]
         blocking = [x for x in eligible if x.get("disposition", "blocking") != "baseline_unrelated"]
         nonblocking = [x for x in eligible if x.get("disposition") == "baseline_unrelated"]
+        for item in current:
+            try:
+                item["warnings"] = json.loads(item.get("warnings_json") or "[]")
+            except json.JSONDecodeError:
+                item["warnings"] = ["INVALID_VALIDATION_WARNING_RECORD"]
+        passed = [x for x in blocking if str(x.get("workload_status") or "UNKNOWN") == "PASSED"]
+        failed = [x for x in blocking if str(x.get("workload_status") or "UNKNOWN") in {"FAILED", "CANCELLED"}]
+        uncertain = [x for x in blocking if str(x.get("workload_status") or "UNKNOWN") not in {"PASSED", "FAILED", "CANCELLED"}]
+        teardown = [x for x in blocking if str(x.get("process_status") or "UNKNOWN") == "TEARDOWN_STALLED"]
+        cleanup_failed = [x for x in blocking if str(x.get("cleanup_status") or "UNKNOWN") == "FAILED"]
+        orphaned = [x for x in blocking if str(x.get("process_status") or "UNKNOWN") == "ORPHANED" or str(x.get("cleanup_status") or "UNKNOWN") == "ORPHANED"]
+        supervision_partial = [x for x in blocking if str(x.get("process_status") or "UNKNOWN") == "UNKNOWN" or str(x.get("cleanup_status") or "UNKNOWN") == "UNSUPPORTED"]
+        warning_codes = sorted({warning for item in blocking for warning in item.get("warnings", [])})
         return {
             "commands": current,
-            "passed_count": sum(1 for x in blocking if bool(x["passed"])),
-            "failed_count": sum(1 for x in blocking if not bool(x["passed"])),
+            "passed_count": len(passed),
+            "failed_count": len(failed),
+            "uncertain_count": len(uncertain),
+            "teardown_stalled_count": len(teardown),
+            "cleanup_failed_count": len(cleanup_failed),
+            "orphaned_count": len(orphaned),
+            "supervision_partial_count": len(supervision_partial),
+            "warning_codes": warning_codes,
             "nonblocking_count": len(nonblocking),
             "nonblocking": nonblocking,
             "legacy_identity_count": len(legacy_identity),

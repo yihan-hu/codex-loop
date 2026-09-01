@@ -160,6 +160,11 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
             f"active isolated task {active_isolation.get('isolation_id')} has not finished"
         )
     delegation_warnings = store.isolation_warnings(limit=32)
+    delegation_warning_codes = [
+        str(item.get("code"))
+        for item in delegation_warnings
+        if isinstance(item, dict) and str(item.get("code") or "").strip()
+    ]
     criteria = store.criteria()
     if not criteria:
         blockers.append("task has no acceptance criterion")
@@ -198,13 +203,25 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
         reasons.append("one or more acknowledged user steers have stale integration evidence")
 
     validation_state = store.validation_state_for_generation(generation)
+    validation_warnings = list(validation_state.get("warning_codes", []))
+    requires_clean_process_exit = bool(store.get_meta("requires_clean_process_exit", False))
     if bool(store.get_meta("requires_validation", True)):
         if validation_state["passed_count"] < 1:
             if validation_state.get("legacy_identity_count", 0):
                 reasons.append("legacy validation record(s) lack cwd-aware identity and must be rerun")
-            reasons.append("no current-generation passing validation is recorded")
+            reasons.append("no current-generation authoritative passing workload validation is recorded")
         if validation_state["failed_count"]:
-            reasons.append("current-generation validation has unresolved blocking failure(s)")
+            reasons.append("current-generation validation has authoritative workload failure(s)")
+        if validation_state.get("uncertain_count", 0):
+            reasons.append("current-generation validation contains workload result(s) that remain uncertain")
+        if validation_state.get("cleanup_failed_count", 0):
+            blockers.append("validation process cleanup failed and task-owned execution state is unresolved")
+        if validation_state.get("orphaned_count", 0):
+            blockers.append("validation process/orphan state is unresolved")
+        if requires_clean_process_exit and validation_state.get("teardown_stalled_count", 0):
+            reasons.append("the objective requires clean process exit but a validation teardown stalled")
+        if requires_clean_process_exit and validation_state.get("supervision_partial_count", 0):
+            reasons.append("the objective requires clean process exit but process supervision is partial or unavailable")
     elif not str(store.get_meta("no_validation_reason", "") or "").strip():
         blockers.append("validation is disabled without a recorded reason")
 
@@ -296,10 +313,11 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
             "unresolved_process_failures": unresolved_process_failures,
             "stale_steers": stale_steers,
             "no_validation_reason": store.get_meta("no_validation_reason"),
+            "requires_clean_process_exit": requires_clean_process_exit,
             "changes": change_state,
             "freshness_waiver": freshness_waiver,
             "active_isolation": active_isolation,
-            "warnings": delegation_warnings,
+            "warnings": sorted(set(delegation_warning_codes + validation_warnings)),
             "workspace_binding": binding_status,
             "latest_release": store.latest_release_receipt(),
         },

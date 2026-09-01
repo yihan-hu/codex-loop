@@ -20,18 +20,35 @@ from codex_loop_runtime.change_tracker import sync_generation
 from codex_loop_runtime.completion import record_objective_audit
 from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
+from codex_loop_runtime.deployment_manifest import verify_installed_skill
+from codex_loop_runtime.execution_supervision import (
+    CleanupStatus,
+    EvidenceKind,
+    ProcessStatus,
+    WorkloadStatus,
+    execution_policy,
+    observation_from_strings,
+)
+from codex_loop_runtime.interaction_routing import resolve_interaction_target
 from codex_loop_runtime.lifecycle import DURABLE_SIGNAL_KEYS, assess_runtime_need
 from codex_loop_runtime.host_config import (
     PROGRESS_MODES,
     effective_progress_config,
+    host_config_get,
+    host_config_reset,
+    host_config_set,
+    host_config_show,
+    host_config_unset,
     progress_policy,
     set_progress_config,
 )
 from codex_loop_runtime.persistence import (
+    build_resume_plan,
     build_state_manifest,
     cleanup_decision,
     load_state_manifest,
     persistence_policy,
+    resume_state_manifest,
     write_state_manifest,
 )
 from codex_loop_runtime.model_relay import (
@@ -59,10 +76,14 @@ from codex_loop_runtime.workspace_registry import (
 HOST_ADAPTER_COMMANDS = (
     ('lifecycle-assess', 'decide direct vs durable execution and expose effective progress policy'),
     ('next', 'project the bounded working set for the active durable task'),
-    ('progress-config', 'show or update private progress-visibility preferences'),
+    ('host-config', 'show or update the unified private Host Profile'),
+    ('progress-config', 'compatibility facade for private progress-visibility preferences'),
     ('progress-policy', 'resolve effective progress behavior for direct or durable work'),
+    ('interaction-route', 'resolve Cloud Browser vs local browser target without granting access'),
     ('persistence-export', 'export private cross-conversation recovery state'),
     ('persistence-validate', 'validate a recovery manifest'),
+    ('persistence-resume-plan', 'plan deterministic recovery observations'),
+    ('persistence-resume', 'reconcile current reality and create a fresh resumed task'),
     ('persistence-cleanup-plan', 'plan recovery-manifest cleanup'),
     ('objective-audit', 'record requirement-by-requirement completion evidence'),
     ('workspace-register', 'register a private host workspace alias'),
@@ -73,6 +94,7 @@ HOST_ADAPTER_COMMANDS = (
     ('workspace-remove', 'remove a private host workspace alias'),
     ('workspace-sync-offer', 'prepare an exact-revision workspace sync offer'),
     ('skill-deploy-handoff', 'prepare current-workspace Skill deployment reconciliation'),
+    ('deployment-provenance-verify', 'verify installed Skill bundle provenance'),
     ('relay-frame', 'frame a guarded model-relay payload'),
     ('relay-receive', 'receive and verify a guarded model-relay payload'),
 )
@@ -152,6 +174,38 @@ def _cmd_next(argv: list[str]) -> int:
     return 0
 
 
+
+def _parse_host_config_value(raw: str):
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+
+
+def _cmd_host_config(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py host-config')
+    sub = p.add_subparsers(dest='action')
+    sub.add_parser('show')
+    get_p = sub.add_parser('get'); get_p.add_argument('path')
+    set_p = sub.add_parser('set'); set_p.add_argument('path'); set_p.add_argument('value')
+    unset_p = sub.add_parser('unset'); unset_p.add_argument('path')
+    reset_p = sub.add_parser('reset'); reset_p.add_argument('section')
+    args = p.parse_args(argv[1:])
+    action = args.action or 'show'
+    if action == 'show':
+        emit_ok(host_config_show())
+    elif action == 'get':
+        emit_ok({'path': args.path, 'value': host_config_get(args.path)})
+    elif action == 'set':
+        emit_ok(host_config_set(args.path, _parse_host_config_value(args.value)))
+    elif action == 'unset':
+        emit_ok(host_config_unset(args.path))
+    elif action == 'reset':
+        emit_ok(host_config_reset(args.section))
+    else:
+        raise ValueError(f'unsupported host-config action: {action}')
+    return 0
+
 def _cmd_progress_config(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py progress-config')
     p.add_argument('--mode', choices=sorted(PROGRESS_MODES))
@@ -218,7 +272,8 @@ def _cmd_validate(argv: list[str]) -> int:
         'safety': safety,
         'identity': identify(command, cwd),
         'cwd': cwd_norm,
-        'next': 'run the exact validation through the host tool, then record its exit code and concise observable evidence with validation-record using the same cwd and exact command; plan/generation bookkeeping is inferred when unambiguous',
+        'execution_policy': execution_policy(),
+        'next': 'run the exact validation through the host tool, observe workload and process outcomes independently, then record authoritative workload/process/cleanup evidence with validation-record; legacy exit-code-only recording remains a compatibility path',
     }
     if '--debug-bookkeeping' in argv:
         payload.update({'generation': generation, 'plan_id': plan_id, 'plan_reused': reused})
@@ -234,8 +289,17 @@ def _cmd_validation_record(argv: list[str]) -> int:
     p.add_argument('--plan-id')
     p.add_argument('--command-json', required=True)
     p.add_argument('--generation', type=int)
-    p.add_argument('--exit-code', type=int, required=True)
-    p.add_argument('--evidence', required=True)
+    p.add_argument('--exit-code', type=int)
+    p.add_argument('--evidence')
+    p.add_argument('--workload-status', choices=[x.value for x in WorkloadStatus])
+    p.add_argument('--workload-evidence-kind', choices=[x.value for x in EvidenceKind])
+    p.add_argument('--workload-evidence')
+    p.add_argument('--workload-adapter')
+    p.add_argument('--process-status', choices=[x.value for x in ProcessStatus])
+    p.add_argument('--process-evidence')
+    p.add_argument('--cleanup-status', choices=[x.value for x in CleanupStatus])
+    p.add_argument('--cleanup-evidence')
+    p.add_argument('--protocol-token-verified', action='store_true')
     args = p.parse_args(argv[1:])
     cwd = _cwd(args.cwd)
     root = repo_root(cwd)
@@ -253,8 +317,47 @@ def _cmd_validation_record(argv: list[str]) -> int:
         raise RuntimeError(f'host validation is stale: observed generation {args.generation} but current generation is {generation}; rerun validation')
     inferred = args.plan_id is None
     plan_id = args.plan_id or _resolve_plan(store, generation, command, cwd)['plan_id']
-    validation_id = store.record_host_validation(plan_id, generation, command, args.exit_code, cwd=cwd, evidence=args.evidence)
-    emit_ok({'validation_id': validation_id, 'cwd': str(cwd), 'exit_code': args.exit_code, 'bookkeeping_inferred': inferred})
+    rich_requested = any(value is not None for value in (
+        args.workload_status, args.workload_evidence_kind, args.workload_evidence, args.workload_adapter,
+        args.process_status, args.process_evidence, args.cleanup_status, args.cleanup_evidence,
+    )) or args.protocol_token_verified
+    observation = None
+    if rich_requested:
+        if args.workload_status is None or args.workload_evidence_kind is None or args.process_status is None:
+            raise ValueError('rich execution recording requires --workload-status, --workload-evidence-kind, and --process-status')
+        observation = observation_from_strings(
+            workload_status=args.workload_status,
+            workload_evidence_kind=args.workload_evidence_kind,
+            workload_evidence=args.workload_evidence,
+            workload_adapter=args.workload_adapter,
+            process_status=args.process_status,
+            exit_code=args.exit_code,
+            process_evidence=args.process_evidence,
+            cleanup_status=args.cleanup_status or CleanupStatus.NOT_REQUIRED.value,
+            cleanup_evidence=args.cleanup_evidence,
+            protocol_token_verified=args.protocol_token_verified,
+        )
+        evidence = args.evidence or args.workload_evidence or args.process_evidence or args.cleanup_evidence
+    else:
+        if args.exit_code is None:
+            raise ValueError('legacy validation recording requires --exit-code, or provide the rich workload/process execution fields')
+        evidence = args.evidence
+    if not (evidence and str(evidence).strip()):
+        raise ValueError('validation-record requires concise observable evidence')
+    validation_id = store.record_host_validation(
+        plan_id, generation, command, args.exit_code, cwd=cwd, evidence=str(evidence), observation=observation
+    )
+    record = store.latest_validation() or {}
+    emit_ok({
+        'validation_id': validation_id,
+        'cwd': str(cwd),
+        'observed_exit_code': record.get('observed_exit_code'),
+        'workload_status': record.get('workload_status'),
+        'process_status': record.get('process_status'),
+        'cleanup_status': record.get('cleanup_status'),
+        'warnings': json.loads(record.get('warnings_json') or '[]'),
+        'bookkeeping_inferred': inferred,
+    })
     return 0
 
 
@@ -343,6 +446,14 @@ def _cmd_workspace_sync_offer(argv: list[str]) -> int:
     })
     return 0
 
+def _cmd_deployment_provenance_verify(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py deployment-provenance-verify')
+    p.add_argument('--skill-root', required=True)
+    args = p.parse_args(argv[1:])
+    emit_ok(verify_installed_skill(Path(args.skill_root).resolve()))
+    return 0
+
+
 def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py skill-deploy-handoff')
     p.add_argument('--cwd')
@@ -386,19 +497,42 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
 
 
 
+def _cmd_interaction_route(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py interaction-route')
+    p.add_argument('--requires-web-interaction', action='store_true')
+    p.add_argument('--explicit-target', choices=['cloud_browser', 'local_chrome'])
+    p.add_argument('--task-requires-local-session', action='store_true')
+    p.add_argument('--available-target', action='append', default=[])
+    p.add_argument('--local-computer-authorized', action='store_true')
+    args = p.parse_args(argv[1:])
+    emit_ok(resolve_interaction_target(
+        requires_web_interaction=args.requires_web_interaction,
+        explicit_target=args.explicit_target,
+        task_requires_local_session=args.task_requires_local_session,
+        available_targets=args.available_target,
+        local_computer_authorized=args.local_computer_authorized,
+    ))
+    return 0
+
+
 def _cmd_persistence_export(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py persistence-export')
     p.add_argument('--cwd')
     p.add_argument('--task-id')
     p.add_argument('--backend', default='off', choices=['off', 'google_drive'])
     p.add_argument('--repository')
+    p.add_argument('--source-commit')
+    p.add_argument('--source-tree')
     p.add_argument('--ttl-days', type=int)
     args = p.parse_args(argv[1:])
     if args.backend == 'off':
         emit_ok(persistence_policy('off'))
         return 0
     cwd, root, store = _scope_from_argv(argv)
-    manifest = build_state_manifest(root, cwd, store, backend=args.backend, repository=args.repository, ttl_days=args.ttl_days)
+    manifest = build_state_manifest(
+        root, cwd, store, backend=args.backend, repository=args.repository,
+        source_commit=args.source_commit, source_tree=args.source_tree, ttl_days=args.ttl_days,
+    )
     path = write_state_manifest(store, manifest)
     emit_ok({
         'backend': args.backend,
@@ -424,6 +558,36 @@ def _cmd_persistence_validate(argv: list[str]) -> int:
         'resume': manifest.get('resume', {}),
         'rule': 'treat this as recovery evidence; reconcile current workspace/tool/external state before resuming',
     })
+    return 0
+
+
+def _cmd_persistence_resume_plan(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py persistence-resume-plan')
+    p.add_argument('--manifest', required=True)
+    args = p.parse_args(argv[1:])
+    manifest = load_state_manifest(Path(args.manifest).resolve())
+    emit_ok(build_resume_plan(manifest))
+    return 0
+
+
+def _cmd_persistence_resume(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py persistence-resume')
+    p.add_argument('--cwd')
+    p.add_argument('--manifest', required=True)
+    p.add_argument('--observations-json', required=True)
+    args = p.parse_args(argv[1:])
+    cwd = _cwd(args.cwd)
+    root = repo_root(cwd)
+    manifest = load_state_manifest(Path(args.manifest).resolve())
+    observation_path = Path(args.observations_json).resolve()
+    payload = observation_path.read_bytes()
+    if len(payload) > 256 * 1024:
+        raise ValueError('resume observations exceed 256 KiB')
+    try:
+        observations = json.loads(payload.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError('resume observations must be valid UTF-8 JSON') from exc
+    emit_ok(resume_state_manifest(root, manifest, observations))
     return 0
 
 
@@ -570,10 +734,14 @@ def main() -> int:
             return _cmd_lifecycle_assess(argv)
         if argv[0] == 'next':
             return _cmd_next(argv)
+        if argv[0] == 'host-config':
+            return _cmd_host_config(argv)
         if argv[0] == 'progress-config':
             return _cmd_progress_config(argv)
         if argv[0] == 'progress-policy':
             return _cmd_progress_policy(argv)
+        if argv[0] == 'interaction-route':
+            return _cmd_interaction_route(argv)
         if argv[0] == 'validate':
             return _cmd_validate(argv)
         if argv[0] == 'validation-record':
@@ -582,6 +750,10 @@ def main() -> int:
             return _cmd_persistence_export(argv)
         if argv[0] == 'persistence-validate':
             return _cmd_persistence_validate(argv)
+        if argv[0] == 'persistence-resume-plan':
+            return _cmd_persistence_resume_plan(argv)
+        if argv[0] == 'persistence-resume':
+            return _cmd_persistence_resume(argv)
         if argv[0] == 'persistence-cleanup-plan':
             return _cmd_persistence_cleanup_plan(argv)
         if argv[0] == 'objective-audit':
@@ -602,6 +774,8 @@ def main() -> int:
             return _cmd_workspace_sync_offer(argv)
         if argv[0] == 'skill-deploy-handoff':
             return _cmd_skill_deploy_handoff(argv)
+        if argv[0] == 'deployment-provenance-verify':
+            return _cmd_deployment_provenance_verify(argv)
         if argv[0] == 'relay-frame':
             return _cmd_relay_frame(argv)
         if argv[0] == 'relay-receive':

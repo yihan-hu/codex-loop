@@ -15,7 +15,9 @@ The runtime command `persistence-export --backend google_drive` creates a privat
 
 The manifest is schema-whitelisted. It may contain the objective, criterion text/status, task/profile/generation metadata, repository commit/tree lineage, bounded resume metadata, and external-action state with the action identity hashed. It must not contain chain of thought, hidden system/developer instructions, credentials/tokens/cookies, raw tool transcripts, approval/session nonces, environment secrets, or a raw external-action identity.
 
-A new conversation may download a manifest through the host connector, run `persistence-validate`, then use the manifest as bootstrap/reconciliation evidence. Current GitHub/workspace/tool facts always override stale persisted assumptions. Never blindly repeat a non-idempotent action because a persisted manifest says it was pending; reconcile the external system first.
+A new conversation may download a manifest through the host connector and run `persistence-validate`, but deterministic recovery must continue through `persistence-resume-plan` and `persistence-resume`; see `persistence-resume.md`. Resume creates a new freshness domain rather than reopening the old database. Previous criterion PASS, validation, review, and objective-audit evidence becomes stale/historical. Current GitHub/workspace/tool facts always override persisted assumptions. Never blindly repeat a non-idempotent action because a manifest says it was dispatched or outcome-unknown; reconcile the external system first.
+
+Task persistence and Host Profile persistence are separate control planes. The task manifest contains objective/lifecycle recovery evidence; `host.json` contains private user preferences/locators. They must never be merged into one cloud object or truth source. Optional Host Profile cloud sync, if later enabled, must use a private location and never the public-read GitHub staging folder.
 
 ## Cleanup lifecycle
 

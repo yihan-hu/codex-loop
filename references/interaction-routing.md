@@ -24,6 +24,18 @@ Choose the narrowest target needed by the task:
 
 A valid combination is `workspace_mode=web` plus `interaction_target=local_chrome`. In that case source edits, tests, packaging, and publication remain Web-mode operations even though browser validation happens on the Mac.
 
+Resolve browser targets in this precedence order:
+
+```text
+explicit user target
+> task hard requirement
+> Private Host Profile preference
+> built-in default
+> capability degradation
+```
+
+The built-in preference is `cloud_browser`; read `host-profile.md` for the private schema. A preference is not a capability claim. If Cloud Browser is unavailable, do not silently select `local_chrome`. Local Chrome is surfaced only when the task specifically needs the user's signed-in/local session, and interaction still requires explicit current-task computer-use authorization. The profile field `allow_local_chrome_fallback` is only permission to surface that option, never permission to interact.
+
 ## Explicit computer-use authorization
 
 Do not perform the first `local_chrome` or `local_mac_gui` interaction action until the user has explicitly authorized computer use for the current task. Explicit authorization may be embedded in the task itself, for example: “use my local Chrome to verify the signed-in flow” or “use computer use on my Mac for this step.”

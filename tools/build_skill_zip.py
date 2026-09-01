@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Build the installable Codex Loop runtime Skill archive.
-
-The repository contains development-only files that must not be carried into the
-ChatGPT Skill package. This builder emits one deterministic ``skill.zip``-style
-archive rooted at ``codex-loop/`` and containing only runtime resources.
-"""
+"""Build a deterministic, provenance-bound Codex Loop Skill archive."""
 
 from __future__ import annotations
 
@@ -16,10 +11,22 @@ import sys
 import zipfile
 from pathlib import Path, PurePosixPath
 
-ROOT_FILES = ("ATTRIBUTION.md", "LICENSE", "NOTICE", "SKILL.md")
-RUNTIME_DIRS = ("agents", "assets", "references", "scripts")
-IGNORED_PARTS = {"__pycache__"}
-IGNORED_SUFFIXES = {".pyc", ".pyo"}
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from codex_loop_runtime.deployment_manifest import (
+    DEPLOYMENT_MANIFEST_REL,
+    IGNORED_PARTS,
+    IGNORED_SUFFIXES,
+    ROOT_FILES,
+    RUNTIME_DIRS,
+    build_deployment_manifest,
+    deployment_manifest_bytes,
+    runtime_files,
+)
+
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 
 
@@ -32,30 +39,7 @@ def _skill_name(skill_md: Path) -> str:
 
 
 def _runtime_files(source: Path) -> list[Path]:
-    files: list[Path] = []
-    for name in ROOT_FILES:
-        path = source / name
-        if not path.is_file():
-            raise ValueError(f"required runtime file missing: {name}")
-        files.append(path)
-
-    for dirname in RUNTIME_DIRS:
-        directory = source / dirname
-        if not directory.is_dir():
-            raise ValueError(f"required runtime directory missing: {dirname}/")
-        for path in directory.rglob("*"):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(source)
-            if any(part in IGNORED_PARTS for part in rel.parts):
-                continue
-            if path.suffix in IGNORED_SUFFIXES:
-                continue
-            if path.is_symlink():
-                raise ValueError(f"symlinks are not allowed in Skill packages: {rel}")
-            files.append(path)
-
-    return sorted(set(files), key=lambda p: p.relative_to(source).as_posix())
+    return runtime_files(source)
 
 
 def _validate_chatgpt_metadata(source: Path) -> None:
@@ -75,7 +59,22 @@ def _validate_chatgpt_metadata(source: Path) -> None:
         raise ValueError("agents/openai.yaml must not include the legacy policy.products override")
 
 
-def build_skill_zip(source: Path, output: Path) -> dict[str, object]:
+def _zip_info(path: str) -> zipfile.ZipInfo:
+    info = zipfile.ZipInfo(path, FIXED_ZIP_TIME)
+    info.create_system = 3
+    info.external_attr = 0o100644 << 16
+    info.compress_type = zipfile.ZIP_DEFLATED
+    return info
+
+
+def build_skill_zip(
+    source: Path,
+    output: Path,
+    *,
+    repository: str,
+    commit: str,
+    tree: str,
+) -> dict[str, object]:
     source = source.resolve()
     output = output.resolve()
     name = _skill_name(source / "SKILL.md")
@@ -83,6 +82,14 @@ def build_skill_zip(source: Path, output: Path) -> dict[str, object]:
         raise ValueError(f"unexpected Skill name: {name}")
     _validate_chatgpt_metadata(source)
     files = _runtime_files(source)
+    manifest = build_deployment_manifest(
+        source,
+        repository=repository,
+        commit=commit,
+        tree=tree,
+        skill_name=name,
+    )
+    manifest_payload = deployment_manifest_bytes(manifest)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp = output.with_suffix(output.suffix + ".tmp")
@@ -90,33 +97,49 @@ def build_skill_zip(source: Path, output: Path) -> dict[str, object]:
         with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
             for path in files:
                 rel = PurePosixPath(name) / PurePosixPath(path.relative_to(source).as_posix())
-                info = zipfile.ZipInfo(rel.as_posix(), FIXED_ZIP_TIME)
-                info.create_system = 3
-                # Match the user-verified ChatGPT package: regular files are archived as 0644.
-                info.external_attr = 0o100644 << 16
-                info.compress_type = zipfile.ZIP_DEFLATED
-                archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+                archive.writestr(_zip_info(rel.as_posix()), path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+            generated_rel = PurePosixPath(name) / PurePosixPath(DEPLOYMENT_MANIFEST_REL.as_posix())
+            archive.writestr(_zip_info(generated_rel.as_posix()), manifest_payload, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
         os.replace(tmp, output)
     finally:
         if tmp.exists():
             tmp.unlink()
 
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    return {"output": str(output), "sha256": digest, "file_count": len(files), "skill_name": name}
+    return {
+        "output": str(output),
+        "sha256": digest,
+        "file_count": len(files) + 1,
+        "runtime_file_count": len(files),
+        "skill_name": name,
+        "source": manifest["source"],
+        "bundle_manifest_sha256": manifest["bundle"]["manifest_sha256"],
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default=".", help="repository root (default: current directory)")
     parser.add_argument("--output", required=True, help="output ZIP path")
+    parser.add_argument("--source-repository", required=True, help="exact GitHub OWNER/REPO")
+    parser.add_argument("--source-commit", required=True, help="verified full 40-hex source commit")
+    parser.add_argument("--source-tree", required=True, help="verified full 40-hex source tree")
     args = parser.parse_args(argv)
     try:
-        result = build_skill_zip(Path(args.source), Path(args.output))
+        result = build_skill_zip(
+            Path(args.source), Path(args.output),
+            repository=args.source_repository,
+            commit=args.source_commit,
+            tree=args.source_tree,
+        )
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"built {result['output']}")
-    print(f"skill={result['skill_name']} files={result['file_count']} sha256={result['sha256']}")
+    print(
+        f"skill={result['skill_name']} files={result['file_count']} sha256={result['sha256']} "
+        f"source={result['source']['repository']}@{result['source']['commit']} tree={result['source']['tree']}"
+    )
     return 0
 
 

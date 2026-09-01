@@ -44,7 +44,7 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text()
         deployment = (ROOT / "references" / "skill-deployment.md").read_text()
         verified_git = (ROOT / "references" / "verified-native-git.md").read_text()
-        self.assertIn("A new conversation starts in **web mode**", skill)
+        self.assertIn("a new conversation starts in **web mode**", skill)
         self.assertIn("later repository tasks in the same conversation inherit the baseline", skill)
         self.assertIn("A new conversation resets to web mode", skill)
         self.assertIn("Local mode is explicit once per conversation", deployment)

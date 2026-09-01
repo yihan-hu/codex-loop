@@ -107,6 +107,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
             git_mutation_reason=args.git_mutation_reason,
             git_mutation_scope={"head": args.allow_git_head, "branch": args.allow_git_branch, "index": args.allow_git_index},
             no_validation_reason=args.no_validation_reason,
+            requires_clean_process_exit=args.require_clean_process_exit,
         )
         # New CLI-bootstrapped tasks adopt the upstream Codex goal completion-audit
         # contract. Legacy/direct StateStore fixtures remain readable and do not
@@ -672,7 +673,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex_loop.py")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--objective", required=True); p.add_argument("--criterion", action="append"); p.add_argument("--profile", default="regular"); p.add_argument("--no-validation", action="store_true"); p.add_argument("--no-validation-reason"); p.add_argument("--allow-git-head", action="store_true"); p.add_argument("--allow-git-branch", action="store_true"); p.add_argument("--allow-git-index", action="store_true"); p.add_argument("--git-mutation-reason"); p.set_defaults(func=cmd_bootstrap)
+    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--objective", required=True); p.add_argument("--criterion", action="append"); p.add_argument("--profile", default="regular"); p.add_argument("--no-validation", action="store_true"); p.add_argument("--no-validation-reason"); p.add_argument("--require-clean-process-exit", action="store_true"); p.add_argument("--allow-git-head", action="store_true"); p.add_argument("--allow-git-branch", action="store_true"); p.add_argument("--allow-git-index", action="store_true"); p.add_argument("--git-mutation-reason"); p.set_defaults(func=cmd_bootstrap)
     for name, func in [("snapshot", cmd_snapshot), ("instructions", cmd_instructions), ("changes", cmd_changes), ("completion", cmd_completion), ("checkpoint-restore", cmd_checkpoint_restore), ("service-start", cmd_service_start), ("service-stop", cmd_service_stop), ("shell-snapshot", cmd_shell_snapshot), ("cleanup", cmd_cleanup)]:
         p = sub.add_parser(name); _add_scope(p); p.set_defaults(func=func)
         if name == "instructions": p.add_argument("--fallback", action="append")

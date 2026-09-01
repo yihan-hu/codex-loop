@@ -131,13 +131,22 @@ The waiver is bound to the current generation and exact opaque-path set. A chang
 python scripts/codex_loop.py validate --cwd REPO -- pytest -q
 ```
 
-For normal test/build commands this returns a host-visible execution request without exposing plan/generation bookkeeping. After running that exact command through the host:
+For normal test/build commands this returns a host-visible execution request plus an `execution_policy`. After running that exact command through the host, record independent workload/process/cleanup facts when available:
 
 ```bash
 python scripts/codex_loop.py validation-record --cwd REPO/package-a \
-  --command-json '["pytest","-q"]' --exit-code 0 \
-  --evidence "host pytest completed with exit code 0 from REPO/package-a"
+  --command-json '["pytest","-q"]' \
+  --workload-status PASSED \
+  --workload-evidence-kind framework_authoritative \
+  --workload-evidence '237 passed in 18.41s' \
+  --workload-adapter pytest-terminal-summary-v1 \
+  --process-status TEARDOWN_STALLED \
+  --process-evidence 'process remained alive after terminal result' \
+  --cleanup-status SUCCEEDED \
+  --cleanup-evidence 'owned process group terminated after grace'
 ```
+
+For an ordinary command that exits normally, `--exit-code 0 --evidence ...` remains the compatibility path. Do not use progress-only output such as `100%` to create `PASSED`; framework evidence requires a named adapter and explicit-protocol evidence requires capture-layer token verification. See `execution-supervision.md`.
 
 The facade resolves the unique unconsumed plan matching the current generation, cwd, and exact argv identity, then consumes it through the original safety-kernel checks. Repeated planning of the same current generation/cwd/exact command reuses the existing unconsumed plan, so ordinary retries do not manufacture agent-visible ambiguity. Zero matches (no valid plan) and legacy/corrupt multiple matches both fail closed. The underlying `plan_id` remains a one-time host-validation capability bound to generation, cwd, and exact argv; workspace mutation still makes the result stale. For compatibility/audit debugging, `validate --debug-bookkeeping` exposes `plan_id`/generation and `validation-record` still accepts explicit `--plan-id`/`--generation`. Approval-cache shell canonicalization is deliberately not used for validation equivalence. A failing validation may be made non-blocking only when it was actually observed at generation 0:
 
@@ -183,9 +192,23 @@ Allowed statuses are `proven`, `contradicted`, `incomplete`, `weak`, and `missin
 
 The runtime deliberately does not understand domain-specific workflow internals. If the objective names another Skill, gate, invariant, or deliverable, record the authoritative evidence proving that requirement rather than adding a domain-specific dependency mechanism to Codex Loop.
 
+## Private Host Profile
+
+All non-sensitive user-instance preferences/locators share one schema-v2 file. Read/write it through:
+
+```bash
+python3 scripts/codex_loop.py host-config show
+python3 scripts/codex_loop.py host-config get browser.preferred_target
+python3 scripts/codex_loop.py host-config set browser.preferred_target cloud_browser
+python3 scripts/codex_loop.py host-config unset web_publish.staging_folder_id
+python3 scripts/codex_loop.py host-config reset progress_visibility
+```
+
+Missing/unsafe configuration degrades to built-in safe defaults for reads; writes fail closed on malformed/unsafe existing files. Preferences never assert current capability, permission, grant, or Local-mode selection. See `host-profile.md`.
+
 ## Progress visibility configuration
 
-Progress behavior is host-facing policy with enhanced defaults for durable objectives and low-noise defaults for direct work. The effective user configuration lives outside the repository in the private host config.
+Progress behavior is host-facing policy with enhanced defaults for durable objectives and low-noise defaults for direct work. The effective user configuration lives outside the repository in the unified private Host Profile (`host-profile.md`). `progress-config` is a compatibility facade.
 
 ```bash
 python3 scripts/codex_loop.py progress-config
@@ -194,19 +217,21 @@ python3 scripts/codex_loop.py progress-config --mode enhanced --interval-seconds
 python3 scripts/codex_loop.py progress-config --reset
 ```
 
-`progress-config` writes only `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`) with private file permissions and preserves unrelated host config keys. Invalid existing JSON is never overwritten. `progress-policy` treats invalid/missing progress configuration as a non-blocking preference failure and falls back to enhanced defaults. See `progress-visibility.md`.
+`progress-config` writes only the `progress_visibility` section of `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`) with private file permissions and preserves the other schema-v2 Host Profile sections. Invalid existing JSON is never overwritten. `progress-policy` treats invalid/missing preference configuration as non-blocking and falls back to enhanced defaults. See `host-profile.md` and `progress-visibility.md`.
 
 ## Optional state-only persistence
 
 Persistence is off by default and Drive credentials remain host-owned. For an explicitly enabled durable task:
 
 ```bash
-python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_drive --repository OWNER/REPO
+python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_drive --repository OWNER/REPO --source-commit FULL_COMMIT --source-tree FULL_TREE
 python3 scripts/codex_loop.py persistence-validate --manifest /PRIVATE/TEMP/state-only.json
+python3 scripts/codex_loop.py persistence-resume-plan --manifest /PRIVATE/TEMP/state-only.json
+python3 scripts/codex_loop.py persistence-resume --cwd REPO --manifest /PRIVATE/TEMP/state-only.json --observations-json observations.json
 python3 scripts/codex_loop.py persistence-cleanup-plan --manifest /PRIVATE/TEMP/state-only.json
 ```
 
-`persistence-export` writes only to the task-private runtime directory and returns a path for host connector upload. `--backend off` creates no file and reports the default-disabled policy. The Google Drive connector owns upload/download/list/Trash operations and all authentication. A validated manifest is recovery evidence only; reconcile current workspace, instructions, and external actions before resuming. See `references/persistence.md`.
+`persistence-export` writes only to the task-private runtime directory and returns a path for host connector upload. `--backend off` creates no file and reports the default-disabled policy. The Google Drive connector owns upload/download/list/Trash operations and all authentication. `persistence-resume-plan` lists facts the host must re-observe; `persistence-resume` creates a new task/freshness domain and never restores old PASS/validation/review/audit evidence as current. See `persistence.md` and `persistence-resume.md`.
 
 ## External/host actions
 
@@ -250,6 +275,18 @@ state    = planned
 It returns `DEPLOY_PENDING`, a preferred supported host-managed Skill update action, and a `surface_save_update_ui` fallback. The planned external action is intentionally completion-blocking. If a host-managed update or Save/Update handoff is actually initiated, advance that same action to `dispatched`; record `terminal_success` only after observable evidence shows the intended Skill revision is active. Repeating the handoff for the same Skill/commit deduplicates to the existing action.
 
 The handoff never manufactures deployment permission and never authorizes browser automation. If completing the update requires computer use, the normal explicit current-task computer-use gate still applies. If no update surface exists, leave the action unresolved and report `DEPLOY_PENDING` rather than silently accepting a newer GitHub revision than the active workspace Skill.
+
+## Deployment provenance
+
+Codex Loop Skill ZIPs are provenance-bound after verified source publication:
+
+```bash
+python3 tools/build_skill_zip.py --source REPO --output skill.zip \
+  --source-repository OWNER/REPO --source-commit FULL_COMMIT --source-tree FULL_TREE
+python3 scripts/codex_loop.py deployment-provenance-verify --skill-root UNPACKED_SKILL
+```
+
+The ZIP contains build-generated `references/deployment-manifest.json` with exact repository/commit/tree and runtime file-manifest SHA-256. That file is not committed; package SHA-256 remains external receipt evidence. See `deployment-provenance.md`.
 
 ## Managed process sessions
 

@@ -46,6 +46,21 @@
       "upgrade_path": "Project Codex Loop events from authoritative runtime state and replace host-gap adapters when equivalent lifecycle hooks become available."
     },
     {
+      "id": "execution_lifetime_separation",
+      "layer": "control_plane",
+      "paths": [
+        "codex-rs/core/src/exec.rs"
+      ],
+      "required_patterns": [
+        "ExecExpiration",
+        "kill_child_process_group",
+        "IO_DRAIN_TIMEOUT_MS"
+      ],
+      "status": "PARTIAL",
+      "divergence": "Codex Loop now separates workload, process, and cleanup outcomes and reuses owned process-group cleanup where its local supervisor can observe it, but ChatGPT host-visible commands do not universally expose Codex's native exec/process-group lifetime primitives.",
+      "upgrade_path": "Bind ExecutionObservation directly to native host exec lifecycle metadata/process ownership when exposed; keep workload terminal evidence independent from process termination and remove host-gap adapters rather than adding framework-specific forced-exit wrappers."
+    },
+    {
       "id": "app_server_events",
       "layer": "control_plane",
       "paths": [

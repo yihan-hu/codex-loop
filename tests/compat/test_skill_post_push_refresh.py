@@ -95,6 +95,19 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--details-json",
                 json.dumps({"observed": "current workspace Skill reports the pushed revision"}),
             )
+            call(
+                root,
+                "objective-audit",
+                "--audit-json",
+                json.dumps({
+                    "requirements": [{
+                        "requirement": "reconcile deployed skill",
+                        "status": "proven",
+                        "evidence": "current workspace Skill reports the pushed revision",
+                        "authoritative_source": "host deployment observation",
+                    }]
+                }),
+            )
             done, _ = call(root, "completion")
             self.assertEqual(done["data"]["status"], "PASS")
 

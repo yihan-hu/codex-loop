@@ -24,11 +24,15 @@ When the workflow asks for a second-opinion worker, enter a bounded read-only is
 
 ## Observe again
 
-Inspect exit status, stderr, output, process state, changed files, and external results. Do not infer success from a syntactically valid command.
+Inspect workload evidence, process/cleanup state, exit status when present, stderr/output, changed files, and external results. Workload completion and process termination are independent facts. Do not infer success from a syntactically valid command or from progress-only output such as `100%`; read `execution-supervision.md` when terminal workload evidence appears before process exit.
 
 ## Verify
 
-Run the smallest validation that demonstrates the requested behavior from the intended cwd. The agent-facing validation flow records the exact command and observed result while the runtime internally resolves and consumes the one-time validation plan/generation bookkeeping. Validation identity still includes exact argv plus cwd and is attached to a mutation generation; any later mutation invalidates its freshness. Acceptance-criterion and steer evidence is also generation-bound and must be re-evaluated after mutation.
+Run the smallest validation that demonstrates the requested behavior from the intended cwd. The agent-facing validation flow records exact command identity and an `ExecutionObservation` when the host can distinguish workload, process, and cleanup outcomes; ordinary exit-code-only results remain compatibility observations. Generic teardown/lifecycle pathology is handled by execution supervision rather than an agent-invented forced-exit wrapper. Validation identity still includes exact argv plus cwd and is attached to a mutation generation; any later mutation invalidates its freshness. Acceptance-criterion and steer evidence is also generation-bound and must be re-evaluated after mutation.
+
+## Resume after persistence
+
+When recovering across conversations, do not manually reconstruct an old task as current truth. Run `persistence-resume-plan`, observe the required current facts, then `persistence-resume`. Treat old criterion PASS/validation/review/audit as historical; current source and external-action reality always wins. Never retry a persisted dispatched/outcome-unknown non-idempotent action before reconciliation.
 
 ## Review
 

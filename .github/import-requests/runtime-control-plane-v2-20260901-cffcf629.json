@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "transfer_id": "codex-loop-runtime-control-plane-v2-20260901-cffcf629",
-  "file_id": "1o1SS-Y7Mrh2IaNNVhf59uWy0zDMpaUnk",
-  "size": 280712,
-  "sha256": "88a3e8df2aef07bd09736a32239bbf58e5756d5eb428ce62dcf7102c623377dc",
-  "expected_base": "0b03c73a165451883c07843dcfbad70b705b102c",
-  "target_branch": "main"
-}

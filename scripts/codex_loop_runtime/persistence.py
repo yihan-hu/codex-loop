@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import shutil
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .state import StateStore, scrub_persisted_text
+from .change_tracker import capture_baseline
+from .release_lineage import capture_workspace_binding
+from .state import StateStore, create_store, scrub_persisted_text, set_active_task
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSIONS = {1}
 BACKENDS = {"off", "google_drive"}
 DEFAULT_TTL_DAYS = {
     "active": 30,
@@ -16,6 +22,10 @@ DEFAULT_TTL_DAYS = {
     "cancelled": 7,
     "abandoned": 14,
 }
+_SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
+_SHA64_RE = re.compile(r"^[0-9a-f]{64}$")
+_EXTERNAL_TERMINAL = {"terminal_success", "terminal_failure", "outcome_unknown"}
+_EXTERNAL_REQUIRES_RECONCILIATION = {"dispatched", "outcome_unknown"}
 
 
 def _utc_now(now: datetime | None = None) -> datetime:
@@ -32,7 +42,16 @@ def _iso(value: datetime) -> str:
 def _hash_identity(value: str | None) -> str | None:
     if not value:
         return None
-    return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+    text = str(value)
+    prefix = "resume-sha256:"
+    if text.startswith(prefix) and _SHA64_RE.fullmatch(text[len(prefix):]):
+        return text[len(prefix):]
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _canonical_sha256(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def persistence_policy(backend: str = "off") -> dict[str, Any]:
@@ -50,6 +69,19 @@ def persistence_policy(backend: str = "off") -> dict[str, Any]:
     }
 
 
+def _historical_summary(store: StateStore) -> dict[str, Any]:
+    with store.connect() as db:
+        row = db.execute("SELECT COUNT(*) AS n, MAX(generation) AS max_generation FROM validations").fetchone()
+    audit = store.get_meta("objective_completion_audit")
+    return {
+        "validation_count": int(row["n"]),
+        "latest_validation_generation": None if row["max_generation"] is None else int(row["max_generation"]),
+        "reviewed_generation": int(store.get_meta("changes_reviewed_generation", -1)),
+        "objective_audit_present": isinstance(audit, dict),
+        "freshness_on_resume": "HISTORICAL",
+    }
+
+
 def build_state_manifest(
     root: Path,
     cwd: Path,
@@ -57,6 +89,8 @@ def build_state_manifest(
     *,
     backend: str = "google_drive",
     repository: str | None = None,
+    source_commit: str | None = None,
+    source_tree: str | None = None,
     ttl_days: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -71,6 +105,15 @@ def build_state_manifest(
     checkpoint = store.latest_checkpoint()
     checkpoint_summary = checkpoint.get("summary", {}) if checkpoint else {}
     binding = store.get_meta("workspace_binding", {}) or {}
+
+    if source_commit is not None:
+        source_commit = str(source_commit).strip().lower()
+        if not _SHA40_RE.fullmatch(source_commit):
+            raise ValueError("source_commit must be a full 40-hex Git commit SHA")
+    if source_tree is not None:
+        source_tree = str(source_tree).strip().lower()
+        if not _SHA40_RE.fullmatch(source_tree):
+            raise ValueError("source_tree must be a full 40-hex Git tree SHA")
 
     criteria = []
     for item in store.criteria():
@@ -103,6 +146,9 @@ def build_state_manifest(
             "profile": str(store.get_meta("profile", "regular")),
             "generation": store.generation(),
             "plan_revision": int(store.get_meta("plan_revision", 0)),
+            "requires_validation": bool(store.get_meta("requires_validation", True)),
+            "no_validation_reason": scrub_persisted_text(store.get_meta("no_validation_reason"), limit=4096),
+            "requires_clean_process_exit": bool(store.get_meta("requires_clean_process_exit", False)),
         },
         "criteria": criteria,
         "external_actions": external_actions,
@@ -111,12 +157,16 @@ def build_state_manifest(
             "checkpoint_generation": None if checkpoint is None else int(checkpoint["generation"]),
             "next_action": scrub_persisted_text(checkpoint_summary.get("next_action"), limit=4096),
             "completion_status": (checkpoint_summary.get("completion") or {}).get("status"),
+            "lineage_policy": "fork_historical_state_under_current_reality",
         },
         "workspace": {
             "repository": scrub_persisted_text(repository, limit=512),
             "base_commit": binding.get("base_commit"),
             "base_tree": binding.get("base_tree"),
+            "source_commit": source_commit,
+            "source_tree": source_tree,
         },
+        "historical": _historical_summary(store),
         "privacy": {
             "contains_chain_of_thought": False,
             "contains_credentials": False,
@@ -125,11 +175,11 @@ def build_state_manifest(
             "external_action_identity_is_hashed": True,
         },
     }
-    return manifest
+    return validate_state_manifest(manifest)
 
 
 def write_state_manifest(store: StateStore, manifest: dict[str, Any]) -> Path:
-    validate_state_manifest(manifest)
+    manifest = validate_state_manifest(manifest)
     directory = store.path.parent / "persistence"
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = directory / "state-only.json"
@@ -141,15 +191,46 @@ def write_state_manifest(store: StateStore, manifest: dict[str, Any]) -> Path:
     return path
 
 
+def _migrate_v1(manifest: dict[str, Any]) -> dict[str, Any]:
+    migrated = deepcopy(manifest)
+    migrated["schema_version"] = SCHEMA_VERSION
+    task = migrated.setdefault("task", {})
+    task.setdefault("requires_validation", True)
+    task.setdefault("no_validation_reason", None)
+    task.setdefault("requires_clean_process_exit", False)
+    resume = migrated.setdefault("resume", {})
+    resume.setdefault("lineage_policy", "fork_historical_state_under_current_reality")
+    workspace = migrated.setdefault("workspace", {})
+    workspace.setdefault("source_commit", None)
+    workspace.setdefault("source_tree", None)
+    migrated.setdefault("historical", {
+        "validation_count": None,
+        "latest_validation_generation": None,
+        "reviewed_generation": None,
+        "objective_audit_present": None,
+        "freshness_on_resume": "HISTORICAL",
+    })
+    return migrated
+
+
 def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ValueError("persistence manifest must be a JSON object")
-    allowed_top = {"schema_version", "kind", "created_at", "expires_at", "persistence", "task", "criteria", "external_actions", "resume", "workspace", "privacy"}
+    version = manifest.get("schema_version")
+    if version in LEGACY_SCHEMA_VERSIONS:
+        manifest = _migrate_v1(manifest)
+    elif version != SCHEMA_VERSION:
+        raise ValueError("unsupported persistence schema_version")
+    else:
+        manifest = deepcopy(manifest)
+
+    allowed_top = {
+        "schema_version", "kind", "created_at", "expires_at", "persistence", "task",
+        "criteria", "external_actions", "resume", "workspace", "historical", "privacy",
+    }
     extra_top = sorted(set(manifest) - allowed_top)
     if extra_top:
         raise ValueError(f"persistence manifest contains unsupported top-level fields: {extra_top}")
-    if manifest.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError("unsupported persistence schema_version")
     if manifest.get("kind") != "codex_loop_state_only":
         raise ValueError("unsupported persistence manifest kind")
     policy = manifest.get("persistence") or {}
@@ -159,13 +240,12 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("persistence credentials must remain host-owned")
     privacy = manifest.get("privacy") or {}
     forbidden_true = [
-        "contains_chain_of_thought",
-        "contains_credentials",
-        "contains_hidden_instructions",
-        "contains_tool_transcript",
+        "contains_chain_of_thought", "contains_credentials", "contains_hidden_instructions", "contains_tool_transcript",
     ]
     if any(bool(privacy.get(key)) for key in forbidden_true):
         raise ValueError("manifest declares forbidden private/session content")
+    if privacy.get("external_action_identity_is_hashed") is not True:
+        raise ValueError("external action identities must be hashed in persistence manifests")
     for key in ("created_at", "expires_at"):
         value = manifest.get(key)
         if not isinstance(value, str) or not value.endswith("Z"):
@@ -175,11 +255,13 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("criteria must be a list")
     if not isinstance(manifest.get("external_actions"), list):
         raise ValueError("external_actions must be a list")
+
     allowed_nested = {
         "persistence": {"backend", "enabled", "default_backend", "credentials_owner", "source_repository_contains_credentials", "mode", "workspace_snapshot", "cleanup"},
-        "task": {"task_id", "status", "objective", "profile", "generation", "plan_revision"},
-        "resume": {"checkpoint_present", "checkpoint_generation", "next_action", "completion_status"},
-        "workspace": {"repository", "base_commit", "base_tree"},
+        "task": {"task_id", "status", "objective", "profile", "generation", "plan_revision", "requires_validation", "no_validation_reason", "requires_clean_process_exit"},
+        "resume": {"checkpoint_present", "checkpoint_generation", "next_action", "completion_status", "lineage_policy"},
+        "workspace": {"repository", "base_commit", "base_tree", "source_commit", "source_tree"},
+        "historical": {"validation_count", "latest_validation_generation", "reviewed_generation", "objective_audit_present", "freshness_on_resume"},
         "privacy": {"contains_chain_of_thought", "contains_credentials", "contains_hidden_instructions", "contains_tool_transcript", "external_action_identity_is_hashed"},
     }
     for section, allowed in allowed_nested.items():
@@ -189,12 +271,47 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         extra = sorted(set(value) - allowed)
         if extra:
             raise ValueError(f"{section} contains unsupported fields: {extra}")
+
+    task = manifest["task"]
+    if not str(task.get("objective") or "").strip():
+        raise ValueError("manifest task objective must not be empty")
+    if not isinstance(task.get("requires_validation"), bool):
+        raise ValueError("task.requires_validation must be boolean")
+    if not isinstance(task.get("requires_clean_process_exit"), bool):
+        raise ValueError("task.requires_clean_process_exit must be boolean")
+    if not task["requires_validation"] and not str(task.get("no_validation_reason") or "").strip():
+        raise ValueError("no-validation task requires no_validation_reason")
+
     criterion_keys = {"ordinal", "text", "status"}
     action_keys = {"kind", "action_class", "state", "identity_sha256", "failure_resolved"}
     if any(not isinstance(item, dict) or set(item) - criterion_keys for item in manifest["criteria"]):
         raise ValueError("criteria contains unsupported fields")
     if any(not isinstance(item, dict) or set(item) - action_keys for item in manifest["external_actions"]):
         raise ValueError("external_actions contains unsupported fields")
+    for item in manifest["criteria"]:
+        if not str(item.get("text") or "").strip():
+            raise ValueError("criteria text must not be empty")
+    for item in manifest["external_actions"]:
+        if not str(item.get("kind") or "").strip():
+            raise ValueError("external action kind must not be empty")
+        if item.get("action_class") not in {"read_only", "recheckable", "external_non_idempotent"}:
+            raise ValueError("external action contains invalid action_class")
+        if item.get("state") not in {"planned", "dispatched", "terminal_success", "terminal_failure", "outcome_unknown", "cancelled_before_dispatch"}:
+            raise ValueError("external action contains invalid state")
+        identity_hash = item.get("identity_sha256")
+        if identity_hash is not None and not _SHA64_RE.fullmatch(str(identity_hash)):
+            raise ValueError("external action identity_sha256 must be a 64-hex hash")
+        if item.get("action_class") == "external_non_idempotent" and not identity_hash:
+            raise ValueError("non-idempotent persisted action requires hashed stable identity")
+
+    for key in ("base_commit", "base_tree", "source_commit", "source_tree"):
+        value = manifest["workspace"].get(key)
+        if value is not None and not _SHA40_RE.fullmatch(str(value).lower()):
+            raise ValueError(f"workspace.{key} must be null or full 40-hex Git SHA")
+    if manifest["resume"].get("lineage_policy") != "fork_historical_state_under_current_reality":
+        raise ValueError("unsupported resume lineage policy")
+    if manifest["historical"].get("freshness_on_resume") != "HISTORICAL":
+        raise ValueError("persisted historical evidence must become HISTORICAL on resume")
     return manifest
 
 
@@ -206,7 +323,7 @@ def load_state_manifest(path: Path) -> dict[str, Any]:
 
 
 def cleanup_decision(manifest: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
-    validate_state_manifest(manifest)
+    manifest = validate_state_manifest(manifest)
     current = _utc_now(now)
     expires = datetime.fromisoformat(str(manifest["expires_at"]).replace("Z", "+00:00"))
     expired = current >= expires
@@ -221,4 +338,251 @@ def cleanup_decision(manifest: dict[str, Any], *, now: datetime | None = None) -
         "action": "retain_for_reconciliation" if unresolved else ("trash" if expired else "retain"),
         "permanent_delete": False,
         "rule": "trash-first; permanent deletion remains Drive/user policy",
+    }
+
+
+def build_resume_plan(manifest: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    manifest = validate_state_manifest(manifest)
+    workspace = manifest["workspace"]
+    required: list[dict[str, Any]] = [{"kind": "workspace_presence"}]
+    expected_commit = workspace.get("source_commit") or workspace.get("base_commit")
+    expected_tree = workspace.get("source_tree") or workspace.get("base_tree")
+    if expected_commit:
+        required.append({"kind": "repository_head", "expected": expected_commit})
+    if expected_tree:
+        required.append({"kind": "repository_tree", "expected": expected_tree})
+
+    unresolved_actions: list[dict[str, Any]] = []
+    for item in manifest["external_actions"]:
+        state = str(item.get("state"))
+        if state in _EXTERNAL_REQUIRES_RECONCILIATION or (state == "terminal_failure" and not item.get("failure_resolved")):
+            descriptor = {
+                "kind": str(item["kind"]),
+                "identity_sha256": item.get("identity_sha256"),
+                "historical_state": state,
+                "action_class": str(item["action_class"]),
+            }
+            unresolved_actions.append(descriptor)
+            required.append({"kind": "external_action_state", "action": descriptor})
+
+    expires = datetime.fromisoformat(str(manifest["expires_at"]).replace("Z", "+00:00"))
+    return {
+        "schema_version": 1,
+        "status": "NEEDS_RECONCILIATION" if required else "RESUMED",
+        "manifest_sha256": _canonical_sha256(manifest),
+        "manifest_expired": _utc_now(now) >= expires,
+        "prior_task_id": manifest["task"].get("task_id"),
+        "prior_generation": int(manifest["task"].get("generation", 0)),
+        "required_observations": required,
+        "unresolved_external_actions": unresolved_actions,
+        "freshness_rules": {
+            "criterion_pass": "STALE",
+            "validation": "HISTORICAL",
+            "change_review": "HISTORICAL",
+            "objective_audit": "HISTORICAL",
+            "capability_and_permission_state": "REOBSERVE",
+        },
+        "rule": "persisted state is historical recovery evidence; current observed reality is authoritative",
+    }
+
+
+def _validate_observations(value: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("resume observations must be a JSON object")
+    allowed = {"workspace_presence", "repository_head", "repository_tree", "external_actions"}
+    extra = sorted(set(value) - allowed)
+    if extra:
+        raise ValueError(f"resume observations contain unsupported fields: {extra}")
+    if "workspace_presence" not in value or not isinstance(value["workspace_presence"], bool):
+        raise ValueError("resume observations require boolean workspace_presence")
+    for key in ("repository_head", "repository_tree"):
+        item = value.get(key)
+        if item is not None and not _SHA40_RE.fullmatch(str(item).lower()):
+            raise ValueError(f"{key} must be null or a full 40-hex SHA")
+    actions = value.get("external_actions", [])
+    if not isinstance(actions, list):
+        raise ValueError("external_actions observation must be a list")
+    normalized: list[dict[str, Any]] = []
+    for item in actions:
+        if not isinstance(item, dict):
+            raise ValueError("external action observation must be an object")
+        extra_item = set(item) - {"kind", "identity_sha256", "state", "evidence"}
+        if extra_item:
+            raise ValueError(f"external action observation contains unsupported fields: {sorted(extra_item)}")
+        kind = str(item.get("kind") or "").strip()
+        identity_hash = str(item.get("identity_sha256") or "").strip().lower()
+        state = str(item.get("state") or "").strip()
+        evidence = (scrub_persisted_text(str(item.get("evidence") or ""), limit=4096) or "").strip()
+        if not kind or not _SHA64_RE.fullmatch(identity_hash):
+            raise ValueError("external action observation requires kind and identity_sha256")
+        if state not in _EXTERNAL_TERMINAL:
+            raise ValueError("external action observation state must be terminal_success, terminal_failure, or outcome_unknown")
+        if not evidence:
+            raise ValueError("external action observation requires concise current-reality evidence")
+        normalized.append({"kind": kind, "identity_sha256": identity_hash, "state": state, "evidence": evidence})
+    result = dict(value)
+    result["repository_head"] = None if value.get("repository_head") is None else str(value["repository_head"]).lower()
+    result["repository_tree"] = None if value.get("repository_tree") is None else str(value["repository_tree"]).lower()
+    result["external_actions"] = normalized
+    return result
+
+
+def _observation_by_identity(observations: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    return {
+        (str(item["kind"]), str(item["identity_sha256"])): item
+        for item in observations.get("external_actions", [])
+    }
+
+
+def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: dict[str, Any]) -> dict[str, Any]:
+    manifest = validate_state_manifest(manifest)
+    observations = _validate_observations(observations)
+    root = root.resolve()
+    if not observations["workspace_presence"]:
+        return {
+            "status": "NEEDS_RECONCILIATION",
+            "created_task": False,
+            "reason": "workspace_presence observation is false; refusing to bind recovery state to an absent workspace",
+        }
+
+    task = manifest["task"]
+    criteria = [str(item["text"]) for item in sorted(manifest["criteria"], key=lambda x: int(x["ordinal"]))]
+    store = create_store(root)
+    try:
+        store.configure_task(
+            store.path.parent.name,
+            str(task["objective"]),
+            criteria,
+            profile=str(task.get("profile") or "regular"),
+            requires_validation=bool(task.get("requires_validation", True)),
+            no_validation_reason=task.get("no_validation_reason"),
+            requires_clean_process_exit=bool(task.get("requires_clean_process_exit", False)),
+        )
+        store.set_meta("requires_objective_completion_audit", True)
+        store.set_meta("workspace_binding", capture_workspace_binding(root))
+        baseline_files = capture_baseline(root, store)
+
+        expected_commit = manifest["workspace"].get("source_commit") or manifest["workspace"].get("base_commit")
+        expected_tree = manifest["workspace"].get("source_tree") or manifest["workspace"].get("base_tree")
+        observed_commit = observations.get("repository_head")
+        observed_tree = observations.get("repository_tree")
+        source_diverged = bool(
+            (expected_commit and observed_commit is not None and observed_commit != expected_commit)
+            or (expected_tree and observed_tree is not None and observed_tree != expected_tree)
+        )
+        missing_source_observations: list[str] = []
+        if expected_commit and observed_commit is None:
+            missing_source_observations.append("repository_head")
+        if expected_tree and observed_tree is None:
+            missing_source_observations.append("repository_tree")
+
+        lookup = _observation_by_identity(observations)
+        unresolved_external: list[dict[str, Any]] = []
+        reconciled_external: list[dict[str, Any]] = []
+        for old in manifest["external_actions"]:
+            historical_state = str(old.get("state"))
+            needs_reconcile = historical_state in _EXTERNAL_REQUIRES_RECONCILIATION or (
+                historical_state == "terminal_failure" and not old.get("failure_resolved")
+            )
+            if not needs_reconcile:
+                continue
+            identity_hash = str(old.get("identity_sha256") or "")
+            identity = f"resume-sha256:{identity_hash}"
+            action_id = store.record_external(
+                str(old["kind"]),
+                "planned",
+                identity if identity_hash else None,
+                {"resume": True, "historical_state": historical_state},
+                action_class=str(old["action_class"]),
+            )
+            store.record_external(
+                str(old["kind"]), "dispatched", identity if identity_hash else None,
+                {"resume": True, "historical_state": historical_state, "dispatch_is_historical": True},
+                action_class=str(old["action_class"]), action_id=action_id,
+            )
+            observation = lookup.get((str(old["kind"]), identity_hash))
+            if historical_state == "terminal_failure":
+                store.record_external(
+                    str(old["kind"]), "terminal_failure", identity if identity_hash else None,
+                    {"resume": True, "historical_terminal_failure": True},
+                    action_class=str(old["action_class"]), action_id=action_id,
+                )
+                if observation and observation["state"] == "terminal_success":
+                    store.resolve_external_failure(action_id, observation["evidence"])
+                    reconciled_external.append({"kind": old["kind"], "identity_sha256": identity_hash, "observed": "terminal_success", "resolution": "historical_failure_resolved"})
+                elif observation and observation["state"] == "terminal_failure":
+                    unresolved_external.append({"kind": old["kind"], "identity_sha256": identity_hash, "state": "terminal_failure"})
+                else:
+                    unresolved_external.append({"kind": old["kind"], "identity_sha256": identity_hash, "state": observation["state"] if observation else "missing_observation"})
+                continue
+
+            if observation:
+                store.record_external(
+                    str(old["kind"]), observation["state"], identity if identity_hash else None,
+                    {"resume": True, "current_reality_evidence": observation["evidence"]},
+                    action_class=str(old["action_class"]), action_id=action_id,
+                )
+                if observation["state"] in {"terminal_success", "terminal_failure"}:
+                    reconciled_external.append({"kind": old["kind"], "identity_sha256": identity_hash, "observed": observation["state"]})
+                if observation["state"] in {"outcome_unknown", "terminal_failure"}:
+                    unresolved_external.append({"kind": old["kind"], "identity_sha256": identity_hash, "state": observation["state"]})
+            else:
+                unresolved_external.append({"kind": old["kind"], "identity_sha256": identity_hash, "state": "missing_observation"})
+
+        lineage = {
+            "resumed": True,
+            "resume_source_manifest_sha256": _canonical_sha256(manifest),
+            "resume_source_task": task.get("task_id"),
+            "prior_generation": int(task.get("generation", 0)),
+            "current_generation": 0,
+            "resume_epoch": 1,
+            "freshness_domain": "new_task",
+        }
+        store.set_meta("resume_lineage", lineage)
+        store.set_meta("historical_recovery_evidence", {
+            "criteria_statuses": [str(item.get("status")) for item in manifest["criteria"]],
+            "historical": manifest["historical"],
+            "validation": "HISTORICAL",
+            "change_review": "HISTORICAL",
+            "objective_audit": "HISTORICAL",
+        })
+        store.set_meta("resume_source_observation", {
+            "expected_commit": expected_commit,
+            "expected_tree": expected_tree,
+            "observed_commit": observed_commit,
+            "observed_tree": observed_tree,
+            "source_diverged": source_diverged,
+        })
+        store.set_meta("resume_reconciliation", {
+            "missing_source_observations": missing_source_observations,
+            "unresolved_external": unresolved_external,
+            "reconciled_external": reconciled_external,
+        })
+        set_active_task(root, store.task_id)
+    except Exception:
+        shutil.rmtree(store.path.parent, ignore_errors=True)
+        raise
+
+    if source_diverged:
+        status = "SOURCE_DIVERGED"
+    elif unresolved_external:
+        status = "EXTERNAL_ACTION_UNRESOLVED"
+    elif missing_source_observations:
+        status = "NEEDS_RECONCILIATION"
+    else:
+        status = "RESUMED"
+    return {
+        "status": status,
+        "created_task": True,
+        "task_id": store.task_id,
+        "state": str(store.path),
+        "baseline_files": baseline_files,
+        "lineage": lineage,
+        "source_diverged": source_diverged,
+        "missing_source_observations": missing_source_observations,
+        "unresolved_external_actions": unresolved_external,
+        "reconciled_external_actions": reconciled_external,
+        "criteria_restored_as": "pending",
+        "historical_evidence_restored_as": "HISTORICAL",
+        "rule": "current reality wins; no persisted PASS/review/validation/audit becomes fresh automatically",
     }

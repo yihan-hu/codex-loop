@@ -36,8 +36,9 @@ class InteractionRoutingContractTests(unittest.TestCase):
         setup = (ROOT / "references" / "local-mode-setup.md").read_text()
         readme = (ROOT / "README.md").read_text()
         self.assertIn("~/.codex-loop/host.json", setup)
-        self.assertIn('"default_local_root"', setup)
-        self.assertIn("does not itself select Local mode", setup)
+        self.assertIn('"default_local_workspace": "piwork"', setup)
+        self.assertIn("historical `default_local_root` remain compatibility/migration inputs only", setup)
+        self.assertIn("neither selects Local mode", setup)
         self.assertIn("New conversations still start in Web mode", readme)
         self.assertIn("Git/OAuth tokens", setup)
 

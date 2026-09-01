@@ -70,6 +70,8 @@ An installed Skill is normally deployment state. Codex Loop may use it as a **on
 
 If any freshness/provenance condition is missing, do not call the installed copy “latest.” Use the verified GitHub -> Web path when the requested source is GitHub, or report the missing proof when no verified acquisition path is available.
 
+For Codex Loop packages built under the current deployment-provenance contract, first run `deployment-provenance-verify` against the installed Skill root. That proves the runtime bundle matches its embedded exact repository/commit/tree claim, but freshness still requires a current target-branch observation. Only bundle-integrity proof plus exact remote-revision equality satisfies the bootstrap exception.
+
 This exception does not make arbitrary copied source directories valid. `final`/`publish` folders, release staging, downloaded artifacts, unpacked release packages, and unverified installed Skills remain non-authoritative.
 
 ## Interaction with Local mode
