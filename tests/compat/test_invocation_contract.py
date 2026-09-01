@@ -28,7 +28,10 @@ class InvocationContractTests(unittest.TestCase):
 
     def test_implicit_invocation_stays_enabled(self):
         metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
-        self.assertIn("short_description: Adaptive lifecycle for multi-step objectives", metadata)
+        self.assertIn('short_description: "Adaptive lifecycle for multi-step objectives"', metadata)
+        self.assertIn('icon_small: "./assets/icon.svg"', metadata)
+        self.assertIn('icon_large: "./assets/icon.svg"', metadata)
+        self.assertNotIn("products:", metadata)
         self.assertIn("allow_implicit_invocation: true", metadata)
 
 

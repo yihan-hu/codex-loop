@@ -1,14 +1,8 @@
 interface:
-  display_name: Codex Loop
-  short_description: Adaptive lifecycle for multi-step objectives
-  default_prompt: Use $codex-loop to carry this objective end to end, adapting between direct
-    and durable execution and composing with the relevant domain workflow and host tools.
-  icon_small: assets/icon.svg
-  icon_large: assets/icon.svg
+  display_name: "Codex Loop"
+  short_description: "Adaptive lifecycle for multi-step objectives"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  default_prompt: "Use $codex-loop to carry this objective end to end, adapting between direct and durable execution and composing with the relevant domain workflow and host tools."
 policy:
-  products:
-  - chatgpt
-  - codex
-  - api
-  - atlas
   allow_implicit_invocation: true

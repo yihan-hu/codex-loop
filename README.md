@@ -404,7 +404,13 @@ DEPLOY_PENDING     the intended Skill revision still needs an observed current/i
 DEPLOYED           an explicit supported install/update action or user confirmation proves installation
 ```
 
-When packaging Codex Loop as a ChatGPT Skill, validate the Skill directory and produce a ZIP named exactly `skill.zip`. The repository source itself is not proof of installation.
+When packaging Codex Loop as a ChatGPT Skill, build the runtime-only archive rather than zipping the whole development repository:
+
+```bash
+python3 tools/build_skill_zip.py --source . --output /tmp/skill.zip
+```
+
+The builder emits exactly one top-level `codex-loop/` directory and includes only runtime Skill files (`SKILL.md`, `agents/`, `assets/`, `references/`, `scripts/`, plus license/attribution files). It excludes `.github/`, `tests/`, `README.md`, repository tooling, `__pycache__`, and compiled Python caches. This separation matters because a repository-valid ZIP is not necessarily a ChatGPT-installable Skill package. The repository source itself is not proof of installation.
 
 If your ChatGPT environment exposes no callable Skill-install action, use the product's Save/Update or Skill-install handoff with the validated `skill.zip` when required. For an active current-workspace Skill after a Web-mode push, Codex Loop must surface that handoff rather than merely mention it in a closing note. Do not report `DEPLOYED` merely because Git push, handoff display, or packaging succeeded; require observed update evidence.
 
