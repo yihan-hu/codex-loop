@@ -594,9 +594,19 @@ def _cmd_persistence_resume(argv: list[str]) -> int:
 def _cmd_persistence_cleanup_plan(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py persistence-cleanup-plan')
     p.add_argument('--manifest', required=True)
+    p.add_argument('--ownership-proven', action='store_true')
+    p.add_argument('--bounded-runtime-scope-proven', action='store_true')
+    p.add_argument('--recoverable-delete-supported', action='store_true')
+    p.add_argument('--permanent-delete-supported', action='store_true')
     args = p.parse_args(argv[1:])
     manifest = load_state_manifest(Path(args.manifest).resolve())
-    emit_ok(cleanup_decision(manifest))
+    emit_ok(cleanup_decision(
+        manifest,
+        ownership_proven=args.ownership_proven,
+        bounded_scope_proven=args.bounded_runtime_scope_proven,
+        recoverable_delete_supported=args.recoverable_delete_supported,
+        permanent_delete_supported=args.permanent_delete_supported,
+    ))
     return 0
 
 

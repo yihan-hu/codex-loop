@@ -16,7 +16,7 @@ current ChatGPT workspace
   -> runner downloads and verifies the exact archive
   -> safe extract + source commit/push
   -> GitHub branch commit/tree readback
-  -> delete the temporary Drive object
+  -> permanently delete the temporary Drive transport object
 ```
 
 Source bytes must never pass through model text, Base64, GitHub blob/tree/contents payloads, issue bodies, or repeated connector writes. Google Drive is the binary data plane; the GitHub Connector is control plane only.
@@ -38,7 +38,7 @@ This standard path intentionally uses an anyone-with-link temporary object so an
 - upload only publication archives to the dedicated staging folder;
 - do not use this path when the source cannot tolerate temporary anyone-with-link readability;
 - never place credentials, tokens, private keys, or unrelated user files in the staging folder;
-- delete the staged archive after verified success; after a terminal failure, preserve it only while needed for diagnosis, then delete it;
+- permanently delete the staged archive after verified success; after a terminal failure, preserve it only while needed for diagnosis, then permanently delete it;
 - on an ambiguous GitHub outcome, reconcile the real workflow/branch state before deletion or retry.
 
 If this trust boundary is unacceptable, stop and report that the standard Web-mode path is unavailable for that source. Do not silently switch to model-carried relay or GitHub source blobs.
@@ -103,9 +103,9 @@ A workflow conclusion of `success` is necessary but not sufficient. Before repor
 3. require the download/size/SHA step, safe-extract step, and source push step all succeeded;
 4. read the emitted receipt or equivalent log lines and capture the published commit/tree bound to the staged archive hash;
 5. read back the actual target branch from GitHub and require its commit and tree to equal the receipt;
-6. only then delete the staged Drive archive and report `SOURCE_PUSHED`.
+6. only then permanently delete the exact staged Drive archive and report `SOURCE_PUSHED`.
 
-If staging cleanup fails after verified publication, keep `SOURCE_PUSHED` but report the cleanup warning and the remaining temporary object. Cleanup failure is not permission to republish.
+The staging archive is a one-time **public transport artifact**, not durable recovery state. The persistence adapter's recoverable-delete preference does not apply here: after verified consumption, use the active Drive adapter's permanent delete operation for that exact staging object so an anyone-with-link archive is not retained in Trash. If staging cleanup fails after verified publication, keep `SOURCE_PUSHED` but report the cleanup warning and the remaining temporary object. Cleanup failure is not permission to republish or to broaden deletion to sibling files.
 
 ## Post-push active Skill reconciliation
 

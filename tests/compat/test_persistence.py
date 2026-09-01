@@ -42,18 +42,67 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(manifest["expires_at"], "2026-10-01T00:00:00Z")
         validate_state_manifest(manifest)
 
-    def test_cleanup_trashes_expired_clean_manifest_but_retains_unresolved_action(self):
+    def test_cleanup_is_adapter_specific_and_requires_scope_proof(self):
         tmp, store = self.make_store()
         self.addCleanup(tmp.cleanup)
         now = datetime(2026, 9, 1, tzinfo=timezone.utc)
         clean = build_state_manifest(Path("/repo"), Path("/repo"), store, ttl_days=1, now=now)
         later = now + timedelta(days=2)
-        self.assertEqual(cleanup_decision(clean, now=later)["action"], "trash")
+
+        pending = cleanup_decision(clean, now=later)
+        self.assertEqual(pending["action"], "cleanup_pending")
+        self.assertEqual(pending["reason"], "ownership_or_bounded_scope_unproven")
+
+        recoverable = cleanup_decision(
+            clean,
+            now=later,
+            ownership_proven=True,
+            bounded_scope_proven=True,
+            recoverable_delete_supported=True,
+            permanent_delete_supported=True,
+        )
+        self.assertEqual(recoverable["action"], "recoverable_delete")
+        self.assertEqual(recoverable["adapter_operation"], "trash")
+        self.assertFalse(recoverable["destructive"])
+
+        permanent = cleanup_decision(
+            clean,
+            now=later,
+            ownership_proven=True,
+            bounded_scope_proven=True,
+            permanent_delete_supported=True,
+        )
+        self.assertEqual(permanent["action"], "permanent_delete")
+        self.assertEqual(permanent["adapter_operation"], "delete_file")
+        self.assertTrue(permanent["destructive"])
+
         action_id = store.record_external("upload", "planned", "opaque-id", action_class="external_non_idempotent")
         store.record_external("upload", "dispatched", "opaque-id", action_class="external_non_idempotent", action_id=action_id)
         store.record_external("upload", "outcome_unknown", "opaque-id", details={"observed": "ambiguous"}, action_class="external_non_idempotent", action_id=action_id)
         unresolved = build_state_manifest(Path("/repo"), Path("/repo"), store, ttl_days=1, now=now)
-        self.assertEqual(cleanup_decision(unresolved, now=later)["action"], "retain_for_reconciliation")
+        retained = cleanup_decision(
+            unresolved,
+            now=later,
+            ownership_proven=True,
+            bounded_scope_proven=True,
+            permanent_delete_supported=True,
+        )
+        self.assertEqual(retained["action"], "retain_for_reconciliation")
+
+    def test_cleanup_retains_unexpired_manifest_even_when_delete_is_supported(self):
+        tmp, store = self.make_store()
+        self.addCleanup(tmp.cleanup)
+        now = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        clean = build_state_manifest(Path("/repo"), Path("/repo"), store, ttl_days=30, now=now)
+        decision = cleanup_decision(
+            clean,
+            now=now,
+            ownership_proven=True,
+            bounded_scope_proven=True,
+            permanent_delete_supported=True,
+        )
+        self.assertEqual(decision["action"], "retain")
+        self.assertEqual(decision["reason"], "not_expired")
 
     def test_validation_rejects_schema_extra_fields(self):
         tmp, store = self.make_store()

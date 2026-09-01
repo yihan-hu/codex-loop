@@ -23,7 +23,11 @@ Task persistence and Host Profile persistence are separate control planes. The t
 
 Every manifest has `created_at` and `expires_at`. The default refreshable TTL is 30 days for active tasks and 7 days for completed/cancelled tasks. Re-exporting an active task refreshes its expiry. Cleanup is opportunistic: when Codex Loop next has Drive access, it may scan only its bounded runtime folder and apply `persistence-cleanup-plan` to expired objects.
 
-Cleanup is trash-first. If a manifest records a dispatched, outcome-unknown, planned, or unresolved terminal-failure external action, retain it for reconciliation even after expiry. Codex Loop does not permanently delete Drive data; final deletion follows Drive/user retention policy.
+Cleanup semantics are **artifact-class- and adapter-specific**, not globally trash-first. A durable recovery manifest is eligible for deletion only after its TTL expires, it carries no planned/dispatched/outcome-unknown/unresolved terminal-failure external action, and the host has proven both that the object was created for this Codex Loop persistence flow and that it is still inside the bounded runtime folder being scanned. `persistence-cleanup-plan` must fail closed to `cleanup_pending` when ownership, scope, or an adapter deletion primitive is unproven.
+
+When those proofs hold, prefer a recoverable deletion primitive when the active adapter exposes one. If the adapter exposes only permanent deletion, permanent deletion is allowed for that exact expired, ownership-proven, bounded-scope recovery object. For the current Google Drive connector, a host exposing Trash maps the recoverable plan to `trash`; a host exposing only `delete_file` maps the permanent plan to that exact file. The deterministic runtime only emits the cleanup plan; the ChatGPT host owns connector dispatch and must not broaden one proven object into a folder-wide delete.
+
+These durable-state rules do **not** apply to the public-read `ChatGPT-GitHub-Staging` transport objects used by Web publication. Those archives are one-time transport artifacts and should be permanently removed after verified consumption under `web-mode-publish.md`.
 
 ## Capability degradation
 

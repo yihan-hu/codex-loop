@@ -99,7 +99,7 @@ Web conversations and ephemeral workspaces are not a durable storage contract. C
 
 `python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_drive --repository OWNER/REPO` creates the private temporary manifest for a durable task. The host can upload it to a private `Codex Loop/.runtime/...` folder. A later conversation downloads it and runs `persistence-validate`; the recovered data is evidence for bootstrap/reconciliation, never a second source of truth. The manifest deliberately excludes chain of thought, hidden instructions, credentials, raw tool transcripts, local roots, and raw external-action identities.
 
-Cleanup uses refreshable TTLs plus opportunistic garbage collection. Expired clean objects are moved to Trash rather than permanently deleted; an expired manifest with unresolved dispatched/outcome-unknown external actions is retained until reconciliation. Missing Drive access degrades recoverability only and does not block normal work unless the user explicitly required cross-conversation recovery. See `references/persistence.md`.
+Cleanup uses refreshable TTLs plus opportunistic garbage collection, but deletion semantics follow the artifact class and the capabilities of the active storage adapter. Durable recovery manifests are retained while external actions are unresolved and are eligible for deletion only after TTL expiry plus exact Codex Loop ownership and bounded runtime-folder scope proof. Prefer a recoverable delete when available; if the adapter exposes only exact permanent deletion, that operation may be used for the proven expired recovery object. Missing Drive access degrades recoverability only and does not block normal work unless the user explicitly required cross-conversation recovery. See `references/persistence.md`.
 
 ## Architecture fidelity governance
 
@@ -292,7 +292,7 @@ ChatGPT workspace
   -> runner size/SHA verification + safe extraction
   -> source commit/push
   -> GitHub commit/tree readback
-  -> delete the temporary Drive archive
+  -> permanently delete the temporary Drive transport archive
 ```
 
 ### One-time Web-mode setup
@@ -329,9 +329,9 @@ When you ask Codex Loop to push a Web-mode workspace, it will:
 4. observe the exact GitHub branch head and create one small import-request JSON bound to that base commit, target branch, Drive file ID, size, and SHA-256;
 5. wait for the audited Actions workflow to download the archive, verify size/SHA-256, reject unsafe archive entries, and perform a non-force source commit/push;
 6. verify the workflow receipt and independently read back the target GitHub branch commit/tree;
-7. delete the temporary Drive archive after verified success.
+7. permanently delete the exact temporary Drive archive after verified success.
 
-A workflow conclusion of `success` alone is not enough: Codex Loop requires the receipt-bound commit/tree to match the actual target branch before reporting `SOURCE_PUSHED`.
+A workflow conclusion of `success` alone is not enough: Codex Loop requires the receipt-bound commit/tree to match the actual target branch before reporting `SOURCE_PUSHED`. The staging archive is a one-time anyone-with-link transport object, not durable recovery state, so it should not be retained in Trash after verified consumption.
 
 ### Web-mode setup checklist
 

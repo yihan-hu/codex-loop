@@ -65,7 +65,7 @@ def persistence_policy(backend: str = "off") -> dict[str, Any]:
         "source_repository_contains_credentials": False,
         "mode": "state_only" if backend != "off" else "off",
         "workspace_snapshot": False,
-        "cleanup": "ttl_plus_opportunistic_gc",
+        "cleanup": "ttl_plus_bounded_adapter_gc",
     }
 
 
@@ -322,7 +322,15 @@ def load_state_manifest(path: Path) -> dict[str, Any]:
     return validate_state_manifest(json.loads(payload.decode("utf-8")))
 
 
-def cleanup_decision(manifest: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+def cleanup_decision(
+    manifest: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    ownership_proven: bool = False,
+    bounded_scope_proven: bool = False,
+    recoverable_delete_supported: bool = False,
+    permanent_delete_supported: bool = False,
+) -> dict[str, Any]:
     manifest = validate_state_manifest(manifest)
     current = _utc_now(now)
     expires = datetime.fromisoformat(str(manifest["expires_at"]).replace("Z", "+00:00"))
@@ -332,12 +340,49 @@ def cleanup_decision(manifest: dict[str, Any], *, now: datetime | None = None) -
         or (item.get("state") == "terminal_failure" and not item.get("failure_resolved"))
         for item in manifest.get("external_actions", [])
     )
+    backend = str(manifest["persistence"]["backend"])
+    scope_proven = bool(ownership_proven and bounded_scope_proven)
+
+    if unresolved:
+        action = "retain_for_reconciliation"
+        reason = "unresolved_external_action"
+        adapter_operation = None
+    elif not expired:
+        action = "retain"
+        reason = "not_expired"
+        adapter_operation = None
+    elif not scope_proven:
+        action = "cleanup_pending"
+        reason = "ownership_or_bounded_scope_unproven"
+        adapter_operation = None
+    elif recoverable_delete_supported:
+        action = "recoverable_delete"
+        reason = "expired_clean_manifest_with_recoverable_delete"
+        adapter_operation = "trash" if backend == "google_drive" else "recoverable_delete"
+    elif permanent_delete_supported:
+        action = "permanent_delete"
+        reason = "expired_clean_manifest_with_only_permanent_delete"
+        adapter_operation = "delete_file" if backend == "google_drive" else "permanent_delete"
+    else:
+        action = "cleanup_pending"
+        reason = "no_supported_delete_primitive"
+        adapter_operation = None
+
     return {
+        "artifact_class": "durable_recovery_state",
+        "backend": backend,
         "expired": expired,
         "unresolved_external_actions": unresolved,
-        "action": "retain_for_reconciliation" if unresolved else ("trash" if expired else "retain"),
-        "permanent_delete": False,
-        "rule": "trash-first; permanent deletion remains Drive/user policy",
+        "ownership_proven": bool(ownership_proven),
+        "bounded_scope_proven": bool(bounded_scope_proven),
+        "scope_proven": scope_proven,
+        "recoverable_delete_supported": bool(recoverable_delete_supported),
+        "permanent_delete_supported": bool(permanent_delete_supported),
+        "action": action,
+        "adapter_operation": adapter_operation,
+        "destructive": action == "permanent_delete",
+        "reason": reason,
+        "rule": "artifact-class and adapter-specific cleanup; retain unresolved state, require ownership and bounded scope, prefer recoverable deletion, otherwise allow supported permanent deletion",
     }
 
 

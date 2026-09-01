@@ -15,7 +15,9 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("binary `file_uri`", web_publish)
         self.assertIn("anyone: reader", web_publish)
         self.assertIn("GitHub Connector is control plane only", web_publish)
-        self.assertIn("delete the staged Drive archive", web_publish)
+        self.assertIn("permanently delete the exact staged Drive archive", web_publish)
+        self.assertIn("public transport artifact", web_publish)
+        self.assertIn("does not apply here", web_publish)
 
     def test_local_mode_remains_native_git_only(self):
         skill = (ROOT / "SKILL.md").read_text()

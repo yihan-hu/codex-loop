@@ -228,10 +228,14 @@ python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_dri
 python3 scripts/codex_loop.py persistence-validate --manifest /PRIVATE/TEMP/state-only.json
 python3 scripts/codex_loop.py persistence-resume-plan --manifest /PRIVATE/TEMP/state-only.json
 python3 scripts/codex_loop.py persistence-resume --cwd REPO --manifest /PRIVATE/TEMP/state-only.json --observations-json observations.json
-python3 scripts/codex_loop.py persistence-cleanup-plan --manifest /PRIVATE/TEMP/state-only.json
+python3 scripts/codex_loop.py persistence-cleanup-plan --manifest /PRIVATE/TEMP/state-only.json \
+  --ownership-proven --bounded-runtime-scope-proven --recoverable-delete-supported
+# If the active adapter exposes no recoverable delete but does expose exact permanent deletion:
+python3 scripts/codex_loop.py persistence-cleanup-plan --manifest /PRIVATE/TEMP/state-only.json \
+  --ownership-proven --bounded-runtime-scope-proven --permanent-delete-supported
 ```
 
-`persistence-export` writes only to the task-private runtime directory and returns a path for host connector upload. `--backend off` creates no file and reports the default-disabled policy. The Google Drive connector owns upload/download/list/Trash operations and all authentication. `persistence-resume-plan` lists facts the host must re-observe; `persistence-resume` creates a new task/freshness domain and never restores old PASS/validation/review/audit evidence as current. See `persistence.md` and `persistence-resume.md`.
+`persistence-export` writes only to the task-private runtime directory and returns a path for host connector upload. `--backend off` creates no file and reports the default-disabled policy. The Google Drive connector owns upload/download/list/delete operations and all authentication. `persistence-cleanup-plan` has no connector side effect: omitted ownership/scope/capability proofs fail closed to `cleanup_pending`; when both deletion primitives are available it prefers recoverable deletion, and when only exact permanent deletion is exposed it may plan that operation for the ownership-proven bounded recovery object. `persistence-resume-plan` lists facts the host must re-observe; `persistence-resume` creates a new task/freshness domain and never restores old PASS/validation/review/audit evidence as current. See `persistence.md` and `persistence-resume.md`.
 
 ## External/host actions
 
