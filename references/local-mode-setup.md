@@ -82,7 +82,7 @@ Older installations may still contain:
 
 `default_local_root` is a compatibility/migration input only; it does not itself select Local mode and does not grant access. Migrate a stable root by registering it as `piwork` with `kind=development_root`, then prefer `default_local_workspace`.
 
-Store only non-sensitive routing defaults. Never store Git/OAuth tokens, passwords, cookies, connector credentials, approval tokens, session grant nonces, or other secrets in this file.
+Store only non-sensitive host preferences/defaults. In addition to local-workspace routing, `host.json` may contain global behavioral preferences such as `progress_visibility`; see `progress-visibility.md`. Never store Git/OAuth tokens, passwords, cookies, connector credentials, approval tokens, session grant nonces, or other secrets in this file.
 
 Because host-local files live outside the repository, normal Git commits, Web-mode source archives, Local-mode `git push`, and Skill packaging must not include them. Do not copy them into a repository merely to make them easier to discover.
 

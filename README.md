@@ -79,6 +79,14 @@ Use Codex Loop locally under /Users/alice/PiWork and fix this bug.
 
 Once Local mode is selected, later repository tasks in the same conversation keep using that local repository as the baseline unless you explicitly switch back to Web mode. **That does not carry forward permission to modify local source.** Each task that would edit/create/delete/overwrite local source files must explicitly authorize local mutation again, for example: `Fix this locally and push.` A generic `push`, read-only inspection, RDC availability, or earlier local edits do not authorize new source changes. A new conversation starts in Web mode again.
 
+## Adaptive progress visibility
+
+Codex Loop increases user-visible progress for real multi-step/durable objectives by default so a long Web task does not look stalled. The built-in enhanced policy uses an approximate **15-second / 3-substantive-tool-call** cadence (whichever comes first), plus immediate concise updates for material findings or blockers. Trivial/direct tasks remain low-noise. This is host-facing guidance: ChatGPT owns actual message timing and tool dispatch.
+
+The preference is user-specific and is never committed. `python3 scripts/codex_loop.py progress-config` shows the effective values; `progress-config --mode enhanced --interval-seconds 20 --tool-call-interval 4` writes overrides atomically to `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`). The supported modes are `enhanced`, `standard`, and `quiet`; upfront planning and material-event updates can be toggled independently. `progress-config --reset` removes only the progress override and returns to built-in defaults. See `references/progress-visibility.md`.
+
+The host config is private runtime state outside the repository and outside `skill.zip`. It may coexist with non-sensitive workspace-routing defaults, but must never contain credentials, approval/session tokens, or other secrets.
+
 ## Optional cross-conversation persistence
 
 Web conversations and ephemeral workspaces are not a durable storage contract. Codex Loop therefore supports an **optional, default-off `state_only` persistence adapter** for long objectives. The first adapter is Google Drive, but Drive is only the storage transport: ChatGPT owns OAuth and connector credentials, while Codex Loop creates a small schema-whitelisted recovery manifest. Nothing about the user's Drive connection, folder IDs, task manifests, tokens, or connector session is committed to GitHub.

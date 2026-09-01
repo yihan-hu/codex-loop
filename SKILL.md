@@ -63,7 +63,7 @@ Before substantive execution of a multi-step task, infer the external capabiliti
 
 Batch predictable missing connection/setup requests up front when the host supports it, then continue automatically after they are satisfied. Reuse live, still-valid host capability state during the task instead of interrupting the user for the same permission repeatedly. Request only capabilities actually needed by the planned workflow.
 
-Preflight never bypasses host-enforced per-action approval, sandboxing, or high-impact-action confirmation. Persist only non-sensitive routing defaults such as `default_local_root`; credentials and approval tokens remain host-owned.
+Preflight never bypasses host-enforced per-action approval, sandboxing, or high-impact-action confirmation. Persist only non-sensitive host preferences/defaults such as the preferred local workspace alias or progress-visibility settings; credentials and approval tokens remain host-owned.
 
 **Explicit local-source-mutation authorization gate.** In Local mode, before the first source-content mutation in each task, require an explicit current-task instruction to modify the local repository, such as “fix this locally,” “modify the PiWork checkout,” or “update the local Codex Loop and push.” Do not infer write consent from Local mode persisting from an earlier task, RDC availability, earlier local edits, a read-only local inspection request, synchronization intent, or a generic `push`. A push may publish already-existing audited local commits/changes when otherwise authorized, but it must not silently create or change source content. Keep this authorization task-scoped; do not carry it into a later task.
 
@@ -80,6 +80,12 @@ When Codex Loop is implicitly selected because any durable signal is plausible, 
 Once durable runtime state exists, derive lifecycle obligations from current evidence. Mutation raises obligations by advancing generation and making generation-bound validation, criterion, steer, review, and objective-audit evidence stale. Validation is required only when meaningful executable evidence exists; otherwise bootstrap with an explicit `--no-validation --no-validation-reason ...`. Change review is required only for a substantive current-generation changed set. Delegation, managed processes, checkpoints, and external-action bookkeeping activate only when actually useful or requested. Completion reasoning always remains active and `PASS` still requires every currently required obligation to be satisfied. Bootstrap acceptance criteria guide execution but are not, by themselves, proof that the original objective is complete. Capability degradation is a warning dimension, not automatically a completion blocker.
 
 `next` includes a bounded `lifecycle` projection derived from authoritative runtime facts. It may expose active capabilities and current requirements, but must not dump inactive capability history or create duplicate mutable state. Current workspace reality always wins.
+
+### Progress visibility
+
+For multi-step/durable objectives, actively increase user-visible progress by default so the Web experience does not appear stalled. After lifecycle assessment, read `references/progress-visibility.md` and, when the bundled runtime is available, consult `progress-policy --lifecycle-mode durable`. The default durable policy is enhanced: provide a concise upfront plan when useful, then surface substantive progress after whichever comes first, approximately 15 seconds or 3 substantive tool calls, with immediate updates for material findings/blockers/state changes when enabled. Direct/trivial work remains low-noise and must not gain periodic status chatter.
+
+Progress cadence is host-facing guidance rather than a local timer: ChatGPT remains authoritative for message timing and actual tool dispatch. Keep updates concise and informative (what changed, what was learned, what is next), never dump tool-by-tool logs, hidden reasoning, secrets, or repetitive status. User overrides live only in the private host-local `~/.codex-loop/host.json` `progress_visibility` node; never commit or package that file. If progress configuration is unavailable or invalid, fall back to the enhanced defaults and continue the task rather than blocking execution.
 
 ### Upstream completion fidelity
 

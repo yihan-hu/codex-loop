@@ -30,7 +30,7 @@ Request the capabilities needed by the task, not every integration the host happ
 
 ## What may persist
 
-Persist only non-sensitive routing defaults that the user explicitly wants to reuse, such as `default_local_root` in the host-local configuration described by `local-mode-setup.md`.
+Persist only non-sensitive host preferences/defaults that the user explicitly wants to reuse, such as the preferred local workspace or progress-visibility settings in the host-local configuration described by `local-mode-setup.md` and `progress-visibility.md`.
 
 Do not persist OAuth tokens, Git credentials, browser cookies, passwords, connector secrets, approval tokens, or a claim that a permission is permanently granted. Connector/RDC/browser permission state remains host-owned and must be checked live when needed.
 

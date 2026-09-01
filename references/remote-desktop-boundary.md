@@ -66,7 +66,7 @@ When `interaction_target` is `local_chrome` or `local_mac_gui`, RDC may be used 
 - Keep temporary interaction artifacts ephemeral and delete them after verification when practical.
 - macOS Accessibility, Screen Recording, browser-profile, and similar permissions remain host-owned; never change them silently.
 
-The host-local files `~/.codex-loop/host.json` and `~/.codex-loop/workspace-registry.json` are narrow bootstrap/configuration exceptions used only for non-sensitive routing identity/defaults. They are not repository workspaces and must never contain credentials or persistent permission state. Reading them does not select Local mode.
+The host-local files `~/.codex-loop/host.json` and `~/.codex-loop/workspace-registry.json` are narrow bootstrap/configuration exceptions used only for non-sensitive workspace identity/defaults and host behavior preferences such as progress visibility. They are not repository workspaces and must never contain credentials or persistent permission state. Reading them does not select Local mode.
 
 ## Establishing a workspace
 

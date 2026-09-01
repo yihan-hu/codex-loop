@@ -21,6 +21,12 @@ from codex_loop_runtime.completion import record_objective_audit
 from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
 from codex_loop_runtime.lifecycle import DURABLE_SIGNAL_KEYS, assess_runtime_need
+from codex_loop_runtime.host_config import (
+    PROGRESS_MODES,
+    effective_progress_config,
+    progress_policy,
+    set_progress_config,
+)
 from codex_loop_runtime.persistence import (
     build_state_manifest,
     cleanup_decision,
@@ -100,13 +106,59 @@ def _cmd_lifecycle_assess(argv: list[str]) -> int:
         p.add_argument("--" + key.replace("_", "-"), action="store_true")
     args = p.parse_args(argv[1:])
     signals = {key: bool(getattr(args, key)) for key in DURABLE_SIGNAL_KEYS}
-    emit_ok(assess_runtime_need(signals))
+    result = assess_runtime_need(signals)
+    result["progress"] = progress_policy(str(result["mode"]))
+    emit_ok(result)
     return 0
 
 
 def _cmd_next(argv: list[str]) -> int:
     cwd, root, store = _scope_from_argv(argv)
-    emit_ok(build_working(root, cwd, store))
+    working = build_working(root, cwd, store)
+    lifecycle = working.get("lifecycle") or {}
+    working["progress"] = progress_policy(str(lifecycle.get("mode", "durable")))
+    emit_ok(working)
+    return 0
+
+
+def _cmd_progress_config(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py progress-config')
+    p.add_argument('--mode', choices=sorted(PROGRESS_MODES))
+    p.add_argument('--interval-seconds', type=int)
+    p.add_argument('--tool-call-interval', type=int)
+    p.add_argument('--upfront-plan', action=argparse.BooleanOptionalAction, default=None)
+    p.add_argument('--material-event-updates', action=argparse.BooleanOptionalAction, default=None)
+    p.add_argument('--reset', action='store_true')
+    args = p.parse_args(argv[1:])
+    requested_write = args.reset or any(
+        value is not None
+        for value in (
+            args.mode,
+            args.interval_seconds,
+            args.tool_call_interval,
+            args.upfront_plan,
+            args.material_event_updates,
+        )
+    )
+    if requested_write:
+        emit_ok(set_progress_config(
+            mode=args.mode,
+            interval_seconds=args.interval_seconds,
+            tool_call_interval=args.tool_call_interval,
+            upfront_plan=args.upfront_plan,
+            material_event_updates=args.material_event_updates,
+            reset=args.reset,
+        ))
+    else:
+        emit_ok(effective_progress_config())
+    return 0
+
+
+def _cmd_progress_policy(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py progress-policy')
+    p.add_argument('--lifecycle-mode', required=True, choices=['direct', 'durable'])
+    args = p.parse_args(argv[1:])
+    emit_ok(progress_policy(args.lifecycle_mode))
     return 0
 
 
@@ -485,6 +537,10 @@ def main() -> int:
             return _cmd_lifecycle_assess(argv)
         if argv[0] == 'next':
             return _cmd_next(argv)
+        if argv[0] == 'progress-config':
+            return _cmd_progress_config(argv)
+        if argv[0] == 'progress-policy':
+            return _cmd_progress_policy(argv)
         if argv[0] == 'validate':
             return _cmd_validate(argv)
         if argv[0] == 'validation-record':

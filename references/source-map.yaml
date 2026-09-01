@@ -453,6 +453,7 @@
     "scripts/codex_loop_runtime/completion.py": "HYBRID",
     "scripts/codex_loop_runtime/delegation.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/environment.py": "LOCAL_RUNTIME_PORT",
+    "scripts/codex_loop_runtime/host_config.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/instructions.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/lifecycle.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/model_relay.py": "LOCAL_EXTENSION",

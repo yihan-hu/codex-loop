@@ -183,6 +183,19 @@ Allowed statuses are `proven`, `contradicted`, `incomplete`, `weak`, and `missin
 
 The runtime deliberately does not understand domain-specific workflow internals. If the objective names another Skill, gate, invariant, or deliverable, record the authoritative evidence proving that requirement rather than adding a domain-specific dependency mechanism to Codex Loop.
 
+## Progress visibility configuration
+
+Progress behavior is host-facing policy with enhanced defaults for durable objectives and low-noise defaults for direct work. The effective user configuration lives outside the repository in the private host config.
+
+```bash
+python3 scripts/codex_loop.py progress-config
+python3 scripts/codex_loop.py progress-policy --lifecycle-mode durable
+python3 scripts/codex_loop.py progress-config --mode enhanced --interval-seconds 20 --tool-call-interval 4
+python3 scripts/codex_loop.py progress-config --reset
+```
+
+`progress-config` writes only `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`) with private file permissions and preserves unrelated host config keys. Invalid existing JSON is never overwritten. `progress-policy` treats invalid/missing progress configuration as a non-blocking preference failure and falls back to enhanced defaults. See `progress-visibility.md`.
+
 ## Optional state-only persistence
 
 Persistence is off by default and Drive credentials remain host-owned. For an explicitly enabled durable task:
