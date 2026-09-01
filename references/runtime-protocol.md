@@ -258,7 +258,9 @@ python scripts/codex_loop.py external-resolve-failure --cwd REPO --task-id TASK 
 
 ## Post-push workspace Skill deployment handoff
 
-For a Web-mode task that edits the Skill already active/present in the current ChatGPT workspace, a verified source push is followed by a mandatory deployment handoff for the same published commit:
+For a Web-mode task that edits the Skill already active/present in the current ChatGPT workspace, a verified source push is followed by a mandatory native deployment handoff for the same published commit. Codex Loop tracks the lifecycle; `skill-creator`/the ChatGPT host owns the actual Skill installation/update surface.
+
+Plan the handoff:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-handoff \
@@ -268,7 +270,7 @@ python3 scripts/codex_loop.py skill-deploy-handoff \
   --commit FULL_40_HEX_SHA
 ```
 
-The command requires an active Codex Loop task, synchronizes the current workspace generation, validates the Skill name/repository/full commit identity, and records an `external_non_idempotent` action with:
+The command requires an active Codex Loop task, validates the Skill/repository/commit identity, and records an `external_non_idempotent` action with:
 
 ```text
 kind     = chatgpt_skill_update
@@ -276,21 +278,45 @@ identity = chatgpt-skill:NAME@COMMIT
 state    = planned
 ```
 
-It returns `DEPLOY_PENDING`, a preferred supported host-managed Skill update action, and a `surface_save_update_ui` fallback. The planned external action is intentionally completion-blocking. If a host-managed update or Save/Update handoff is actually initiated, advance that same action to `dispatched`; record `terminal_success` only after observable evidence shows the intended Skill revision is active. Repeating the handoff for the same Skill/commit deduplicates to the existing action.
+The returned state is intentionally explicit:
 
-The handoff never manufactures deployment permission and never authorizes browser automation. If completing the update requires computer use, the normal explicit current-task computer-use gate still applies. If no update surface exists, leave the action unresolved and report `DEPLOY_PENDING` rather than silently accepting a newer GitHub revision than the active workspace Skill.
-
-## Deployment provenance
-
-Codex Loop Skill ZIPs are provenance-bound after verified source publication:
-
-```bash
-python3 tools/build_skill_zip.py --source REPO --output skill.zip \
-  --source-repository OWNER/REPO --source-commit FULL_COMMIT --source-tree FULL_TREE
-python3 scripts/codex_loop.py deployment-provenance-verify --skill-root UNPACKED_SKILL
+```text
+native_update_state  = NATIVE_UPDATE_REQUIRED
+native_surface_state = NATIVE_SURFACE_NOT_OBSERVED
+ui_state             = UI_NOT_OBSERVED
+deployment_state     = DEPLOY_PENDING
 ```
 
-The ZIP contains build-generated `references/deployment-manifest.json` with exact repository/commit/tree and runtime file-manifest SHA-256. That file is not committed; package SHA-256 remains external receipt evidence. See `deployment-provenance.md`.
+`skill-deploy-handoff` is planning evidence only. It sets `handoff_is_ui_evidence=false` and `handoff_is_deployment_evidence=false`; callers must not turn its JSON or assistant prose into a fictional UI event.
+
+After `skill-creator` or an equivalent native host primitive actually exposes/initiates the Skill update surface, record that observation:
+
+```bash
+python3 scripts/codex_loop.py skill-deploy-surface-record \
+  --cwd REPO \
+  --skill-name NAME \
+  --repository OWNER/REPO \
+  --commit FULL_40_HEX_SHA \
+  --surface-kind skill_creator_install_ui \
+  --evidence "host visibly surfaced the native Skill install/update control"
+```
+
+This advances the same external action to `dispatched` and returns `NATIVE_SURFACE_OBSERVED`, `UI_SURFACED`, and `DEPLOY_PENDING`. `--surface-kind host_managed_update` records `UI_NOT_REQUIRED` for a native update path that does not expose UI. Surface evidence is not deployment evidence.
+
+After host-visible installed-revision evidence is available, finalize:
+
+```bash
+python3 scripts/codex_loop.py skill-deploy-complete \
+  --cwd REPO \
+  --skill-name NAME \
+  --repository OWNER/REPO \
+  --commit FULL_40_HEX_SHA \
+  --evidence "current workspace Skill reports the intended revision"
+```
+
+`skill-deploy-complete` refuses a merely planned action; it requires the native surface to have crossed `dispatched` (or a previously dispatched outcome to be reconciled). It then records `terminal_success` and returns `DEPLOYED`.
+
+The native installation/update surface is host-owned. For Skill creation/update tasks, compose with `skill-creator` rather than trying to manufacture a Save/Update control in Codex Loop. Browser automation is never implied. If no native surface is available, leave the action unresolved and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED`.
 
 ## Managed process sessions
 

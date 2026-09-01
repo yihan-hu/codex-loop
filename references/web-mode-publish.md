@@ -111,19 +111,11 @@ The staging archive is a one-time **public transport artifact**, not durable rec
 
 Verified `SOURCE_PUSHED` is the terminal state of the Git publication phase, but it is not always the terminal state of the user task. If the published Web workspace is the source of a Skill that is already active/present in the current ChatGPT workspace or host-managed Skill environment, the push request also implies refresh of that same current Skill.
 
-After the remote commit/tree readback succeeds and staging cleanup is reconciled, run:
+After the remote commit/tree readback succeeds and staging cleanup is reconciled, run `skill-deploy-handoff` for the exact published commit. That command creates only a planned `chatgpt_skill_update` action; it does **not** surface UI and does **not** prove deployment.
 
-```bash
-python3 scripts/codex_loop.py skill-deploy-handoff \
-  --cwd REPO \
-  --skill-name NAME \
-  --repository OWNER/REPO \
-  --commit PUBLISHED_FULL_SHA
-```
+For the actual update, compose with the platform `skill-creator` workflow (or an explicitly equivalent native host-managed Skill update primitive) using the validated source/package generation bound to the same pushed commit. Codex Loop must never emulate a Save/Update UI in prose. When the host actually surfaces/initiates the native update control, record it with `skill-deploy-surface-record`; this may establish `UI_SURFACED` but still leaves `DEPLOY_PENDING`. Only after the intended revision is observably active may `skill-deploy-complete` establish `DEPLOYED`.
 
-The handoff must be bound to the exact published commit from the verified import receipt/readback. It records a pending `chatgpt_skill_update` external action, which keeps the Codex Loop completion gate open until the active Skill update is reconciled. Prefer a supported host-managed non-browser Skill update; otherwise surface the product's Save/Update UI handoff. If the host update surface needs a `skill.zip`, package/validate the same pushed source generation before that handoff.
-
-If no update mechanism or usable handoff is available, retain `SOURCE_PUSHED`, report `DEPLOY_PENDING`, and state the missing capability. Do not republish the source, do not claim `DEPLOYED`, and do not silently complete while the active workspace Skill may still be older than GitHub. Surfacing a Save/Update handoff does not authorize automated browser/computer interaction; the ordinary explicit computer-use gate still controls any clicks or GUI operation.
+If no native Skill installation/update surface can be invoked or observed, retain `SOURCE_PUSHED`, leave the external action unresolved, and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED`. Do not republish the source and do not substitute an internal handoff record for host UI evidence. Browser/computer interaction remains subject to the ordinary explicit computer-use gate.
 
 ## Empty repositories and bootstrap
 

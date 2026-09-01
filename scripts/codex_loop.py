@@ -93,7 +93,9 @@ HOST_ADAPTER_COMMANDS = (
     ('workspace-grants', 'show current-conversation workspace grants'),
     ('workspace-remove', 'remove a private host workspace alias'),
     ('workspace-sync-offer', 'prepare an exact-revision workspace sync offer'),
-    ('skill-deploy-handoff', 'prepare current-workspace Skill deployment reconciliation'),
+    ('skill-deploy-handoff', 'plan native current-workspace Skill update reconciliation'),
+    ('skill-deploy-surface-record', 'record an actually observed native Skill update/install surface'),
+    ('skill-deploy-complete', 'record observed activation of the intended Skill revision'),
     ('deployment-provenance-verify', 'verify installed Skill bundle provenance'),
     ('relay-frame', 'frame a guarded model-relay payload'),
     ('relay-receive', 'receive and verify a guarded model-relay payload'),
@@ -454,13 +456,35 @@ def _cmd_deployment_provenance_verify(argv: list[str]) -> int:
     return 0
 
 
-def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py skill-deploy-handoff')
+def _skill_deploy_identity(skill_name: str, commit: str) -> str:
+    return f'chatgpt-skill:{skill_name}@{commit}'
+
+
+def _skill_deploy_action(store, identity: str) -> dict:
+    matches = [
+        action for action in store.external_actions()
+        if action.get('kind') == 'chatgpt_skill_update'
+        and action.get('identity') == identity
+        and action.get('action_class') == 'external_non_idempotent'
+    ]
+    if not matches:
+        raise ValueError('no planned Skill deployment handoff exists for this Skill/commit')
+    if len(matches) != 1:
+        raise RuntimeError('multiple Skill deployment actions exist for the same stable identity')
+    return matches[0]
+
+
+def _parse_skill_deploy_args(argv: list[str], *, include_surface: bool = False, include_evidence: bool = False):
+    p = argparse.ArgumentParser(prog=f'codex_loop.py {argv[0]}')
     p.add_argument('--cwd')
     p.add_argument('--task-id')
     p.add_argument('--skill-name', required=True)
     p.add_argument('--repository', required=True)
     p.add_argument('--commit', required=True)
+    if include_surface:
+        p.add_argument('--surface-kind', required=True, choices=['skill_creator_install_ui', 'host_managed_update'])
+    if include_evidence:
+        p.add_argument('--evidence', required=True)
     args = p.parse_args(argv[1:])
     skill_name = args.skill_name.strip().lower()
     repository = args.repository.strip()
@@ -471,30 +495,135 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         raise ValueError('--repository must be an exact GitHub OWNER/REPO name')
     if not _FULL_COMMIT_RE.fullmatch(commit):
         raise ValueError('--commit must be a full 40-hex Git commit SHA')
+    if include_evidence and not args.evidence.strip():
+        raise ValueError('--evidence must contain concise observable evidence')
+    return args, skill_name, repository, commit
+
+
+def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
+    args, skill_name, repository, commit = _parse_skill_deploy_args(argv)
     _cwd_path, _root, store = _scope_from_argv(argv)
     store.ensure_active()
-    identity = f'chatgpt-skill:{skill_name}@{commit}'
+    identity = _skill_deploy_identity(skill_name, commit)
     action_id = store.record_external(
         'chatgpt_skill_update',
         'planned',
         identity,
         action_class='external_non_idempotent',
     )
+    action = store.external_action(action_id)
+    action_state = action['state']
+    action_details = json.loads(action['details_json']) if action.get('details_json') else {}
+    if action_state == 'terminal_success':
+        native_update_state = 'NATIVE_UPDATE_CONFIRMED'
+        native_surface_state = 'NATIVE_SURFACE_OBSERVED'
+        ui_state = 'UI_SURFACED' if action_details.get('ui_surfaced') is True else 'UI_NOT_REQUIRED' if action_details.get('ui_surfaced') is False else 'UI_STATE_UNKNOWN'
+        deployment_state = 'DEPLOYED'
+    elif action_state in {'dispatched', 'outcome_unknown'}:
+        native_update_state = 'NATIVE_UPDATE_DISPATCHED'
+        native_surface_state = 'NATIVE_SURFACE_OBSERVED'
+        ui_state = 'UI_SURFACED' if action_details.get('ui_surfaced') is True else 'UI_NOT_REQUIRED' if action_details.get('ui_surfaced') is False else 'UI_STATE_UNKNOWN'
+        deployment_state = 'DEPLOY_PENDING'
+    else:
+        native_update_state = 'NATIVE_UPDATE_REQUIRED'
+        native_surface_state = 'NATIVE_SURFACE_NOT_OBSERVED'
+        ui_state = 'UI_NOT_OBSERVED'
+        deployment_state = 'DEPLOY_PENDING'
     emit_ok({
         'skill_name': skill_name,
         'repository': repository,
         'commit': commit,
         'source_state': 'SOURCE_PUSHED',
-        'deployment_state': 'DEPLOY_PENDING',
+        'native_update_state': native_update_state,
+        'native_surface_state': native_surface_state,
+        'ui_state': ui_state,
+        'deployment_state': deployment_state,
         'target': 'current_chatgpt_workspace_skill',
-        'preferred_action': 'supported_host_managed_skill_update',
-        'fallback_action': 'surface_save_update_ui',
+        'native_handoff_owner': 'skill-creator/host',
+        'required_action': 'invoke_skill_creator_or_equivalent_native_skill_update_flow',
+        'host_managed_alternative': 'supported_host_managed_skill_update',
+        'handoff_is_ui_evidence': False,
+        'handoff_is_deployment_evidence': False,
         'browser_automation_authorized': False,
         'completion_blocking_until_reconciled': True,
+        'external_action_id': action_id,
+        'external_action_state': action_state,
+    })
+    return 0
+
+
+def _cmd_skill_deploy_surface_record(argv: list[str]) -> int:
+    args, skill_name, repository, commit = _parse_skill_deploy_args(
+        argv, include_surface=True, include_evidence=True
+    )
+    _cwd_path, _root, store = _scope_from_argv(argv)
+    store.ensure_active()
+    identity = _skill_deploy_identity(skill_name, commit)
+    action = _skill_deploy_action(store, identity)
+    if action['state'] not in {'planned', 'dispatched'}:
+        raise ValueError(f"Skill deployment action is already {action['state']}; native surface cannot be newly recorded")
+    action_id = store.record_external(
+        'chatgpt_skill_update',
+        'dispatched',
+        identity,
+        details={
+            'surface_kind': args.surface_kind,
+            'surface_evidence': args.evidence.strip(),
+            'ui_surfaced': args.surface_kind == 'skill_creator_install_ui',
+        },
+        action_class='external_non_idempotent',
+        action_id=action['action_id'],
+    )
+    emit_ok({
+        'skill_name': skill_name,
+        'repository': repository,
+        'commit': commit,
+        'source_state': 'SOURCE_PUSHED',
+        'native_update_state': 'NATIVE_UPDATE_DISPATCHED',
+        'native_surface_state': 'NATIVE_SURFACE_OBSERVED',
+        'ui_state': 'UI_SURFACED' if args.surface_kind == 'skill_creator_install_ui' else 'UI_NOT_REQUIRED',
+        'deployment_state': 'DEPLOY_PENDING',
+        'surface_kind': args.surface_kind,
+        'surface_is_deployment_evidence': False,
         'external_action_id': action_id,
     })
     return 0
 
+
+def _cmd_skill_deploy_complete(argv: list[str]) -> int:
+    args, skill_name, repository, commit = _parse_skill_deploy_args(argv, include_evidence=True)
+    _cwd_path, _root, store = _scope_from_argv(argv)
+    store.ensure_active()
+    identity = _skill_deploy_identity(skill_name, commit)
+    action = _skill_deploy_action(store, identity)
+    if action['state'] not in {'dispatched', 'outcome_unknown'}:
+        raise ValueError('Skill deployment can complete only after a native update/install surface was actually dispatched or observed')
+    prior_details = json.loads(action['details_json']) if action.get('details_json') else {}
+    action_id = store.record_external(
+        'chatgpt_skill_update',
+        'terminal_success',
+        identity,
+        details={
+            'observed': args.evidence.strip(),
+            'installed_commit': commit,
+            'surface_kind': prior_details.get('surface_kind'),
+            'ui_surfaced': prior_details.get('ui_surfaced'),
+        },
+        action_class='external_non_idempotent',
+        action_id=action['action_id'],
+    )
+    emit_ok({
+        'skill_name': skill_name,
+        'repository': repository,
+        'commit': commit,
+        'source_state': 'SOURCE_PUSHED',
+        'native_update_state': 'NATIVE_UPDATE_CONFIRMED',
+        'native_surface_state': 'NATIVE_SURFACE_OBSERVED',
+        'deployment_state': 'DEPLOYED',
+        'deployment_evidence': args.evidence.strip(),
+        'external_action_id': action_id,
+    })
+    return 0
 
 
 def _cmd_interaction_route(argv: list[str]) -> int:
@@ -784,6 +913,10 @@ def main() -> int:
             return _cmd_workspace_sync_offer(argv)
         if argv[0] == 'skill-deploy-handoff':
             return _cmd_skill_deploy_handoff(argv)
+        if argv[0] == 'skill-deploy-surface-record':
+            return _cmd_skill_deploy_surface_record(argv)
+        if argv[0] == 'skill-deploy-complete':
+            return _cmd_skill_deploy_complete(argv)
         if argv[0] == 'deployment-provenance-verify':
             return _cmd_deployment_provenance_verify(argv)
         if argv[0] == 'relay-frame':

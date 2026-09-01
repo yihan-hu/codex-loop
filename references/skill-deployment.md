@@ -12,7 +12,7 @@ Keep development location, source lineage, workspace synchronization, and ChatGP
 - A generic `push` request does not silently convert a conversation that is still in Web mode into Local mode. When the verified Web-mode prerequisites are available, publish from the current workspace through `web-mode-publish.md`; if those prerequisites are unavailable or the public-read staging boundary is unacceptable, preserve the Web result and report the blocker rather than migrating source without authorization.
 - **Conversation reset.** A new conversation starts in web mode again; local-mode state does not persist across conversations.
 - `skill.zip` is a release/install artifact, not a development baseline in either mode. Codex Loop packages carry build-generated `references/deployment-manifest.json` bound to the exact verified repository commit/tree and deterministic runtime file-manifest digest; the generated manifest is never committed and package SHA-256 remains external receipt evidence. The installed ChatGPT Skill is a deployed copy and never becomes source-of-truth merely because installation succeeded.
-- **Workspace-resident Skill/package update.** For any Skill or Skill installation package already present/active in the current workspace or host-managed Skill environment, reuse that existing workspace/host resource and perform source/package publication through supported non-browser capabilities first. When Web mode is maintaining that active Skill and the user asks to push/publish the changes, post-push refresh of the current Skill is part of the requested workflow; it is not an optional reminder. Prefer a supported host-managed update, otherwise surface the product's Save/Update handoff. This does not authorize Chrome/browser automation or clicking the Skills UI; actual computer-use interaction still requires explicit current-task authorization.
+- **Workspace-resident Skill/package update.** For any Skill or Skill installation package already present/active in the current workspace or host-managed Skill environment, reuse that existing workspace/host resource and perform source/package publication through supported non-browser capabilities first. When Web mode is maintaining that active Skill and the user asks to push/publish the changes, post-push refresh of the current Skill is part of the requested workflow; it is not an optional reminder. The final installation/update surface is host-owned: use the platform `skill-creator` workflow or an explicitly equivalent native host-managed Skill update primitive. Codex Loop may track the required handoff but must not invent or simulate a Save/Update UI. This does not authorize Chrome/browser automation or clicking the Skills UI; actual computer-use interaction still requires explicit current-task authorization.
 
 ## Source acquisition into a Web workspace
 
@@ -43,8 +43,9 @@ Web mode (default at conversation start)
   -> SOURCE_PUSHED
   -> if the edited source is the active current-workspace Skill:
        skill-deploy-handoff for that exact pushed commit
-       -> supported host-managed update, or surface Save/Update UI handoff
-       -> DEPLOYED only after observed update evidence
+       -> invoke skill-creator / native host Skill update flow
+       -> record actual native surface with skill-deploy-surface-record
+       -> record active revision with skill-deploy-complete
        -> otherwise DEPLOY_PENDING and completion remains blocked
   -> for other Skill sources: packaging/install remains separately requested
   -> return downloadable files/links
@@ -86,7 +87,11 @@ The dedicated Drive folder is intentionally `anyone: reader` so a GitHub-hosted 
 
 When Web mode modifies a Skill that is already active/present in the current ChatGPT workspace or host-managed Skill environment, an explicit request to push or publish those Skill changes also implies refresh of that current Skill after publication. This is a narrow post-push invariant for the Skill being maintained; it does not make arbitrary Skill installation automatic.
 
-After verified `SOURCE_PUSHED`, immediately create the deterministic deployment handoff for the exact published commit:
+### Native Skill update surface ownership
+
+The **native Skill update surface belongs to `skill-creator`/the ChatGPT host, not to Codex Loop**. Codex Loop owns lifecycle continuity and deployment evidence bookkeeping only. **Codex Loop must never emulate, synthesize, or infer the product Install/Update UI** from an internal action, returned JSON, assistant prose, an attachment, or a generated `skill.zip`.
+
+After verified `SOURCE_PUSHED`, create a deterministic planning handoff for the exact published commit:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-handoff \
@@ -96,16 +101,39 @@ python3 scripts/codex_loop.py skill-deploy-handoff \
   --commit FULL_40_HEX_SHA
 ```
 
-The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. Because unresolved external actions block Codex Loop completion, the workflow cannot silently report success while GitHub is newer than the active workspace Skill. Repeated handoff calls for the same Skill/commit deduplicate to the same action.
+The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. It returns `NATIVE_UPDATE_REQUIRED`, `NATIVE_SURFACE_NOT_OBSERVED`, `UI_NOT_OBSERVED`, and `DEPLOY_PENDING`. Those values are deliberately completion-blocking. Repeated handoff calls for the same Skill/commit deduplicate to the same action.
 
 Resolve the handoff in this order:
 
-1. Prefer a supported host-managed, non-browser Skill update/save operation that targets the current workspace Skill and the same pushed source generation. If the update surface requires `skill.zip`, validate/package it from that same generation as part of this deployment stage rather than asking for a separate install intent.
-2. If no callable update exists but the product can surface a Save/Update affordance, surface the Save/Update UI handoff prominently before the task is considered complete. Showing the handoff is allowed; automating clicks is not implied.
-3. Record the external action as `dispatched` only when an actual host update or user-facing update handoff has been initiated. Record `terminal_success` only after the host or user-visible state provides observable evidence that the intended Skill revision is active.
-4. If neither update path is available, keep the action unresolved, report `DEPLOY_PENDING`, and state the exact missing capability. Do not downgrade the missing update into a footnote after reporting success.
+1. For a Skill creation/update task, invoke the platform `skill-creator` workflow with the validated package/source generation bound to the same pushed commit. If the host has an explicitly supported native host-managed update primitive, it may be used instead. Do not replace either with assistant-authored instructions that merely tell the user to click Save/Update.
+2. Only after the host actually exposes/initiates that native Skill surface, record the observation:
 
-`SOURCE_PUSHED` and `DEPLOYED` remain separate evidence states. The push can remain successfully published even when deployment is pending; what changes is that a Web-mode Skill-maintenance task must not normally pass its final completion gate while the active workspace Skill's revision is unknown or older.
+```bash
+python3 scripts/codex_loop.py skill-deploy-surface-record \
+  --cwd REPO \
+  --skill-name NAME \
+  --repository OWNER/REPO \
+  --commit FULL_40_HEX_SHA \
+  --surface-kind skill_creator_install_ui \
+  --evidence "host visibly surfaced the native Skill install/update control"
+```
+
+   This advances the external action to `dispatched` and returns `NATIVE_SURFACE_OBSERVED` plus `UI_SURFACED`; deployment is still `DEPLOY_PENDING`. For a truly host-managed update that requires no UI, use `--surface-kind host_managed_update`, which records `UI_NOT_REQUIRED` rather than pretending UI was shown.
+3. Only after host-visible evidence shows the intended revision is active, record deployment completion:
+
+```bash
+python3 scripts/codex_loop.py skill-deploy-complete \
+  --cwd REPO \
+  --skill-name NAME \
+  --repository OWNER/REPO \
+  --commit FULL_40_HEX_SHA \
+  --evidence "current workspace Skill reports the intended revision"
+```
+
+   `skill-deploy-complete` refuses to run while the action is merely `planned`; a native surface must have actually been dispatched/observed first.
+4. If no native update/install surface can be invoked or observed, leave the action unresolved and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED`. Do not downgrade this into a closing note and do not call the task deployed.
+
+`SOURCE_PUSHED`, `SKILL_PACKAGED`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored Save/Update instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence.
 
 This rule does not grant browser/computer-use authorization. If completing the update requires interacting with ChatGPT through Chrome or macOS UI, the normal explicit computer-use authorization gate still applies.
 
