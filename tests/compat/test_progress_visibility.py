@@ -82,7 +82,7 @@ class ProgressVisibilityTests(unittest.TestCase):
             )
             self.assertTrue(saved["data"]["saved"])
             raw = json.loads(path.read_text())
-            self.assertEqual(raw["workspace"]["default_local_workspace"], "piwork")
+            self.assertEqual(raw["default_local_workspace"], "piwork")
             self.assertEqual(raw["progress_visibility"]["interval_seconds"], 22)
             self.assertEqual(raw["progress_visibility"]["tool_call_interval"], 5)
             self.assertFalse(raw["progress_visibility"]["upfront_plan"])
@@ -93,8 +93,8 @@ class ProgressVisibilityTests(unittest.TestCase):
             reset, _ = call(home, "progress-config", "--reset")
             self.assertTrue(reset["data"]["reset_to_defaults"])
             raw = json.loads(path.read_text())
-            self.assertEqual(raw["workspace"]["default_local_workspace"], "piwork")
-            self.assertEqual(raw["progress_visibility"]["mode"], "enhanced")
+            self.assertEqual(raw["default_local_workspace"], "piwork")
+            self.assertNotIn("progress_visibility", raw)
             self.assertEqual(reset["data"]["mode"], "enhanced")
 
     def test_invalid_read_falls_back_but_write_does_not_overwrite(self):

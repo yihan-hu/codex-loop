@@ -15,7 +15,7 @@ The runtime command `persistence-export --backend google_drive` creates a privat
 
 The manifest is schema-whitelisted. It may contain the objective, criterion text/status, task/profile/generation metadata, repository commit/tree lineage, bounded resume metadata, and external-action state with the action identity hashed. It must not contain chain of thought, hidden system/developer instructions, credentials/tokens/cookies, raw tool transcripts, approval/session nonces, environment secrets, or a raw external-action identity.
 
-A new conversation may download a manifest through the host connector, run `persistence-validate`, then run `persistence-resume-plan` to obtain required current observations and `persistence-resume` to create a fresh durable task after reconciliation. Current GitHub/workspace/tool facts always override stale persisted assumptions. Prior PASS/validation/review/objective-audit evidence becomes stale or historical and is never restored as current proof. Never blindly repeat a non-idempotent action because a persisted manifest says it was pending; reconcile the external system first. See `persistence-resume.md`.
+A new conversation may download a manifest through the host connector, run `persistence-validate`, then use the manifest as bootstrap/reconciliation evidence. Current GitHub/workspace/tool facts always override stale persisted assumptions. Never blindly repeat a non-idempotent action because a persisted manifest says it was pending; reconcile the external system first.
 
 ## Cleanup lifecycle
 

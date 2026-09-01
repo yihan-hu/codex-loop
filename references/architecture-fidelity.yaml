@@ -170,15 +170,6 @@
       "status": "LOCAL_DIVERGENCE",
       "divergence": "Google Drive persistence is a ChatGPT Web reliability adapter, not an upstream Codex storage implementation.",
       "upgrade_path": "Keep a backend-neutral persistence interface so a future native host durable store can replace Drive without changing task semantics."
-    },
-    {
-      "id": "execution_lifetime_separation",
-      "layer": "concept",
-      "paths": [],
-      "required_patterns": [],
-      "status": "PARTIAL",
-      "divergence": "Codex Loop adopts workload/process lifetime separation and task-owned cleanup semantics, but ChatGPT host-visible command execution does not expose the full upstream Codex process/event control plane.",
-      "upgrade_path": "Keep ExecutionObservation and supervisor interfaces host-adaptable; replace partial observation/control adapters when equivalent host process lifecycle primitives are exposed."
     }
   ]
 }

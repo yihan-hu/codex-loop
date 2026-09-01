@@ -40,8 +40,3 @@ Preserve intended behavior, avoid incidental churn, run checks that protect the 
 ## Environment-limited work
 
 Do not fabricate confidence. Record what was changed, what ran successfully, what could not run, why, and whether the limitation leaves material correctness risk. Mark a criterion blocked rather than passed when the missing validation is required for the user's acceptance condition.
-
-
-## Execution-lifecycle completion
-
-Workload correctness and process hygiene are separate requirements. An authoritative `workload=passed` with `process=teardown_stalled` and successful cleanup may satisfy a source/test correctness criterion when clean shutdown is not part of the objective, but the degradation must remain visible. If the objective requires clean shutdown, leaked threads/children, or runner teardown correctness, any teardown stall contradicts completion. `cleanup=orphaned` or otherwise unresolved task-owned process state blocks durable completion.

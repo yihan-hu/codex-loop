@@ -363,12 +363,3 @@ python scripts/audit_source_coverage.py
 ## Hooks
 
 The local runtime exposes no custom hook configuration. It enforces built-in deterministic lifecycle gates around write/validation/checkpoint/completion, while the official Codex matcher/handler hook runtime remains host-owned. Do not interpret repository files as executable hook authority.
-
-
-## Execution outcome recording
-
-`validation-record` accepts legacy `--exit-code` or richer execution fields: `--workload-status`, `--process-status`, `--cleanup-status`, `--evidence-kind`, plus workload/process/cleanup evidence. Terminal workload pass/fail requires authoritative evidence. `TEARDOWN_STALLED` requires a terminal workload and is not equivalent to workload failure. See `execution-supervision.md`.
-
-## Host Profile and resume
-
-Use `host-config show|get|set|unset|reset` for private Host Profile state; `progress-config` is a compatibility facade. Use `persistence-resume-plan` before `persistence-resume`; resume creates a fresh durable task rather than restoring stale validation/review/PASS state.
