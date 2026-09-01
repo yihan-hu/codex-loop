@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "transfer_id": "dev-skill-install-ui-handoff-20260901",
+  "file_id": "1cg_DG610jzhNzJpo56F9SgeObKUnVUga",
+  "size": 287452,
+  "sha256": "8011c41d2c6371f6af601cc141997fd46aa1dcfe602c43ac1536cae5c68165b4",
+  "expected_base": "fe314699e1e13559c8837245cfd76098f1d188f1",
+  "target_branch": "dev/skill-install-ui-handoff"
+}
