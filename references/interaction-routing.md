@@ -15,6 +15,8 @@ Remote Desktop Commander availability, a request to control Chrome, a request to
 
 ## Axis 2: `interaction_target`
 
+Browser resolution is deterministic: explicit user target > task hard requirement > Host Profile preference > built-in default > capability degradation. The built-in preference is `cloud_browser`. A Cloud Browser failure never silently activates local Chrome; local targets remain authorization-gated.
+
 Choose the narrowest target needed by the task:
 
 - `none`: no browser/computer interaction is required.

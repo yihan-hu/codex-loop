@@ -23,8 +23,12 @@ from codex_loop_runtime.command_safety import assess as assess_command
 from codex_loop_runtime.lifecycle import DURABLE_SIGNAL_KEYS, assess_runtime_need
 from codex_loop_runtime.host_config import (
     PROGRESS_MODES,
+    effective_host_profile,
     effective_progress_config,
     progress_policy,
+    reset_host_section,
+    resolve_interaction_target,
+    set_host_config,
     set_progress_config,
 )
 from codex_loop_runtime.persistence import (
@@ -32,6 +36,8 @@ from codex_loop_runtime.persistence import (
     cleanup_decision,
     load_state_manifest,
     persistence_policy,
+    resume_plan,
+    resume_state,
     write_state_manifest,
 )
 from codex_loop_runtime.model_relay import (
@@ -59,10 +65,14 @@ from codex_loop_runtime.workspace_registry import (
 HOST_ADAPTER_COMMANDS = (
     ('lifecycle-assess', 'decide direct vs durable execution and expose effective progress policy'),
     ('next', 'project the bounded working set for the active durable task'),
-    ('progress-config', 'show or update private progress-visibility preferences'),
+    ('host-config', 'show or update the unified private Host Profile'),
+    ('progress-config', 'compatibility facade for progress-visibility preferences'),
+    ('interaction-route', 'resolve browser/computer interaction target without granting capability'),
     ('progress-policy', 'resolve effective progress behavior for direct or durable work'),
     ('persistence-export', 'export private cross-conversation recovery state'),
     ('persistence-validate', 'validate a recovery manifest'),
+    ('persistence-resume-plan', 'plan deterministic recovery observations'),
+    ('persistence-resume', 'reconcile current reality and rehydrate a fresh durable task'),
     ('persistence-cleanup-plan', 'plan recovery-manifest cleanup'),
     ('objective-audit', 'record requirement-by-requirement completion evidence'),
     ('workspace-register', 'register a private host workspace alias'),
@@ -152,6 +162,43 @@ def _cmd_next(argv: list[str]) -> int:
     return 0
 
 
+
+def _parse_host_value(raw: str):
+    low = raw.lower()
+    if low == 'true': return True
+    if low == 'false': return False
+    if low == 'null': return None
+    return raw
+
+def _cmd_host_config(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py host-config')
+    sub = p.add_subparsers(dest='action')
+    sub.add_parser('show')
+    getp = sub.add_parser('get'); getp.add_argument('key')
+    setp = sub.add_parser('set'); setp.add_argument('key'); setp.add_argument('value')
+    unsetp = sub.add_parser('unset'); unsetp.add_argument('key')
+    resetp = sub.add_parser('reset'); resetp.add_argument('section')
+    args = p.parse_args(argv[1:])
+    action = args.action or 'show'
+    if action == 'show': emit_ok(effective_host_profile()); return 0
+    if action == 'get':
+        cur = effective_host_profile()
+        for part in args.key.split('.'):
+            if not isinstance(cur, dict) or part not in cur: raise ValueError('unknown host-config key')
+            cur = cur[part]
+        emit_ok({'key':args.key,'value':cur}); return 0
+    if action == 'set': emit_ok(set_host_config(args.key, _parse_host_value(args.value))); return 0
+    if action == 'unset': emit_ok(set_host_config(args.key, unset=True)); return 0
+    if action == 'reset': emit_ok(reset_host_section(args.section)); return 0
+    raise ValueError('unsupported host-config action')
+
+def _cmd_interaction_route(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py interaction-route')
+    p.add_argument('--explicit-target', choices=['cloud_browser','local_chrome','local_mac_gui'])
+    p.add_argument('--requires-user-session', action='store_true')
+    args=p.parse_args(argv[1:])
+    emit_ok(resolve_interaction_target(explicit_target=args.explicit_target, requires_user_session=args.requires_user_session)); return 0
+
 def _cmd_progress_config(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py progress-config')
     p.add_argument('--mode', choices=sorted(PROGRESS_MODES))
@@ -234,7 +281,14 @@ def _cmd_validation_record(argv: list[str]) -> int:
     p.add_argument('--plan-id')
     p.add_argument('--command-json', required=True)
     p.add_argument('--generation', type=int)
-    p.add_argument('--exit-code', type=int, required=True)
+    p.add_argument('--exit-code', type=int)
+    p.add_argument('--workload-status', choices=['unknown','running','passed','failed','cancelled'])
+    p.add_argument('--process-status', choices=['running','exited_clean','exited_nonzero','teardown_stalled','timed_out','terminated','orphaned','unknown'])
+    p.add_argument('--cleanup-status', choices=['not_required','succeeded','failed','orphaned','unsupported','unknown'])
+    p.add_argument('--evidence-kind', choices=['machine_authoritative','framework_authoritative','explicit_protocol','weak_textual','none'])
+    p.add_argument('--workload-evidence')
+    p.add_argument('--process-evidence')
+    p.add_argument('--cleanup-evidence')
     p.add_argument('--evidence', required=True)
     args = p.parse_args(argv[1:])
     cwd = _cwd(args.cwd)
@@ -253,8 +307,8 @@ def _cmd_validation_record(argv: list[str]) -> int:
         raise RuntimeError(f'host validation is stale: observed generation {args.generation} but current generation is {generation}; rerun validation')
     inferred = args.plan_id is None
     plan_id = args.plan_id or _resolve_plan(store, generation, command, cwd)['plan_id']
-    validation_id = store.record_host_validation(plan_id, generation, command, args.exit_code, cwd=cwd, evidence=args.evidence)
-    emit_ok({'validation_id': validation_id, 'cwd': str(cwd), 'exit_code': args.exit_code, 'bookkeeping_inferred': inferred})
+    validation_id = store.record_host_validation(plan_id, generation, command, args.exit_code, cwd=cwd, evidence=args.evidence, workload_status=args.workload_status, process_status=args.process_status, cleanup_status=args.cleanup_status, evidence_kind=args.evidence_kind, workload_evidence=args.workload_evidence, process_evidence=args.process_evidence, cleanup_evidence=args.cleanup_evidence)
+    emit_ok({'validation_id': validation_id, 'cwd': str(cwd), 'exit_code': args.exit_code, 'workload_status': args.workload_status or ('passed' if args.exit_code == 0 else 'failed' if args.exit_code is not None else 'unknown'), 'process_status': args.process_status or ('exited_clean' if args.exit_code == 0 else 'exited_nonzero' if args.exit_code is not None else 'unknown'), 'bookkeeping_inferred': inferred})
     return 0
 
 
@@ -427,6 +481,15 @@ def _cmd_persistence_validate(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_persistence_resume_plan(argv: list[str]) -> int:
+    p=argparse.ArgumentParser(prog='codex_loop.py persistence-resume-plan'); p.add_argument('--manifest',required=True); args=p.parse_args(argv[1:])
+    emit_ok(resume_plan(load_state_manifest(Path(args.manifest).resolve()))); return 0
+
+def _cmd_persistence_resume(argv: list[str]) -> int:
+    p=argparse.ArgumentParser(prog='codex_loop.py persistence-resume'); p.add_argument('--cwd'); p.add_argument('--manifest',required=True); p.add_argument('--observations-json',required=True); args=p.parse_args(argv[1:])
+    cwd=_cwd(args.cwd); root=repo_root(cwd); manifest=load_state_manifest(Path(args.manifest).resolve()); observations=json.loads(Path(args.observations_json).read_text(encoding='utf-8'))
+    emit_ok(resume_state(root,manifest,observations)); return 0
+
 def _cmd_persistence_cleanup_plan(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py persistence-cleanup-plan')
     p.add_argument('--manifest', required=True)
@@ -570,6 +633,10 @@ def main() -> int:
             return _cmd_lifecycle_assess(argv)
         if argv[0] == 'next':
             return _cmd_next(argv)
+        if argv[0] == 'host-config':
+            return _cmd_host_config(argv)
+        if argv[0] == 'interaction-route':
+            return _cmd_interaction_route(argv)
         if argv[0] == 'progress-config':
             return _cmd_progress_config(argv)
         if argv[0] == 'progress-policy':
@@ -582,6 +649,10 @@ def main() -> int:
             return _cmd_persistence_export(argv)
         if argv[0] == 'persistence-validate':
             return _cmd_persistence_validate(argv)
+        if argv[0] == 'persistence-resume-plan':
+            return _cmd_persistence_resume_plan(argv)
+        if argv[0] == 'persistence-resume':
+            return _cmd_persistence_resume(argv)
         if argv[0] == 'persistence-cleanup-plan':
             return _cmd_persistence_cleanup_plan(argv)
         if argv[0] == 'objective-audit':

@@ -222,3 +222,133 @@ def cleanup_decision(manifest: dict[str, Any], *, now: datetime | None = None) -
         "permanent_delete": False,
         "rule": "trash-first; permanent deletion remains Drive/user policy",
     }
+
+
+def resume_plan(manifest: dict[str, Any]) -> dict[str, Any]:
+    validate_state_manifest(manifest)
+    required = ["workspace_presence"]
+    workspace = manifest.get("workspace") or {}
+    if workspace.get("repository") or workspace.get("base_commit") or workspace.get("base_tree"):
+        required.extend(["repository_head", "repository_tree"])
+    unresolved = []
+    for item in manifest.get("external_actions", []):
+        if item.get("state") in {"planned", "dispatched", "outcome_unknown"} or (
+            item.get("state") == "terminal_failure" and not item.get("failure_resolved")
+        ):
+            unresolved.append({
+                "kind": item.get("kind"),
+                "action_class": item.get("action_class"),
+                "identity_sha256": item.get("identity_sha256"),
+                "prior_state": item.get("state"),
+            })
+    if unresolved:
+        required.append("external_action_states")
+    return {
+        "status": "NEEDS_RECONCILIATION" if required else "RESUMED",
+        "required_observations": required,
+        "external_actions_to_reconcile": unresolved,
+        "rule": "persisted state is historical evidence; current workspace and external reality are authoritative",
+    }
+
+
+def _validate_observations(observations: dict[str, Any], plan: dict[str, Any]) -> None:
+    if not isinstance(observations, dict):
+        raise ValueError("resume observations must be a JSON object")
+    missing = [key for key in plan["required_observations"] if key not in observations]
+    if missing:
+        raise ValueError(f"resume observations missing required fields: {missing}")
+    if "workspace_presence" in observations and not isinstance(observations["workspace_presence"], bool):
+        raise ValueError("workspace_presence must be boolean")
+    if "external_action_states" in observations and not isinstance(observations["external_action_states"], dict):
+        raise ValueError("external_action_states must be an object keyed by identity_sha256")
+
+
+def resume_state(root: Path, manifest: dict[str, Any], observations: dict[str, Any]) -> dict[str, Any]:
+    from .change_tracker import capture_baseline
+    from .release_lineage import capture_workspace_binding
+    from .state import create_store, set_active_task
+
+    validate_state_manifest(manifest)
+    plan = resume_plan(manifest)
+    _validate_observations(observations, plan)
+    if not observations.get("workspace_presence", False):
+        return {"status": "NEEDS_RECONCILIATION", "reason": "workspace_missing", "resumed": False}
+
+    prior_workspace = manifest.get("workspace") or {}
+    source_diverged = False
+    if prior_workspace.get("base_commit") and observations.get("repository_head") != prior_workspace.get("base_commit"):
+        source_diverged = True
+    if prior_workspace.get("base_tree") and observations.get("repository_tree") != prior_workspace.get("base_tree"):
+        source_diverged = True
+
+    task = manifest.get("task") or {}
+    criteria_text = [str(item.get("text") or "") for item in manifest.get("criteria", [])]
+    store = create_store(root)
+    task_id = store.path.parent.name
+    try:
+        store.configure_task(
+            task_id,
+            str(task.get("objective") or "Resumed Codex Loop objective"),
+            criteria_text,
+            profile=str(task.get("profile") or "regular"),
+            requires_validation=True,
+        )
+        store.set_meta("requires_objective_completion_audit", True)
+        store.set_meta("workspace_binding", capture_workspace_binding(root))
+        store.set_meta("resume_lineage", {
+            "resumed": True,
+            "resume_source_task": task.get("task_id"),
+            "resume_source_generation": task.get("generation"),
+            "resume_source_plan_revision": task.get("plan_revision"),
+            "freshness_domain": "new_task",
+        })
+        store.set_meta("historical_resume_evidence", {
+            "criteria": manifest.get("criteria", []),
+            "prior_completion_status": (manifest.get("resume") or {}).get("completion_status"),
+            "prior_validation": "historical_not_restored",
+            "prior_review": "historical_not_restored",
+            "prior_objective_audit": "historical_not_restored",
+            "source_diverged": source_diverged,
+        })
+        capture_baseline(root, store)
+        action_states = observations.get("external_action_states") or {}
+        unresolved = []
+        for item in plan["external_actions_to_reconcile"]:
+            ident_hash = str(item.get("identity_sha256") or "")
+            observed = action_states.get(ident_hash)
+            if observed not in {"terminal_success", "terminal_failure", "outcome_unknown"}:
+                unresolved.append(ident_hash)
+                observed = "outcome_unknown"
+            elif observed == "outcome_unknown":
+                unresolved.append(ident_hash)
+            action_class = str(item.get("action_class") or "recheckable")
+            identity = f"resume-hash:{ident_hash}" if action_class == "external_non_idempotent" else None
+            action_id = store.record_external(str(item.get("kind") or "resumed_external_action"), "planned", identity, action_class=action_class)
+            store.record_external(str(item.get("kind") or "resumed_external_action"), "dispatched", identity, action_class=action_class, action_id=action_id)
+            store.record_external(str(item.get("kind") or "resumed_external_action"), observed, identity, details={"reconciled_from_persisted_identity_sha256": ident_hash, "observed_state": observed}, action_class=action_class, action_id=action_id)
+        set_active_task(root, task_id)
+    except Exception:
+        import shutil
+        shutil.rmtree(store.path.parent, ignore_errors=True)
+        raise
+
+    if unresolved:
+        status = "EXTERNAL_ACTION_UNRESOLVED"
+    elif source_diverged:
+        status = "SOURCE_DIVERGED"
+    else:
+        status = "RESUMED"
+    return {
+        "status": status,
+        "resumed": True,
+        "task_id": task_id,
+        "source_diverged": source_diverged,
+        "external_action_unresolved": bool(unresolved),
+        "freshness": {
+            "criteria": "stale_pending_reproof",
+            "validation": "historical",
+            "review": "historical",
+            "objective_audit": "historical",
+        },
+        "rule": "current facts win; non-idempotent actions are reconciled before any retry",
+    }

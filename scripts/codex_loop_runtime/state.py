@@ -67,8 +67,15 @@ CREATE TABLE IF NOT EXISTS validations (
     generation INTEGER NOT NULL,
     command_json TEXT NOT NULL,
     cwd TEXT NOT NULL DEFAULT '',
-    exit_code INTEGER NOT NULL,
+    exit_code INTEGER,
     passed INTEGER NOT NULL,
+    workload_status TEXT NOT NULL DEFAULT 'unknown',
+    process_status TEXT NOT NULL DEFAULT 'unknown',
+    cleanup_status TEXT NOT NULL DEFAULT 'unknown',
+    evidence_kind TEXT NOT NULL DEFAULT 'none',
+    workload_evidence TEXT,
+    process_evidence TEXT,
+    cleanup_evidence TEXT,
     disposition TEXT NOT NULL DEFAULT 'blocking',
     disposition_evidence TEXT,
     source TEXT NOT NULL DEFAULT 'local_runtime',
@@ -361,6 +368,17 @@ class StateStore:
                 db.execute("ALTER TABLE validations ADD COLUMN cwd TEXT NOT NULL DEFAULT ''")
             if "plan_id" not in validation_columns:
                 db.execute("ALTER TABLE validations ADD COLUMN plan_id TEXT")
+            for name, ddl in (
+                ("workload_status", "TEXT NOT NULL DEFAULT 'unknown'"),
+                ("process_status", "TEXT NOT NULL DEFAULT 'unknown'"),
+                ("cleanup_status", "TEXT NOT NULL DEFAULT 'unknown'"),
+                ("evidence_kind", "TEXT NOT NULL DEFAULT 'none'"),
+                ("workload_evidence", "TEXT"),
+                ("process_evidence", "TEXT"),
+                ("cleanup_evidence", "TEXT"),
+            ):
+                if name not in validation_columns:
+                    db.execute(f"ALTER TABLE validations ADD COLUMN {name} {ddl}")
             mutation_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(mutations)")}
             if "override_reason" not in mutation_columns:
                 db.execute("ALTER TABLE mutations ADD COLUMN override_reason TEXT")
@@ -598,64 +616,59 @@ class StateStore:
         return {"plan_id": plan_id, "generation": generation, "cwd": cwd_norm, "identity": rec["sha256"]}
 
     def record_validation(
-        self,
-        generation: int,
-        argv: list[str],
-        exit_code: int,
-        *,
-        cwd: str | Path,
-        source: str = "local_runtime",
-        evidence: str | None = None,
+        self, generation: int, argv: list[str], exit_code: int, *, cwd: str | Path,
+        source: str = "local_runtime", evidence: str | None = None,
     ) -> int:
+        from .execution_supervision import legacy_observation
         if source != "local_runtime":
             raise ValueError("host-observed validation must consume a validation plan via record_host_validation")
-        clean_evidence = scrub_persisted_text(evidence, limit=4096)
-        if not clean_evidence:
-            clean_evidence = f"local runtime observed exit code {int(exit_code)}"
+        clean_evidence = scrub_persisted_text(evidence, limit=4096) or f"local runtime observed exit code {int(exit_code)}"
+        observation = legacy_observation(int(exit_code), clean_evidence)
         cwd_norm, rec = self._validation_record(argv, cwd)
         with self.connect() as db:
             cur = db.execute(
-                "INSERT INTO validations(generation,command_json,cwd,exit_code,passed,source,evidence,plan_id) VALUES(?,?,?,?,?,?,?,NULL)",
-                (int(generation), json.dumps(rec, sort_keys=True), cwd_norm, int(exit_code), int(exit_code == 0), source, clean_evidence),
+                "INSERT INTO validations(generation,command_json,cwd,exit_code,passed,source,evidence,plan_id,workload_status,process_status,cleanup_status,evidence_kind,workload_evidence,process_evidence,cleanup_evidence) VALUES(?,?,?,?,?,?,?,NULL,?,?,?,?,?,?,?)",
+                (int(generation), json.dumps(rec, sort_keys=True), cwd_norm, int(exit_code), int(observation.workload_status == 'passed'), source, clean_evidence, str(observation.workload_status), str(observation.process_status), str(observation.cleanup_status), str(observation.evidence_kind), clean_evidence, observation.process_evidence, observation.cleanup_evidence),
             )
             return int(cur.lastrowid)
 
     def record_host_validation(
-        self, plan_id: str, generation: int, argv: list[str], exit_code: int, *, cwd: str | Path, evidence: str
+        self, plan_id: str, generation: int, argv: list[str], exit_code: int | None, *, cwd: str | Path, evidence: str,
+        workload_status: str | None = None, process_status: str | None = None, cleanup_status: str | None = None,
+        evidence_kind: str | None = None, workload_evidence: str | None = None, process_evidence: str | None = None, cleanup_evidence: str | None = None,
     ) -> int:
+        from .execution_supervision import CleanupStatus, EvidenceKind, ExecutionObservation, ProcessStatus, WorkloadStatus, legacy_observation
         self.ensure_active()
         clean_evidence = scrub_persisted_text(evidence, limit=4096)
-        if not (clean_evidence and clean_evidence.strip()):
-            raise ValueError("host-observed validation requires concise observable evidence")
-        plan_id = validate_task_id(plan_id)
-        generation = int(generation)
-        cwd_norm, rec = self._validation_record(argv, cwd)
-        encoded = json.dumps(rec, sort_keys=True)
+        if not (clean_evidence and clean_evidence.strip()): raise ValueError("host-observed validation requires concise observable evidence")
+        if workload_status is None and process_status is None and cleanup_status is None and evidence_kind is None:
+            if exit_code is None: raise ValueError("legacy validation recording requires --exit-code")
+            obs = legacy_observation(int(exit_code), clean_evidence)
+        else:
+            obs = ExecutionObservation(
+                workload_status=WorkloadStatus(workload_status or 'unknown'),
+                process_status=ProcessStatus(process_status or 'unknown'),
+                cleanup_status=CleanupStatus(cleanup_status or 'unknown'),
+                evidence_kind=EvidenceKind(evidence_kind or 'none'),
+                workload_evidence=scrub_persisted_text(workload_evidence, limit=4096),
+                process_evidence=scrub_persisted_text(process_evidence, limit=4096),
+                cleanup_evidence=scrub_persisted_text(cleanup_evidence, limit=4096),
+                exit_code=None if exit_code is None else int(exit_code),
+            ).validate()
+        plan_id = validate_task_id(plan_id); generation=int(generation); cwd_norm, rec=self._validation_record(argv,cwd); encoded=json.dumps(rec,sort_keys=True)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT generation,command_json,cwd,consumed FROM validation_plans WHERE plan_id=?", (plan_id,)
-            ).fetchone()
-            if row is None:
-                raise ValueError("host validation plan does not exist")
-            if bool(row["consumed"]):
-                raise ValueError("host validation plan has already been consumed")
-            if generation != self.generation() or generation != int(row["generation"]):
-                raise RuntimeError(
-                    f"host validation is stale: planned generation {int(row['generation'])}, observed generation {generation}, current generation {self.generation()}"
-                )
-            if cwd_norm != str(row["cwd"]):
-                raise ValueError("host validation cwd does not match the planned cwd")
-            if encoded != str(row["command_json"]):
-                raise ValueError("host validation command identity does not match the planned command")
-            cur = db.execute(
-                "INSERT INTO validations(generation,command_json,cwd,exit_code,passed,source,evidence,plan_id) VALUES(?,?,?,?,?,'host_observed',?,?)",
-                (generation, encoded, cwd_norm, int(exit_code), int(exit_code == 0), clean_evidence, plan_id),
+            row=db.execute("SELECT generation,command_json,cwd,consumed FROM validation_plans WHERE plan_id=?",(plan_id,)).fetchone()
+            if row is None: raise ValueError("host validation plan does not exist")
+            if bool(row["consumed"]): raise ValueError("host validation plan has already been consumed")
+            if generation != self.generation() or generation != int(row["generation"]): raise RuntimeError(f"host validation is stale: planned generation {int(row['generation'])}, observed generation {generation}, current generation {self.generation()}")
+            if cwd_norm != str(row["cwd"]): raise ValueError("host validation cwd does not match the planned cwd")
+            if encoded != str(row["command_json"]): raise ValueError("host validation command identity does not match the planned command")
+            cur=db.execute(
+                "INSERT INTO validations(generation,command_json,cwd,exit_code,passed,source,evidence,plan_id,workload_status,process_status,cleanup_status,evidence_kind,workload_evidence,process_evidence,cleanup_evidence) VALUES(?,?,?,?,?,'host_observed',?,?,?,?,?,?,?,?,?)",
+                (generation,encoded,cwd_norm,obs.exit_code,int(obs.workload_status == 'passed'),clean_evidence,plan_id,str(obs.workload_status),str(obs.process_status),str(obs.cleanup_status),str(obs.evidence_kind),obs.workload_evidence,obs.process_evidence,obs.cleanup_evidence),
             )
-            db.execute(
-                "UPDATE validation_plans SET consumed=1,consumed_at=CURRENT_TIMESTAMP WHERE plan_id=? AND consumed=0",
-                (plan_id,),
-            )
+            db.execute("UPDATE validation_plans SET consumed=1,consumed_at=CURRENT_TIMESTAMP WHERE plan_id=? AND consumed=0",(plan_id,))
             return int(cur.lastrowid)
 
     def latest_validation(self) -> dict[str, Any] | None:

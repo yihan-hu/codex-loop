@@ -14,7 +14,13 @@ import os
 import re
 import sys
 import zipfile
+import json
 from pathlib import Path, PurePosixPath
+
+SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from codex_loop_runtime.deployment_manifest import build_deployment_manifest
 
 ROOT_FILES = ("ATTRIBUTION.md", "LICENSE", "NOTICE", "SKILL.md")
 RUNTIME_DIRS = ("agents", "assets", "references", "scripts")
@@ -75,7 +81,7 @@ def _validate_chatgpt_metadata(source: Path) -> None:
         raise ValueError("agents/openai.yaml must not include the legacy policy.products override")
 
 
-def build_skill_zip(source: Path, output: Path) -> dict[str, object]:
+def build_skill_zip(source: Path, output: Path, *, repository: str | None = None, commit: str | None = None, tree: str | None = None) -> dict[str, object]:
     source = source.resolve()
     output = output.resolve()
     name = _skill_name(source / "SKILL.md")
@@ -83,6 +89,11 @@ def build_skill_zip(source: Path, output: Path) -> dict[str, object]:
         raise ValueError(f"unexpected Skill name: {name}")
     _validate_chatgpt_metadata(source)
     files = _runtime_files(source)
+    provenance = None
+    if any(value is not None for value in (repository, commit, tree)):
+        if not all(value is not None for value in (repository, commit, tree)):
+            raise ValueError("deployment provenance requires repository, commit, and tree together")
+        provenance = build_deployment_manifest(source, files, repository=str(repository), commit=str(commit), tree=str(tree))
 
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp = output.with_suffix(output.suffix + ".tmp")
@@ -96,22 +107,31 @@ def build_skill_zip(source: Path, output: Path) -> dict[str, object]:
                 info.external_attr = 0o100644 << 16
                 info.compress_type = zipfile.ZIP_DEFLATED
                 archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+            if provenance is not None:
+                rel = PurePosixPath(name) / "references" / "deployment-manifest.json"
+                info = zipfile.ZipInfo(rel.as_posix(), FIXED_ZIP_TIME)
+                info.create_system = 3; info.external_attr = 0o100644 << 16; info.compress_type = zipfile.ZIP_DEFLATED
+                payload = (json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n").encode("utf-8")
+                archive.writestr(info, payload, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
         os.replace(tmp, output)
     finally:
         if tmp.exists():
             tmp.unlink()
 
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    return {"output": str(output), "sha256": digest, "file_count": len(files), "skill_name": name}
+    return {"output": str(output), "sha256": digest, "file_count": len(files) + (1 if provenance is not None else 0), "skill_name": name, "deployment_manifest": provenance}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default=".", help="repository root (default: current directory)")
     parser.add_argument("--output", required=True, help="output ZIP path")
+    parser.add_argument("--repository")
+    parser.add_argument("--commit")
+    parser.add_argument("--tree")
     args = parser.parse_args(argv)
     try:
-        result = build_skill_zip(Path(args.source), Path(args.output))
+        result = build_skill_zip(Path(args.source), Path(args.output), repository=args.repository, commit=args.commit, tree=args.tree)
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

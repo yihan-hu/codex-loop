@@ -69,3 +69,16 @@ class SkillPackageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DeploymentProvenanceTests(unittest.TestCase):
+    def test_package_can_embed_exact_non_sensitive_provenance(self):
+        with tempfile.TemporaryDirectory() as td:
+            package=Path(td)/'skill.zip'
+            result=MODULE.build_skill_zip(ROOT,package,repository='yihan-hu/codex-loop',commit='a'*40,tree='b'*40)
+            with zipfile.ZipFile(package) as archive:
+                import json
+                manifest=json.loads(archive.read('codex-loop/references/deployment-manifest.json'))
+            self.assertEqual(manifest['source']['commit'],'a'*40)
+            self.assertEqual(manifest['source']['tree'],'b'*40)
+            self.assertFalse(manifest['privacy']['contains_host_profile'])
+            self.assertNotIn('package_sha256',manifest['bundle'])

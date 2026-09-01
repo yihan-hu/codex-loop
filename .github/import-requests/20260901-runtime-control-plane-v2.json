@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "transfer_id": "20260901-runtime-control-plane-v2-998d3c84",
-  "file_id": "1vCTO7xJtgSFhc-DXW_IfUGFYRTnVfFwE",
-  "size": 262871,
-  "sha256": "998d3c843a99b38a0d509187df892da9c2e533d3970eec35bb1dd9ae5cd5f36d",
-  "expected_base": "adc4f7a0e78418aabccc306ea70c34ced2259cc4",
-  "target_branch": "main"
-}
