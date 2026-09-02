@@ -30,11 +30,6 @@ OPENAI_YAML = '''interface:
   default_prompt: Use $codex-loop-update-bridge to continue the stable different-name Codex Loop update recovery path.
 policy:
   allow_implicit_invocation: false
-  products:
-  - chatgpt
-  - codex
-  - api
-  - atlas
 '''
 
 
@@ -57,6 +52,8 @@ def main() -> int:
         "path": str(root),
         "explicit_only": True,
         "minimal_profile": True,
+        "install_compatible_metadata_profile": True,
+        "policy_products_present": False,
         "file_count": 2,
         "default_prompt_self_reference": "$codex-loop-update-bridge",
         "production_skill_name": "codex-loop",

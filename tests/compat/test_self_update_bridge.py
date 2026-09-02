@@ -24,6 +24,8 @@ class SelfUpdateBridgeTests(unittest.TestCase):
             self.assertEqual(payload["bridge_name"], "codex-loop-update-bridge")
             self.assertFalse(payload["production_package_mutation_allowed"])
             self.assertTrue(payload["minimal_profile"])
+            self.assertTrue(payload["install_compatible_metadata_profile"])
+            self.assertFalse(payload["policy_products_present"])
             self.assertEqual(payload["file_count"], 2)
             self.assertEqual(payload["default_prompt_self_reference"], "$codex-loop-update-bridge")
 
@@ -39,7 +41,8 @@ class SelfUpdateBridgeTests(unittest.TestCase):
             self.assertIn("Do not invoke Codex Loop", skill)
             self.assertIn("allow_implicit_invocation: false", metadata)
             self.assertIn("default_prompt: Use $codex-loop-update-bridge", metadata)
-            self.assertIn("  products:\n  - chatgpt\n  - codex\n  - api\n  - atlas\n", metadata)
+            self.assertNotIn("products:", metadata)
+            self.assertNotIn("policy.products", metadata)
 
     def test_generator_refuses_overwrite(self):
         with tempfile.TemporaryDirectory() as td:
