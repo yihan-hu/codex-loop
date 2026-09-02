@@ -318,6 +318,12 @@ ChatGPT workspace
   -> permanently delete the temporary Drive transport archive
 ```
 
+### Fast path after a just-finished validation
+
+If a Web workspace was already validated/reviewed and you immediately say `push`, Codex Loop reuses the same active task/generation and routing session instead of restarting the lifecycle. `web-publish-plan --verified-tree-fast-path` returns `FAST_PUBLISH` only when the workspace/tree, validation/review, scoped capability observations, and optional publish-ready archive receipt are still fresh. Otherwise it returns `FULL_VERIFIED_PUBLISH` and names only the stale gates.
+
+The security model is unchanged: source bytes still go through Drive staging and audited Workspace Import. Success is proven by `remote tree == validated tree`, not by a new commit SHA alone.
+
 ### One-time Web-mode setup
 
 This path does **not** require Remote Desktop Commander, a local checkout, local Git, or your computer to stay online. The ChatGPT workspace remains the source of truth and the transfer is completed by connected cloud services.

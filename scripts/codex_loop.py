@@ -37,7 +37,9 @@ from codex_loop_runtime.routing_state import (
     ROUTE_ACTIONS,
     WORKSPACE_MODES,
     PERMISSION_PROBE_CAPABILITIES,
+    permission_observation_status,
     permission_preflight_plan,
+    record_permission_observation,
     route_check,
     route_init,
     route_show,
@@ -73,6 +75,7 @@ from codex_loop_runtime.model_relay import (
     receive_file,
 )
 from codex_loop_runtime.protocol import emit_error, emit_ok
+from codex_loop_runtime.web_publish import build_web_publish_archive, web_publish_plan
 from codex_loop_runtime.state import active_task_id, open_store
 from codex_loop_runtime.workspace import repo_root
 from codex_loop_runtime.workspace_registry import (
@@ -96,7 +99,11 @@ HOST_ADAPTER_COMMANDS = (
     ('route-show', 'show deterministic conversation-scoped routing state'),
     ('route-transition', 'change workspace, interaction, or deployment routing with evidence gates'),
     ('route-check', 'fail closed before repository, browser, deployment, or publish host actions'),
-    ('permission-preflight-plan', 'plan live post-review host permission smoke probes without granting permission'),
+    ('permission-preflight-plan', 'plan only permission probes not covered by fresh scoped current-session observations'),
+    ('permission-observation-record', 'record a scoped expiring host capability observation'),
+    ('permission-observation-status', 'check freshness of a scoped current-session host capability observation'),
+    ('web-publish-archive', 'build and bind a reusable deterministic publish-ready Web source archive'),
+    ('web-publish-plan', 'plan verified Web publication with an optional validated-tree fast path'),
     ('interaction-route', 'resolve Cloud Browser vs local browser target without granting access'),
     ('persistence-export', 'export private cross-conversation recovery state'),
     ('persistence-validate', 'validate a recovery manifest'),
@@ -786,14 +793,44 @@ def _cmd_route_check(argv: list[str]) -> int:
     return 0
 
 
-def _cmd_permission_preflight_plan(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py permission-preflight-plan')
-    p.add_argument('--session-id')
-    p.add_argument('--capability', action='append', required=True, choices=sorted(PERMISSION_PROBE_CAPABILITIES))
-    args = p.parse_args(argv[1:])
-    emit_ok(permission_preflight_plan(capabilities=args.capability, session_id=args.session_id))
-    return 0
+def _capability_scope_map(values: list[str] | None) -> dict[str,str]:
+    out={}
+    for raw in values or []:
+        if '=' not in raw: raise ValueError('capability scope must use CAPABILITY=SCOPE')
+        cap,scope=raw.split('=',1); cap=cap.strip(); scope=scope.strip()
+        if cap not in PERMISSION_PROBE_CAPABILITIES: raise ValueError(f'unknown permission capability scope: {cap}')
+        if not scope: raise ValueError(f'permission capability scope is empty: {cap}')
+        out[cap]=scope
+    return out
 
+
+def _cmd_permission_preflight_plan(argv: list[str]) -> int:
+    p=argparse.ArgumentParser(prog='codex_loop.py permission-preflight-plan')
+    p.add_argument('--session-id'); p.add_argument('--capability',action='append',required=True,choices=sorted(PERMISSION_PROBE_CAPABILITIES))
+    p.add_argument('--observation-scope',action='append',default=[]); p.add_argument('--reuse-fresh-observations',action='store_true')
+    args=p.parse_args(argv[1:]); emit_ok(permission_preflight_plan(capabilities=args.capability,session_id=args.session_id,
+        observation_scopes=_capability_scope_map(args.observation_scope),reuse_fresh_observations=args.reuse_fresh_observations)); return 0
+
+
+def _cmd_permission_observation_record(argv: list[str]) -> int:
+    p=argparse.ArgumentParser(prog='codex_loop.py permission-observation-record'); p.add_argument('--session-id',required=True)
+    p.add_argument('--capability',required=True,choices=sorted(PERMISSION_PROBE_CAPABILITIES)); p.add_argument('--scope',required=True); p.add_argument('--evidence',required=True); p.add_argument('--ttl-seconds',type=int,default=1800)
+    a=p.parse_args(argv[1:]); emit_ok(record_permission_observation(session_id=a.session_id,capability=a.capability,scope=a.scope,evidence=a.evidence,ttl_seconds=a.ttl_seconds)); return 0
+
+
+def _cmd_permission_observation_status(argv: list[str]) -> int:
+    p=argparse.ArgumentParser(prog='codex_loop.py permission-observation-status'); p.add_argument('--session-id',required=True); p.add_argument('--capability',required=True,choices=sorted(PERMISSION_PROBE_CAPABILITIES)); p.add_argument('--scope',required=True)
+    a=p.parse_args(argv[1:]); emit_ok(permission_observation_status(session_id=a.session_id,capability=a.capability,scope=a.scope)); return 0
+
+
+def _cmd_web_publish_archive(argv: list[str]) -> int:
+    p=argparse.ArgumentParser(prog='codex_loop.py web-publish-archive'); p.add_argument('--cwd'); p.add_argument('--task-id'); p.add_argument('--output',required=True); p.add_argument('--top-level')
+    a=p.parse_args(argv[1:]); cwd,root,store=_scope_from_argv(argv); emit_ok(build_web_publish_archive(root,store,output=Path(a.output),top_level=a.top_level)); return 0
+
+
+def _cmd_web_publish_plan(argv: list[str]) -> int:
+    p=argparse.ArgumentParser(prog='codex_loop.py web-publish-plan'); p.add_argument('--cwd'); p.add_argument('--task-id'); p.add_argument('--session-id',required=True); p.add_argument('--repository',required=True); p.add_argument('--branch',required=True); p.add_argument('--remote-head',required=True); p.add_argument('--remote-tree',required=True); p.add_argument('--capability-scope',action='append',default=[]); p.add_argument('--verified-tree-fast-path',action='store_true')
+    a=p.parse_args(argv[1:]); cwd,root,store=_scope_from_argv(argv); emit_ok(web_publish_plan(root,store,session_id=a.session_id,repository=a.repository,branch=a.branch,remote_head=a.remote_head,remote_tree=a.remote_tree,capability_scopes=_capability_scope_map(a.capability_scope),verified_tree_fast_path=a.verified_tree_fast_path)); return 0
 
 def _cmd_interaction_route(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py interaction-route')
@@ -1076,6 +1113,14 @@ def main() -> int:
             return _cmd_route_check(argv)
         if argv[0] == 'permission-preflight-plan':
             return _cmd_permission_preflight_plan(argv)
+        if argv[0] == 'permission-observation-record':
+            return _cmd_permission_observation_record(argv)
+        if argv[0] == 'permission-observation-status':
+            return _cmd_permission_observation_status(argv)
+        if argv[0] == 'web-publish-archive':
+            return _cmd_web_publish_archive(argv)
+        if argv[0] == 'web-publish-plan':
+            return _cmd_web_publish_plan(argv)
         if argv[0] == 'interaction-route':
             return _cmd_interaction_route(argv)
         if argv[0] == 'validate':

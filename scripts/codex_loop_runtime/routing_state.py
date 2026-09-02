@@ -6,6 +6,7 @@ import os
 import secrets
 import stat
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,10 @@ ROUTE_ACTIONS = frozenset({
     "local_skill_install",
     "github_publish",
 })
+PERMISSION_OBSERVATION_SCHEMA_VERSION = 1
+PERMISSION_OBSERVATION_DEFAULT_TTL_SECONDS = 1800
+PERMISSION_OBSERVATION_MAX_TTL_SECONDS = 14400
+
 PERMISSION_PROBE_CAPABILITIES = frozenset({
     "github_push",
     "github_actions",
@@ -384,12 +389,92 @@ def route_check(
     return result
 
 
+
+def _permission_observation_path(session_id: str) -> Path:
+    return _routing_path(session_id).with_suffix(".capabilities.json")
+
+
+def _permission_observation_state(session_id: str) -> dict[str, Any]:
+    path = _permission_observation_path(session_id)
+    if not path.exists() and not path.is_symlink():
+        return {"schema_version": PERMISSION_OBSERVATION_SCHEMA_VERSION, "observations": {}}
+    _check_private_regular_file(path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("permission observation state is invalid JSON") from exc
+    if not isinstance(payload, dict) or payload.get("schema_version") != PERMISSION_OBSERVATION_SCHEMA_VERSION or not isinstance(payload.get("observations"), dict):
+        raise ValueError("permission observation state has an invalid schema")
+    return payload
+
+
+def _observation_scope_digest(scope: str) -> str:
+    value = str(scope).strip()
+    if not value or len(value) > 1024:
+        raise ValueError("permission observation scope must be 1-1024 non-whitespace characters")
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def record_permission_observation(*, session_id: str, capability: str, scope: str, evidence: str,
+                                  ttl_seconds: int = PERMISSION_OBSERVATION_DEFAULT_TTL_SECONDS,
+                                  now: int | None = None) -> dict[str, Any]:
+    """Record a bounded host observation. This is never an authorization grant."""
+    if capability not in PERMISSION_PROBE_CAPABILITIES:
+        raise ValueError(f"permission observation capability must be one of {sorted(PERMISSION_PROBE_CAPABILITIES)}")
+    ttl = int(ttl_seconds)
+    if ttl < 1 or ttl > PERMISSION_OBSERVATION_MAX_TTL_SECONDS:
+        raise ValueError(f"permission observation ttl must be 1-{PERMISSION_OBSERVATION_MAX_TTL_SECONDS} seconds")
+    route = route_show(session_id=session_id)
+    evidence_sha = _evidence_digest(evidence)
+    if evidence_sha is None:
+        raise ValueError("permission observation requires concise host-observed evidence")
+    scope_sha = _observation_scope_digest(scope)
+    observed_at = int(time.time() if now is None else now)
+    key = f"{capability}:{scope_sha}"
+    state = _permission_observation_state(route["session_id"])
+    state["observations"][key] = {
+        "capability": capability,
+        "scope_sha256": scope_sha,
+        "evidence_sha256": evidence_sha,
+        "observed_at": observed_at,
+        "expires_at": observed_at + ttl,
+        "routing_generation": int(route["generation"]),
+        "host_surface": route["host_surface"],
+        "workspace_mode": route["workspace_mode"],
+    }
+    _atomic_json_write(_permission_observation_path(route["session_id"]), state)
+    return {**state["observations"][key], "fresh": True, "scope": "sha256:" + scope_sha,
+            "authority": "host_observation_only_not_authorization"}
+
+
+def permission_observation_status(*, session_id: str, capability: str, scope: str,
+                                  now: int | None = None) -> dict[str, Any]:
+    if capability not in PERMISSION_PROBE_CAPABILITIES:
+        raise ValueError(f"permission observation capability must be one of {sorted(PERMISSION_PROBE_CAPABILITIES)}")
+    route = route_show(session_id=session_id)
+    scope_sha = _observation_scope_digest(scope)
+    key = f"{capability}:{scope_sha}"
+    item = _permission_observation_state(route["session_id"])["observations"].get(key)
+    if not isinstance(item, dict):
+        return {"capability": capability, "scope": "sha256:" + scope_sha, "fresh": False,
+                "reason": "no_current_session_observation", "authority": "host_observation_only_not_authorization"}
+    current_time = int(time.time() if now is None else now)
+    reasons=[]
+    if int(item.get("routing_generation", -1)) != int(route["generation"]): reasons.append("routing_generation_changed")
+    if item.get("host_surface") != route["host_surface"]: reasons.append("host_surface_changed")
+    if item.get("workspace_mode") != route["workspace_mode"]: reasons.append("workspace_mode_changed")
+    if current_time >= int(item.get("expires_at", 0)): reasons.append("observation_expired")
+    return {**item, "scope": "sha256:" + scope_sha, "fresh": not reasons,
+            "reason": None if not reasons else ",".join(reasons), "authority": "host_observation_only_not_authorization"}
+
 def permission_preflight_plan(
     *,
     capabilities: list[str] | tuple[str, ...],
     session_id: str | None = None,
+    observation_scopes: dict[str, str] | None = None,
+    reuse_fresh_observations: bool = False,
 ) -> dict[str, Any]:
-    """Return host-executed permission probes without claiming or persisting permission state."""
+    """Return only live probes still needed after scoped current-session observation reuse."""
     requested: list[str] = []
     for raw in capabilities:
         capability = str(raw).strip()
@@ -405,8 +490,16 @@ def permission_preflight_plan(
     route = route_show(session_id=session_id) if session_id is not None else None
     workspace_mode = route.get("workspace_mode") if route else None
     probes: list[dict[str, Any]] = []
+    reused: list[dict[str, Any]] = []
+    scopes = observation_scopes or {}
 
     for capability in requested:
+        scope = str(scopes.get(capability) or "").strip()
+        if reuse_fresh_observations and session_id is not None and scope:
+            status = permission_observation_status(session_id=session_id, capability=capability, scope=scope)
+            if status.get("fresh"):
+                reused.append(status)
+                continue
         if capability == "github_push":
             if workspace_mode == "local":
                 preferred = (
@@ -475,6 +568,9 @@ def permission_preflight_plan(
     return {
         "phase": "post_task_review_pre_execution",
         "required_capabilities": requested,
+        "reused_capabilities": [item["capability"] for item in reused],
+        "reused_observations": reused,
+        "probe_capabilities": [item["capability"] for item in probes],
         "routing_generation": route.get("generation") if route else None,
         "workspace_mode": workspace_mode,
         "probes": probes,
@@ -487,4 +583,5 @@ def permission_preflight_plan(
             "never persist OAuth tokens, approvals, or a claim of permanent authorization, and never bypass per-action host approval."
         ),
         "runtime_state_written": False,
+        "session_observation_state_read": bool(reuse_fresh_observations and session_id is not None),
     }

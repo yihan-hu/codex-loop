@@ -7,7 +7,9 @@ import uuid
 from pathlib import Path
 
 from scripts.codex_loop_runtime.routing_state import (
+    permission_observation_status,
     permission_preflight_plan,
+    record_permission_observation,
     route_check,
     route_init,
     route_show,
@@ -24,10 +26,11 @@ class RoutingStateTests(unittest.TestCase):
 
     def cleanup(self, state: dict) -> None:
         path = Path(state["state_path"])
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
+        for candidate in (path, path.with_suffix(".capabilities.json")):
+            try:
+                candidate.unlink()
+            except FileNotFoundError:
+                pass
 
     def test_new_chatgpt_web_session_is_file_backed_and_defaults_web(self):
         state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
@@ -169,6 +172,25 @@ class RoutingStateTests(unittest.TestCase):
             self.assertEqual(shown["generation"], 0)
         finally:
             self.cleanup(state)
+
+    def test_scoped_permission_observation_reuse_is_expiring_and_route_bound(self):
+        state=route_init(session_id=self.sid(),host_surface="chatgpt_web"); sid=state["session_id"]
+        try:
+            record_permission_observation(session_id=sid,capability="github_push",scope="repo:owner/repo",evidence="live write probe",ttl_seconds=60,now=100)
+            self.assertTrue(permission_observation_status(session_id=sid,capability="github_push",scope="repo:owner/repo",now=120)["fresh"])
+            self.assertFalse(permission_observation_status(session_id=sid,capability="github_push",scope="repo:owner/other",now=120)["fresh"])
+            self.assertFalse(permission_observation_status(session_id=sid,capability="github_push",scope="repo:owner/repo",now=161)["fresh"])
+            route_transition(session_id=sid,interaction_target="cloud_browser",selection_evidence="user selected cloud browser")
+            self.assertFalse(permission_observation_status(session_id=sid,capability="github_push",scope="repo:owner/repo",now=120)["fresh"])
+        finally: self.cleanup(state)
+
+    def test_preflight_skips_only_fresh_scope_matched_observations(self):
+        state=route_init(session_id=self.sid(),host_surface="chatgpt_web"); sid=state["session_id"]
+        try:
+            record_permission_observation(session_id=sid,capability="github_push",scope="repo:owner/repo",evidence="live write probe",ttl_seconds=600)
+            plan=permission_preflight_plan(session_id=sid,capabilities=["github_push","github_actions"],observation_scopes={"github_push":"repo:owner/repo","github_actions":"actions:owner/repo:download"},reuse_fresh_observations=True)
+            self.assertEqual(plan["reused_capabilities"],["github_push"]); self.assertEqual(plan["probe_capabilities"],["github_actions"])
+        finally: self.cleanup(state)
 
     def test_github_push_probe_requires_routing_but_drive_only_does_not(self):
         with self.assertRaises(ValueError):

@@ -18,6 +18,8 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("permanently delete the exact staged Drive archive", web_publish)
         self.assertIn("public transport artifact", web_publish)
         self.assertIn("does not apply here", web_publish)
+        self.assertIn("FAST_PUBLISH", web_publish)
+        self.assertIn("web-publish-plan", web_publish)
 
     def test_local_mode_remains_native_git_only(self):
         skill = (ROOT / "SKILL.md").read_text()

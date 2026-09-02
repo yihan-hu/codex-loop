@@ -21,6 +21,16 @@ current ChatGPT workspace
 
 Source bytes must never pass through model text, Base64, GitHub blob/tree/contents payloads, issue bodies, or repeated connector writes. Google Drive is the binary data plane; the GitHub Connector is control plane only.
 
+## Verified publish fast path
+
+A publish-only continuation should not re-prove an unchanged source tree. A terse `push`/`publish` continuation on the same Web workspace is not a new development objective: reuse the existing active task/generation and conversation routing session instead of bootstrapping a second task.
+
+Use `permission-observation-record` after each successful live probe. These records contain only scope/evidence digests, timestamps, route generation, and host/workspace identity; they are expiring execution hints, never authorization. A later `permission-preflight-plan --reuse-fresh-observations --observation-scope CAPABILITY=SCOPE` skips only exact-scope observations that remain fresh.
+
+After authoritative validation and final review, build a deterministic reusable archive once with `web-publish-archive`, then call `web-publish-plan --verified-tree-fast-path` with exact GitHub/Actions/Drive capability scopes. `FAST_PUBLISH` requires a clean unchanged workspace, fresh current-generation validation/review, and all three exact-scope capability observations. The archive receipt is reusable only when generation, commit, tree, size, and SHA-256 still match. Missing/stale gates return `FULL_VERIFIED_PUBLISH`; rerun only those gates.
+
+This optimization removes redundant work, not integrity checks. Source bytes still use Drive staging and audited Workspace Import. After publication, require the actual remote branch tree to equal the validated tree. If it already equals the validated tree, skip source transport and continue post-push reconciliation. For pytest evidence where cache semantics are irrelevant, prefer `PYTHONDONTWRITEBYTECODE=1` and `-p no:cacheprovider` to avoid cleanup-only churn.
+
 ## One-time prerequisites
 
 1. Google Drive is connected and exposes `upload_file` with a top-level `file_uri` input.
