@@ -105,6 +105,18 @@ class AuditBoundaryTests(unittest.TestCase):
             before=store.generation(); (root/'local.env').write_text('two')
             self.assertTrue(sync_generation(root,store)); self.assertEqual(store.generation(),before+1)
 
+    def test_git_ignored_python_bytecode_cache_does_not_invalidate_generation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
+            (root/'.gitignore').write_text('__pycache__/\n*.pyc\n')
+            cache=root/'__pycache__'; cache.mkdir(); bytecode=cache/'module.cpython-313.pyc'; bytecode.write_bytes(b'one')
+            store=create_store(root); store.configure_task(store.path.parent.name,'ignored cache freshness',[],requires_validation=False,no_validation_reason='fixture')
+            capture_baseline(root,store)
+            self.assertNotIn('__pycache__/module.cpython-313.pyc',store.protected_paths())
+            self.assertNotIn('__pycache__/module.cpython-313.pyc',store.get_meta('ignored_watch')['watched_paths'])
+            before=store.generation(); bytecode.write_bytes(b'two')
+            self.assertFalse(sync_generation(root,store)); self.assertEqual(store.generation(),before)
+
     def test_persisted_secret_like_text_is_redacted(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

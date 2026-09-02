@@ -23,6 +23,30 @@ def call(root, *args, check=True):
 
 
 class SkillPostPushRefreshTests(unittest.TestCase):
+
+    def route(self):
+        proc = subprocess.run(
+            [sys.executable, str(CLI), "route-init", "--host-surface", "chatgpt_web"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        return json.loads(proc.stdout)["data"]["session_id"]
+
+    def self_handoff(self, root, commit, repository="owner/repo"):
+        return call(
+            root,
+            "skill-deploy-handoff",
+            "--skill-name",
+            "codex-loop",
+            "--repository",
+            repository,
+            "--commit",
+            commit,
+            "--routing-session-id",
+            self.route(),
+        )
+
     def bootstrap(self, root, objective="reconcile deployed skill", criterion=True):
         args = [
             "bootstrap",
@@ -45,16 +69,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root)
 
-            handoff, _ = call(
-                root,
-                "skill-deploy-handoff",
-                "--skill-name",
-                "codex-loop",
-                "--repository",
-                "owner/repo",
-                "--commit",
-                commit,
-            )
+            handoff, _ = self.self_handoff(root, commit)
             data = handoff["data"]
             self.assertEqual(data["source_state"], "SOURCE_PUSHED")
             self.assertEqual(data["native_update_state"], "NATIVE_UPDATE_REQUIRED")
@@ -102,7 +117,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             root = Path(tmp)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root)
-            handoff, _ = call(root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo", "--commit", commit)
+            handoff, _ = self.self_handoff(root, commit)
             resumed, _ = call(
                 root,
                 "skill-deploy-resume",
@@ -180,7 +195,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             root = Path(tmp)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root, criterion=False)
-            call(root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo", "--commit", commit)
+            self.self_handoff(root, commit)
             call(
                 root,
                 "skill-deploy-resume",
@@ -216,7 +231,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             root = Path(tmp)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root, criterion=False)
-            call(root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo", "--commit", commit)
+            self.self_handoff(root, commit)
             call(
                 root,
                 "skill-deploy-resume",
@@ -256,7 +271,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--evidence",
                 "intended revision is active",
             )
-            repeated, _ = call(root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo", "--commit", commit)
+            repeated, _ = self.self_handoff(root, commit)
             data = repeated["data"]
             self.assertEqual(data["external_action_state"], "terminal_success")
             self.assertEqual(data["deployment_state"], "DEPLOYED")
@@ -280,7 +295,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             root = Path(tmp)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root, criterion=False)
-            call(root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo", "--commit", commit)
+            self.self_handoff(root, commit)
             out, proc = call(
                 root,
                 "skill-deploy-resume",
@@ -298,6 +313,36 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertIn("only on a later host turn", out["error"]["message"])
 
 
+    def test_same_conversation_resume_reuses_handoff_routing_session(self):
+        commit = "d" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            self.bootstrap(root, criterion=False)
+            sid = self.route()
+            subprocess.run(
+                [sys.executable, str(CLI), "permission-observation-record", "--session-id", sid,
+                 "--capability", "github_push", "--scope", "repo:owner/repo", "--evidence", "live probe"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            )
+            call(
+                root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo",
+                "--commit", commit, "--routing-session-id", sid,
+            )
+            resumed, _ = call(
+                root, "skill-deploy-resume", "--skill-name", "codex-loop", "--repository", "owner/repo",
+                "--commit", commit, "--later-host-turn-observed", "--same-conversation-observed",
+                "--evidence", "later user turn in the same conversation",
+            )
+            self.assertTrue(resumed["data"]["routing_session_reused"])
+            self.assertEqual(resumed["data"]["routing_session_id"], sid)
+            status = subprocess.run(
+                [sys.executable, str(CLI), "permission-observation-status", "--session-id", sid,
+                 "--capability", "github_push", "--scope", "repo:owner/repo"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            )
+            self.assertTrue(json.loads(status.stdout)["data"]["fresh"])
+
     def test_handoff_rejects_short_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -312,6 +357,8 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "owner/repo",
                 "--commit",
                 "deadbeef",
+                "--routing-session-id",
+                self.route(),
                 check=False,
             )
             self.assertNotEqual(proc.returncode, 0)
@@ -331,12 +378,16 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         self.assertIn("Native Skill update surface", deployment)
         self.assertIn("Codex Loop must never emulate", deployment)
         self.assertIn("skill-deploy-resume", deployment)
-        self.assertIn("same-turn", deployment)
+        self.assertIn("--same-conversation-observed", deployment)
+        self.assertIn("routing_session_id", deployment)
+        self.assertIn("thin_from_remote_head", web_publish)
+        self.assertIn("Do not attempt a full-history bundle first", web_publish)
         self.assertIn("skill-deploy-surface-record", deployment)
         self.assertIn("skill-deploy-complete", deployment)
-        self.assertIn("Post-push active Skill reconciliation", web_publish)
-        self.assertIn("terminal self-update", web_publish)
-        self.assertIn("skill-creator", web_publish)
+        self.assertIn("FAST_PUBLISH", web_publish)
+        self.assertIn("source-only", web_publish)
+        self.assertIn("terminal self-update", deployment)
+        self.assertIn("skill-creator", deployment)
         self.assertIn("UI_SURFACED", runtime)
         self.assertIn("skill-deploy-resume", runtime)
         self.assertIn("active workspace Skill", completion)
@@ -353,7 +404,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         self.assertIn("codex-loop-update-bridge", deployment)
         self.assertIn("executing Skill identity", deployment)
         self.assertIn("Codex Loop Update Bridge", readme)
-        self.assertIn("proven-minimal install profile", deployment)
+        self.assertIn("proven-minimal install-compatible profile", deployment)
         self.assertIn("$codex-loop-update-bridge", deployment)
         self.assertIn("Library not found", deployment)
 

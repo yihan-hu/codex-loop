@@ -183,6 +183,8 @@ python scripts/codex_loop.py changes --cwd REPO --task-id TASK --review
 
 ### Opaque ignored inputs
 
+Regenerable Python interpreter bytecode caches (`__pycache__/`, `*.pyc`, `*.pyo`) are excluded from the ignored-input freshness watcher because they are execution byproducts, not source or validation inputs. Other ignored files remain watched/protected exactly as before.
+
 Large or unreadable ignored paths are surfaced as `opaque_paths`; completion fails closed because their contents cannot be freshness-tracked within the bounded watcher. Only when that uncertainty is knowingly acceptable may you record a current-generation waiver:
 
 ```bash
@@ -340,7 +342,8 @@ python3 scripts/codex_loop.py skill-deploy-handoff \
   --cwd REPO \
   --skill-name NAME \
   --repository OWNER/REPO \
-  --commit FULL_40_HEX_SHA
+  --commit FULL_40_HEX_SHA \
+  --routing-session-id ROUTING_SESSION  # required for codex-loop self-update
 ```
 
 The command requires an active Codex Loop task, validates the Skill/repository/commit identity, and records an `external_non_idempotent` action with:
@@ -361,6 +364,7 @@ deployment_state     = DEPLOY_PENDING
 ```
 
 `skill-deploy-handoff` is planning evidence only. It sets `handoff_is_ui_evidence=false` and `handoff_is_deployment_evidence=false`; callers must not turn its JSON or assistant prose into a fictional UI event. For `skill-name=codex-loop`, the result is a **terminal self-update handoff**: `handoff_mode=terminal_self_update`, `terminal_owner=skill-creator/host`, `codex_loop_resume_allowed=false`, and `reconcile_on_next_turn=true`. The runtime also activates a terminal barrier so later Codex Loop commands in that same turn fail closed.
+For that self-update path, the handoff also captures the exact active routing session in private task-local barrier state. This is continuity state only: it is not authorization, is not exported by persistence, and exists so a later turn in the same conversation can reuse still-fresh scoped permission observations instead of starting a new routing session.
 
 Invoke `skill-creator`/the native host install surface as the final current-turn action. Do not run Codex Loop again and do not append a Codex Loop closing/status response after the native surface is initiated. On a later user/host turn, release the barrier before reconciliation:
 
@@ -371,10 +375,11 @@ python3 scripts/codex_loop.py skill-deploy-resume \
   --repository OWNER/REPO \
   --commit FULL_40_HEX_SHA \
   --later-host-turn-observed \
-  --evidence "new user/host turn after native install handoff"
+  --same-conversation-observed \
+  --evidence "new user/host turn in the same conversation after native install handoff"
 ```
 
-`skill-deploy-resume` does not claim UI or deployment success; it only proves that Codex Loop is no longer continuing in the initiating turn. After that later-turn resume, if `skill-creator` or an equivalent native host primitive actually exposed/initiated the Skill update surface, record that observation:
+`skill-deploy-resume` does not claim UI or deployment success; it only proves that Codex Loop is no longer continuing in the initiating turn. With `--same-conversation-observed`, it returns the exact handoff `routing_session_id`; continue using that id and do **not** call `route-init` again. Fresh exact-scope permission observations remain reusable subject to their TTL and routing generation. In a genuinely new conversation, omit `--same-conversation-observed`, initialize a new routing session, and probe only stale/missing capabilities. After that later-turn resume, if `skill-creator` or an equivalent native host primitive actually exposed/initiated the Skill update surface, record that observation:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-surface-record \

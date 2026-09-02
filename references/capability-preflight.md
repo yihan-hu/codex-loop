@@ -100,6 +100,7 @@ Never overwrite, rename, move, or delete a pre-existing user file as a permissio
 ## Procedure
 
 A successful live probe may be recorded with `permission-observation-record` as an exact-scope, expiring, route-generation-bound hint. On later same-session continuations, `permission-preflight-plan --reuse-fresh-observations --observation-scope CAPABILITY=SCOPE` may skip only fresh exact-scope probes. This never grants permission or bypasses host approval.
+For a terminal `codex-loop` self-update in ChatGPT Web, pass the active routing session into `skill-deploy-handoff`. If the next user turn is in the same conversation, `skill-deploy-resume --same-conversation-observed` returns that exact session so these observations remain eligible for reuse. Do not create a new routing session solely because the install handoff crossed a turn; a new routing session is appropriate only for a genuinely new conversation or an intentionally reset route.
 
 1. Complete task review: understand the objective, route, intended external actions, and reasonably required capabilities. Do not confuse this with the final diff/change review.
 2. Initialize/read the conversation routing session when routing-sensitive work is involved. Resolve `workspace_mode`, `interaction_target`, and, for install/deploy work, `deployment_target`; run the applicable `route-check`. Capability probing must never create or mutate routing state.

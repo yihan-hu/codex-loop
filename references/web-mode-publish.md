@@ -132,7 +132,11 @@ Tree-only equivalence is insufficient. A newly generated importer commit is a co
 
 ## FAST_PUBLISH
 
-`web-publish-plan --verified-tree-fast-path` may reuse fresh validation/review/capability evidence and a still-valid bundle receipt when no workspace mutation occurred. It never weakens identity checks. A remote short-circuit is allowed only when **both** remote commit and remote tree already equal audited source commit/tree.
+`web-publish-plan --verified-tree-fast-path` is the deterministic performance gate for repeated small Web publication cycles. It may reuse fresh validation/review/capability evidence and a still-valid exact bundle receipt when no workspace mutation occurred. It never weakens identity checks. A remote short-circuit is allowed only when **both** remote commit and remote tree already equal audited source commit/tree.
+
+For an unpublished audited HEAD whose observed remote head is a locally provable ancestor, the plan must return `bundle_strategy=thin_from_remote_head` and `bundle_build_prerequisite_commit=<remote_head>`. Build exactly that one thin bundle. **Do not attempt a full-history bundle first.** A full bundle belongs only to the verified fallback path when the remote head is not locally provable as an ancestor. A reusable bundle receipt is valid for FAST_PUBLISH only when its prerequisite exactly matches the plan; do not reuse a larger full bundle when the plan requires a thin one.
+
+A successful FAST_PUBLISH plan carries a zero-waste budget for gates already proven in this task/session: `permission_smoke_probes=0`, `validation_commands=0`, `change_review_repeats=0`, `full_bundle_attempts=0`, and `production_packaging_steps=0`. The only local transport build may be one thin bundle when an exact matching receipt does not already exist. During iterative performance tuning, keep each intermediate cycle source-only and measure the real publish segment; package/deploy the Skill only after the fast-path acceptance target is met. If the plan reports any fallback reason, refresh only that stale gate and re-plan before transport.
 
 ## Cleanup
 

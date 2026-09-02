@@ -83,15 +83,21 @@ class FastPublishTests(unittest.TestCase):
     def test_bundle_receipt_reuse_is_exact(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            head, tree = init_repo(root)
+            base, base_tree = init_repo(root)
+            (root / "second.txt").write_text("second\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "second"], cwd=root, check=True)
+            head, tree = git(root, "rev-parse", "HEAD"), git(root, "rev-parse", "HEAD^{tree}")
             store = ready_store(root)
             route = self.route()
             self.caps(route["session_id"])
             bundle = root.parent / (root.name + "-fast-publish.bundle")
             try:
-                receipt = build_web_publish_bundle(root, store, output=bundle)
-                plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=head, remote_tree="0" * 40, capability_scopes=scopes(), verified_tree_fast_path=True)
+                receipt = build_web_publish_bundle(root, store, output=bundle, prerequisite_commit=base)
+                plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(), verified_tree_fast_path=True)
                 self.assertEqual(plan["bundle_action"], "reuse")
+                self.assertEqual(plan["bundle_strategy"], "reuse_exact_bundle")
+                self.assertEqual(plan["bundle_build_prerequisite_commit"], base)
                 self.assertEqual(plan["bundle"]["sha256"], receipt["sha256"])
                 self.assertEqual(plan["bundle"]["source_commit"], head)
                 self.assertEqual(plan["bundle"]["source_tree"], tree)
@@ -117,6 +123,30 @@ class FastPublishTests(unittest.TestCase):
                 self.assertEqual(verify.returncode, 0, verify.stderr)
             finally:
                 bundle.unlink(missing_ok=True)
+
+    def test_fast_plan_selects_one_thin_bundle_directly(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            base, base_tree = init_repo(root)
+            (root / "second.txt").write_text("second\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "second"], cwd=root, check=True)
+            store = ready_store(root)
+            route = self.route(); self.caps(route["session_id"])
+            try:
+                plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(), verified_tree_fast_path=True)
+                self.assertEqual(plan["mode"], "FAST_PUBLISH")
+                self.assertEqual(plan["bundle_strategy"], "thin_from_remote_head")
+                self.assertEqual(plan["bundle_build_prerequisite_commit"], base)
+                self.assertTrue(plan["remote_head_is_local_ancestor"])
+                self.assertEqual(plan["fast_path_budget"]["permission_smoke_probes"], 0)
+                self.assertEqual(plan["fast_path_budget"]["validation_commands"], 0)
+                self.assertEqual(plan["fast_path_budget"]["change_review_repeats"], 0)
+                self.assertEqual(plan["fast_path_budget"]["full_bundle_attempts"], 0)
+                self.assertEqual(plan["fast_path_budget"]["production_packaging_steps"], 0)
+                self.assertEqual(plan["fast_path_budget"]["bundle_build_attempts"], 1)
+            finally:
+                self.cleanup(route)
 
     def test_only_exact_remote_commit_and_tree_short_circuit_transport(self):
         with tempfile.TemporaryDirectory() as t:

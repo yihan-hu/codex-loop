@@ -519,13 +519,18 @@ def _skill_deploy_action(store, identity: str) -> dict:
     return matches[0]
 
 
-def _parse_skill_deploy_args(argv: list[str], *, include_surface: bool = False, include_evidence: bool = False):
+def _parse_skill_deploy_args(
+    argv: list[str], *, include_surface: bool = False, include_evidence: bool = False,
+    include_routing_session: bool = False,
+):
     p = argparse.ArgumentParser(prog=f'codex_loop.py {argv[0]}')
     p.add_argument('--cwd')
     p.add_argument('--task-id')
     p.add_argument('--skill-name', required=True)
     p.add_argument('--repository', required=True)
     p.add_argument('--commit', required=True)
+    if include_routing_session:
+        p.add_argument('--routing-session-id')
     if include_surface:
         p.add_argument('--surface-kind', required=True, choices=['skill_creator_install_ui', 'host_managed_update'])
     if include_evidence:
@@ -546,11 +551,21 @@ def _parse_skill_deploy_args(argv: list[str], *, include_surface: bool = False, 
 
 
 def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
-    args, skill_name, repository, commit = _parse_skill_deploy_args(argv)
+    args, skill_name, repository, commit = _parse_skill_deploy_args(argv, include_routing_session=True)
     _cwd_path, _root, store = _scope_from_argv(argv)
     store.ensure_active()
     identity = _skill_deploy_identity(skill_name, commit)
     is_self_update = skill_name == 'codex-loop'
+    routing_session_id = None
+    routing_snapshot = None
+    if is_self_update:
+        routing_session_id = (args.routing_session_id or os.environ.get('CODEX_LOOP_SESSION_ID') or '').strip() or None
+        if routing_session_id is None:
+            raise ValueError(
+                'Codex Loop self-update handoff requires --routing-session-id (or CODEX_LOOP_SESSION_ID) so '
+                'same-conversation Web publish capability observations can survive the terminal handoff'
+            )
+        routing_snapshot = route_show(session_id=routing_session_id)
     planned_details = {
         'handoff_mode': 'terminal_self_update' if is_self_update else 'native_skill_update',
         'terminal_owner': 'skill-creator/host' if is_self_update else None,
@@ -592,6 +607,10 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
             'identity': identity,
             'external_action_id': action_id,
             'terminal_owner': 'skill-creator/host',
+            'routing_session_id': routing_session_id,
+            'routing_generation': routing_snapshot.get('generation') if routing_snapshot else None,
+            'routing_host_surface': routing_snapshot.get('host_surface') if routing_snapshot else None,
+            'routing_workspace_mode': routing_snapshot.get('workspace_mode') if routing_snapshot else None,
         })
     emit_ok({
         'skill_name': skill_name,
@@ -612,6 +631,8 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'same_turn_codex_loop_followup_forbidden': terminal_handoff_active,
         'reconcile_on_next_turn': terminal_handoff_active,
         'next_turn_reconcile_command': 'skill-deploy-resume' if terminal_handoff_active else None,
+        'routing_session_continuity_required': terminal_handoff_active,
+        'routing_session_id': routing_session_id if terminal_handoff_active else None,
         'handoff_is_ui_evidence': False,
         'handoff_is_deployment_evidence': False,
         'browser_automation_authorized': False,
@@ -630,6 +651,7 @@ def _cmd_skill_deploy_resume(argv: list[str]) -> int:
     p.add_argument('--repository', required=True)
     p.add_argument('--commit', required=True)
     p.add_argument('--later-host-turn-observed', action='store_true')
+    p.add_argument('--same-conversation-observed', action='store_true')
     p.add_argument('--evidence', required=True)
     args = p.parse_args(argv[1:])
     skill_name = args.skill_name.strip().lower()
@@ -657,6 +679,18 @@ def _cmd_skill_deploy_resume(argv: list[str]) -> int:
     action = _skill_deploy_action(store, identity)
     if action['state'] not in {'planned', 'dispatched', 'outcome_unknown'}:
         raise ValueError(f"Skill deployment action is already {action['state']}; terminal barrier cannot be resumed")
+    routing_session_id = None
+    routing_session_reused = False
+    routing_session_reuse_reason = 'same_conversation_not_observed'
+    if args.same_conversation_observed:
+        candidate = str(barrier.get('routing_session_id') or '').strip()
+        if candidate:
+            route = route_show(session_id=candidate)
+            routing_session_id = route['session_id']
+            routing_session_reused = True
+            routing_session_reuse_reason = 'exact_handoff_routing_session_reused'
+        else:
+            routing_session_reuse_reason = 'handoff_did_not_capture_routing_session'
     store.set_meta(_SELF_UPDATE_BARRIER_KEY, None)
     emit_ok({
         'skill_name': skill_name,
@@ -669,6 +703,14 @@ def _cmd_skill_deploy_resume(argv: list[str]) -> int:
         'deployment_state': 'DEPLOY_PENDING',
         'next_action': 'reconcile observed native surface and installed revision; do not infer either',
         'external_action_id': action['action_id'],
+        'routing_session_id': routing_session_id,
+        'routing_session_reused': routing_session_reused,
+        'routing_session_reuse_reason': routing_session_reuse_reason,
+        'fast_publish_observation_reuse': (
+            'reuse fresh exact-scope permission observations from this routing session'
+            if routing_session_reused else
+            'initialize a new routing session and run only the probes still required there'
+        ),
     })
     return 0
 

@@ -375,6 +375,22 @@ def _git_ignored_roots(root: Path) -> list[Path] | None:
     return [root / raw.decode("utf-8", errors="surrogateescape") for raw in proc.stdout.split(b"\0") if raw]
 
 
+REGENERABLE_IGNORED_CACHE_DIRS = {"__pycache__"}
+REGENERABLE_IGNORED_CACHE_SUFFIXES = {".pyc", ".pyo"}
+
+
+def _is_regenerable_ignored_cache(path: Path, root: Path) -> bool:
+    """Return True only for interpreter caches that cannot be source/validation inputs."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+    return (
+        any(part in REGENERABLE_IGNORED_CACHE_DIRS for part in rel.parts)
+        or rel.suffix in REGENERABLE_IGNORED_CACHE_SUFFIXES
+    )
+
+
 def ignored_watch_state(root: Path) -> dict[str, Any]:
     """Bounded content monitoring for ignored inputs that may affect local validation.
 
@@ -419,6 +435,8 @@ def ignored_watch_state(root: Path) -> dict[str, Any]:
         return True
 
     for entry in roots:
+        if _is_regenerable_ignored_cache(entry, root):
+            continue
         try:
             rel_owner = str(entry.relative_to(root)).rstrip("/") or "."
             st = entry.lstat()
@@ -436,6 +454,8 @@ def ignored_watch_state(root: Path) -> dict[str, Any]:
                     current_path = Path(current)
                     for name in list(dirs):
                         child = current_path / name
+                        if _is_regenerable_ignored_cache(child, root):
+                            continue
                         try:
                             if child.is_symlink() and not add_file(child, rel_owner):
                                 stop = True; break
@@ -443,9 +463,16 @@ def ignored_watch_state(root: Path) -> dict[str, Any]:
                             opaque.add(rel_owner); stop = True; break
                     if stop:
                         break
-                    dirs[:] = [d for d in dirs if not (current_path / d).is_symlink()]
+                    dirs[:] = [
+                        d for d in dirs
+                        if not (current_path / d).is_symlink()
+                        and not _is_regenerable_ignored_cache(current_path / d, root)
+                    ]
                     for name in files:
-                        if not add_file(current_path / name, rel_owner):
+                        candidate = current_path / name
+                        if _is_regenerable_ignored_cache(candidate, root):
+                            continue
+                        if not add_file(candidate, rel_owner):
                             stop = True; break
                     if stop:
                         break

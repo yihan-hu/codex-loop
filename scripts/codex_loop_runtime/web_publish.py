@@ -43,6 +43,13 @@ def _workspace_clean(root: Path) -> bool:
     return status == b""
 
 
+def _is_local_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
+    if ancestor == descendant:
+        return True
+    probe = run_git(root, ["merge-base", "--is-ancestor", ancestor, descendant])
+    return probe.returncode == 0
+
+
 def _validation_fresh(store: Any) -> tuple[bool, dict[str, Any]]:
     generation = store.generation()
     if not bool(store.get_meta("requires_validation", True)):
@@ -70,7 +77,9 @@ def _review_fresh(store: Any) -> tuple[bool, dict[str, Any]]:
     }
 
 
-def _current_bundle_receipt(root: Path, store: Any) -> dict[str, Any] | None:
+def _current_bundle_receipt(
+    root: Path, store: Any, *, prerequisite_commit: str | None = None
+) -> dict[str, Any] | None:
     receipt = store.get_meta("web_publish_bundle_receipt")
     if not isinstance(receipt, dict):
         return None
@@ -88,6 +97,7 @@ def _current_bundle_receipt(root: Path, store: Any) -> dict[str, Any] | None:
         str(receipt.get("source_commit")) != head
         or str(receipt.get("source_tree")) != tree
         or int(receipt.get("generation", -1)) != store.generation()
+        or (receipt.get("prerequisite_commit") or None) != (prerequisite_commit or None)
     ):
         return None
     if not path.is_file() or path.stat().st_size != size or _sha256_file(path) != sha:
@@ -234,16 +244,27 @@ def web_publish_plan(
         reasons.append("change_review_not_fresh")
     if not all_fresh:
         reasons.append("capability_observations_not_fresh")
+    remote_head_normalized = str(remote_head).lower()
+    remote_tree_normalized = str(remote_tree).lower()
+    already = remote_head_normalized == head.lower() and remote_tree_normalized == tree.lower()
+    remote_is_local_ancestor = _is_local_ancestor(root, remote_head_normalized, head)
+    desired_prerequisite = None if already else (remote_head_normalized if remote_is_local_ancestor else None)
+    if not already and not remote_is_local_ancestor:
+        reasons.append("remote_head_not_local_ancestor")
     fast = not reasons
-    bundle = _current_bundle_receipt(root, store)
-    already = str(remote_head).lower() == head.lower() and str(remote_tree).lower() == tree.lower()
+    bundle = _current_bundle_receipt(root, store, prerequisite_commit=desired_prerequisite)
+    bundle_strategy = (
+        "reuse_exact_bundle" if bundle else
+        "thin_from_remote_head" if desired_prerequisite else
+        "full_verified_bundle"
+    )
     return {
         "mode": "FAST_PUBLISH" if fast else "FULL_VERIFIED_PUBLISH",
         "fast_path_ready": fast,
         "fallback_reasons": reasons,
         "repository": repository,
         "branch": branch,
-        "expected_base": str(remote_head).lower(),
+        "expected_base": remote_head_normalized,
         "source_commit": head,
         "source_tree": tree,
         "validated_tree": tree if validation_ok and clean else None,
@@ -254,7 +275,18 @@ def web_publish_plan(
         "capability_observations_reused": sorted(fresh),
         "bundle": bundle,
         "bundle_action": "reuse" if bundle else "build",
+        "bundle_strategy": bundle_strategy,
+        "bundle_build_prerequisite_commit": desired_prerequisite,
+        "remote_head_is_local_ancestor": remote_is_local_ancestor,
         "already_published_exactly": already,
+        "fast_path_budget": {
+            "permission_smoke_probes": 0 if fast else None,
+            "validation_commands": 0 if fast else None,
+            "change_review_repeats": 0 if fast else None,
+            "full_bundle_attempts": 0 if fast and desired_prerequisite else None,
+            "production_packaging_steps": 0 if fast else None,
+            "bundle_build_attempts": 0 if bundle else (1 if fast else None),
+        },
         "post_push_success_requirement": "read back target branch and require remote commit == audited source commit and remote tree == audited source tree",
         "transport": "google_drive_git_bundle_to_audited_workspace_import",
         "trigger_rewrite_policy": "the import workflow may use force-with-lease only to replace its own single request trigger commit with the audited source commit",
@@ -262,7 +294,11 @@ def web_publish_plan(
             "skip transport; continue post-push reconciliation"
             if already
             else (
-                "stage reusable Git bundle and run audited Workspace Import"
+                (
+                    "build exactly one thin Git bundle from expected_base, stage it, and run audited Workspace Import"
+                    if desired_prerequisite and not bundle else
+                    "stage the exact reusable Git bundle and run audited Workspace Import"
+                )
                 if fast
                 else "refresh only stale gates, then publish"
             )

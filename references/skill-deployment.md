@@ -108,10 +108,12 @@ python3 scripts/codex_loop.py skill-deploy-handoff \
   --cwd REPO \
   --skill-name NAME \
   --repository OWNER/REPO \
-  --commit FULL_40_HEX_SHA
+  --commit FULL_40_HEX_SHA \
+  --routing-session-id ROUTING_SESSION  # required for codex-loop self-update
 ```
 
 The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. It returns `NATIVE_UPDATE_REQUIRED`, `NATIVE_SURFACE_NOT_OBSERVED`, `UI_NOT_OBSERVED`, and `DEPLOY_PENDING`. Those values are deliberately completion-blocking. Repeated handoff calls for the same Skill/commit deduplicate to the same action. For `skill-name=codex-loop`, it additionally returns `handoff_mode=terminal_self_update`, `terminal_owner=skill-creator/host`, `codex_loop_resume_allowed=false`, and `reconcile_on_next_turn=true`, and installs a runtime barrier against further Codex Loop commands in that turn.
+For self-update, the active routing session is captured only in the private terminal barrier so the next turn in the same conversation can resume that exact route and reuse still-fresh exact-scope capability observations. It is continuity state, not permission or deployment evidence.
 
 Resolve the handoff in this order:
 
@@ -125,10 +127,11 @@ python3 scripts/codex_loop.py skill-deploy-resume \
   --repository OWNER/REPO \
   --commit FULL_40_HEX_SHA \
   --later-host-turn-observed \
-  --evidence "new user/host turn after native install handoff"
+  --same-conversation-observed \
+  --evidence "new user/host turn in the same conversation after native install handoff"
 ```
 
-   `skill-deploy-resume` is a turn-boundary acknowledgement, not UI or deployment evidence. It exists to prevent same-turn Codex Loop continuation from displacing a just-surfaced native install control.
+   `skill-deploy-resume` is a turn-boundary acknowledgement, not UI or deployment evidence. With `--same-conversation-observed`, reuse the returned `routing_session_id` and do not call `route-init` again; still-fresh scoped capability observations remain eligible for FAST_PUBLISH reuse. In a genuinely new conversation, omit that flag and initialize a new route. This preserves both terminal UI ownership and publish performance.
 3. Only after the later-turn resume (for self-update) and after the host actually exposes/initiates that native Skill surface, record the observation:
 
 ```bash
