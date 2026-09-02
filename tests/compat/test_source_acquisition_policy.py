@@ -58,6 +58,8 @@ class SourceAcquisitionPolicyTests(unittest.TestCase):
     def test_workspace_download_workflow_supports_manual_dispatch_and_bundle_export(self):
         workflow = (ROOT / ".github" / "workflows" / "workspace-download.yml").read_text()
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("paths-ignore:", workflow)
+        self.assertIn(".github/import-requests/**", workflow)
         self.assertIn("fetch-depth: 0", workflow)
         self.assertIn("git bundle create", workflow)
         self.assertIn("git bundle verify", workflow)

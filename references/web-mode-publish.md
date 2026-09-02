@@ -91,6 +91,8 @@ The trigger commit is **not release/source history**. It is a temporary control-
 
 ## Audited importer semantics
 
+The separate `.github/workflows/workspace-download.yml` workflow must ignore pure `.github/import-requests/**` push triggers. The temporary control-plane commit is not a source revision worth exporting, and allowing Download to run on that commit wastes an Actions job/artifact without contributing to publication.
+
 The workflow must:
 
 1. prove exactly one request file was added by the trigger commit;
