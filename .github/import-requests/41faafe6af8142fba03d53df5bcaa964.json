@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "transfer_id": "41faafe6af8142fba03d53df5bcaa964",
+  "bundle_file_id": "1vF4vQOdWxj7YjUc0CQM9sk1JT8-BGC9o",
+  "bundle_size": 40125,
+  "bundle_sha256": "2e88fde27eb83ab4bbcae6335ff6f48dddf9d76012888c3b1f1c4a580be59ad4",
+  "bundle_ref": "refs/heads/codex-loop-publish-7724bf09b80d4cdabb9d2d08aa8294f9",
+  "expected_base": "94fe6fabf8b385cadc7206ff766a8dfaf3a33288",
+  "target_branch": "main",
+  "source_commit": "cdcfd960b055c6f086c3bce448f1e1e405f495cd",
+  "source_tree": "dac7a46b1186b7f60af77ff85eec0edde36b68ad"
+}
