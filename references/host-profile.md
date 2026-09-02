@@ -58,4 +58,4 @@ Schema v1 `default_local_workspace` migrates into `workspace.default_local_works
 
 The profile may be read for non-sensitive global preferences at any time, but local path resolution still requires explicit Local-development intent and the ordinary current-conversation grant/host authorization checks. It must never be used as a fallback source for `deployment_target` or to reconstruct a missing routing-session file.
 
-Host Profile files, Drive IDs, workspace aliases/paths, browser preferences, credentials, session grants, and task state must never enter Git, source archives, or Skill packages.
+Host Profile files, Drive IDs, workspace aliases/paths, browser preferences, credentials, session grants, and task state must never enter Git, source transport artifacts, or Skill packages.

@@ -35,7 +35,7 @@ If the runtime/config surface is unavailable, fall back to the defaults above ra
 
 ## Private configuration
 
-User preferences live in `~/.codex-loop/host.json` (or under `CODEX_LOOP_HOME` when the host overrides that root). This file is host-local/private state: it is outside the repository, outside `skill.zip`, and must never be copied into GitHub source archives.
+User preferences live in `~/.codex-loop/host.json` (or under `CODEX_LOOP_HOME` when the host overrides that root). This file is host-local/private state: it is outside the repository, outside `skill.zip`, and must never be copied into GitHub source transport artifacts.
 
 The progress node is part of the unified Private Host Profile schema v2 (see `host-profile.md`):
 

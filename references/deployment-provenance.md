@@ -46,6 +46,6 @@ After unpack/install, verify bundle integrity with:
 python3 scripts/codex_loop.py deployment-provenance-verify --skill-root PATH_TO_INSTALLED_SKILL
 ```
 
-A verified installed-Skill bootstrap still requires a fresh GitHub target-branch observation. Only when the installed bundle manifest verifies and its exact commit/tree match the intended current remote revision may it bootstrap a fresh mutable workspace. The installed directory itself remains read-only deployment state.
+Deployment provenance verification never auto-authorizes an installed Skill as development source. Installed-Skill bootstrap is default-off and requires explicit current-turn user selection under `source-acquisition.md`. If the user expects current/latest, exact manifest commit/tree must equal a fresh target-branch observation; an explicitly accepted older revision may be labeled `historical_explicitly_accepted`. The installed directory always remains read-only deployment state.
 
 The manifest schema cannot carry host-private values such as user names, local paths, Drive IDs, OAuth/session information, task/conversation IDs, or Host Profile contents.

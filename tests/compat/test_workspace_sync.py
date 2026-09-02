@@ -98,9 +98,11 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
 
     def test_workflow_emits_commit_bound_source_hash(self):
         workflow = (ROOT / ".github" / "workflows" / "workspace-download.yml").read_text()
-        self.assertIn("git archive", workflow)
+        self.assertIn("git bundle create", workflow)
+        self.assertIn("git bundle verify", workflow)
         self.assertIn("HEAD", workflow)
         self.assertIn("sha256sum", workflow)
+        self.assertNotIn("git archive", workflow)
         self.assertIn("name: codex-loop-source", workflow)
         self.assertIn("workflow_dispatch:", workflow)
 

@@ -1,36 +1,121 @@
-# Optional cross-conversation persistence
+# Optional cross-conversation persistence and Workspace Cache
 
-Codex Loop may use a host-connected cloud store as an optional persistence backend when a Web task needs to survive a conversation or ephemeral-workspace boundary. Persistence is a reliability enhancement, not a correctness authority.
+Codex Loop has two separate recovery layers for Web work:
+
+1. **state-only persistence**: small lifecycle/reconciliation evidence;
+2. **Workspace Cache**: an explicit, private, immutable Git/worktree handoff capsule for continuing development in a later conversation.
+
+Neither Drive object is a second mutable truth source. The current bound workspace remains authoritative until a later restore is fully verified and bound.
 
 ## Default and authority
 
-- The default backend is `off`. Codex Loop must work normally when no cloud storage is connected.
-- `google_drive` is the first supported host adapter for `state_only` persistence. Google OAuth, connector sessions, refresh tokens, user identity, and file authorization remain owned by the ChatGPT host. Codex Loop never reads, copies, serializes, or commits them.
-- Repository source contains only adapter logic, schemas, tests, and policy. User-instance folder IDs, task IDs, manifests, checkpoints, and connection state never belong in GitHub source.
-- The authoritative task FSM remains the Codex Loop runtime plus current observed workspace/tool facts. A Drive object is a recoverable snapshot, not a second mutable truth source.
+- Persistence is default-off. Workspace Cache is created only when the user explicitly asks to cache/preserve the workspace or when cross-conversation workspace recoverability is an explicit acceptance requirement.
+- `google_drive` is the first host adapter. Google OAuth, connector sessions, refresh tokens, user identity, file authorization, and Drive object operations remain owned by the ChatGPT host.
+- Repository source contains only adapter logic, schemas, tests, and policy. User-instance folder IDs, task IDs, cache file IDs, manifests, and connection state never belong in GitHub source.
+- A restored workspace becomes authoritative only after integrity + Git identity + worktree-state verification succeeds.
 
-## State-only MVP
+## State-only persistence
 
-The runtime command `persistence-export --backend google_drive` creates a private temporary `state-only.json` manifest. The host may upload that file to a private Drive folder such as `Codex Loop/.runtime/tasks/<task-id>/` and should record the returned Drive file/folder IDs only in task-private host state.
+`persistence-export --backend google_drive` creates a private temporary `state-only.json` manifest. The host may upload it to `Codex Loop/.runtime/tasks/<task-id>/`. It remains schema-whitelisted and may contain the objective, criteria, task/profile/generation metadata, repository commit/tree lineage, bounded resume metadata, and hashed external-action identity. It must not contain chain of thought, hidden instructions, credentials/tokens/cookies, raw tool transcripts, approval/session nonces, environment secrets, or raw external-action identities.
 
-The manifest is schema-whitelisted. It may contain the objective, criterion text/status, task/profile/generation metadata, repository commit/tree lineage, bounded resume metadata, and external-action state with the action identity hashed. It must not contain chain of thought, hidden system/developer instructions, credentials/tokens/cookies, raw tool transcripts, approval/session nonces, environment secrets, or a raw external-action identity.
+A later conversation downloads the manifest, runs `persistence-validate`, then `persistence-resume-plan` and `persistence-resume`. Resume creates a new freshness domain: old PASS, validation, review, and objective-audit evidence is historical until re-proven against current reality. See `persistence-resume.md`.
 
-A new conversation may download a manifest through the host connector and run `persistence-validate`, but deterministic recovery must continue through `persistence-resume-plan` and `persistence-resume`; see `persistence-resume.md`. Resume creates a new freshness domain rather than reopening the old database. Previous criterion PASS, validation, review, and objective-audit evidence becomes stale/historical. Current GitHub/workspace/tool facts always override persisted assumptions. Never blindly repeat a non-idempotent action because a manifest says it was dispatched or outcome-unknown; reconcile the external system first.
+## Workspace Cache (`state_and_workspace` recovery)
 
-Task persistence and Host Profile persistence are separate control planes. The task manifest contains objective/lifecycle recovery evidence; `host.json` contains private user preferences/locators. They must never be merged into one cloud object or truth source. Optional Host Profile cloud sync, if later enabled, must use a private location and never the public-read GitHub staging folder.
+Workspace Cache is a separate artifact class with a fixed **7-day TTL** and one-shot consumption semantics.
 
-## Cleanup lifecycle
+Create it from the current real Git workspace:
 
-Every manifest has `created_at` and `expires_at`. The default refreshable TTL is 30 days for active tasks and 7 days for completed/cancelled tasks. Re-exporting an active task refreshes its expiry. Cleanup is opportunistic: when Codex Loop next has Drive access, it may scan only its bounded runtime folder and apply `persistence-cleanup-plan` to expired objects.
+```bash
+python3 scripts/codex_loop.py workspace-cache-create \
+  --cwd REPO \
+  --repository OWNER/REPO \
+  --output /PRIVATE/TEMP/workspace-cache.tar.gz
+```
 
-Cleanup semantics are **artifact-class- and adapter-specific**, not globally trash-first. A durable recovery manifest is eligible for deletion only after its TTL expires, it carries no planned/dispatched/outcome-unknown/unresolved terminal-failure external action, and the host has proven both that the object was created for this Codex Loop persistence flow and that it is still inside the bounded runtime folder being scanned. `persistence-cleanup-plan` must fail closed to `cleanup_pending` when ownership, scope, or an adapter deletion primitive is unproven.
+The capsule contains only:
 
-When those proofs hold, prefer a recoverable deletion primitive when the active adapter exposes one. If the adapter exposes only permanent deletion, permanent deletion is allowed for that exact expired, ownership-proven, bounded-scope recovery object. For the current Google Drive connector, a host exposing Trash maps the recoverable plan to `trash`; a host exposing only `delete_file` maps the permanent plan to that exact file. The deterministic runtime only emits the cleanup plan; the ChatGPT host owns connector dispatch and must not broaden one proven object into a folder-wide delete.
+- a verified Git bundle carrying the exact current HEAD commit/history required for restore;
+- the exact HEAD tree identity;
+- a binary staged patch;
+- a binary unstaged patch;
+- non-ignored untracked regular files and safe in-workspace symlinks;
+- an immutable manifest with component hashes and a state fingerprint.
 
-These durable-state rules do **not** apply to the public-read `ChatGPT-GitHub-Staging` transport objects used by Web publication. Those archives are one-time transport artifacts and should be permanently removed after verified consumption under `web-mode-publish.md`.
+It deliberately excludes ignored files, `.git/config`, hooks, credentials, environment caches, virtual environments, `node_modules`, and other ignored build/runtime material. Unsupported/special untracked filesystem entries fail closed instead of being silently omitted.
+
+`workspace-cache-create` returns the capsule SHA-256/size, cache ID, exact HEAD commit/tree, state fingerprint, suggested Drive filename, private bounded folder path `Codex Loop/.runtime/workspace-cache`, and 7-day expiry. The host uploads the exact binary file privately and retains the Drive object identity only in host-private state.
+
+### Restore
+
+A later conversation must download the exact capsule and verify the externally retained SHA-256 before restore:
+
+```bash
+python3 scripts/codex_loop.py workspace-cache-validate \
+  --capsule /PRIVATE/TEMP/cache.tar.gz \
+  --expected-sha256 FULL_SHA256
+
+python3 scripts/codex_loop.py workspace-cache-restore \
+  --capsule /PRIVATE/TEMP/cache.tar.gz \
+  --expected-sha256 FULL_SHA256 \
+  --destination /FRESH/WEB/WORKSPACE \
+  --consumption-receipt-output /PRIVATE/TEMP/cache-consumed.json
+```
+
+Restore must produce a **fresh real Git repository** and require:
+
+- restored `HEAD` exactly equals cached HEAD commit;
+- restored `HEAD^{tree}` exactly equals cached tree;
+- staged patch is restored to index + worktree;
+- unstaged patch is restored only to worktree;
+- non-ignored untracked state matches the manifest;
+- the recomputed workspace-state fingerprint exactly matches the cache manifest.
+
+Only after all checks pass may the new workspace be bound as the sole mutable authority.
+
+### One-shot consumption and deletion ordering
+
+After successful restore:
+
+1. mark the cache consumed by uploading the small `workspace-cache-consumed-v1-<cache-id>.json` receipt to the same bounded private folder;
+2. attempt to delete the exact capsule after a fresh ID/title/parent readback;
+3. if capsule deletion succeeds, delete the matching consumption receipt;
+4. if deletion fails, refresh exact identity and retry **at most once in that cache operation**;
+5. if it still fails, leave the receipt + capsule as `CACHE_CLEANUP_PENDING`.
+
+A cleanup failure **never invalidates `WORKSPACE_RESTORED`**. The consumption receipt excludes that cache ID from later automatic restore selection even when the capsule remains because Drive deletion was unavailable/blocked.
+
+## Opportunistic bounded cleanup
+
+Run cleanup opportunistically on every Workspace Cache create/list/restore operation. For a restore, first select the intended capsule and preserve that exact cache ID from pre-restore garbage collection; clean other eligible objects, restore/verify the selected capsule, then mark it consumed and delete it. Scan only the exact bounded `Codex Loop/.runtime/workspace-cache` folder and pass current object metadata to:
+
+```bash
+python3 scripts/codex_loop.py workspace-cache-cleanup-plan --objects-json /PRIVATE/TEMP/cache-objects.json
+# While restoring CACHE_ID:
+python3 scripts/codex_loop.py workspace-cache-cleanup-plan --objects-json /PRIVATE/TEMP/cache-objects.json --preserve-cache-id CACHE_ID
+```
+
+Each object observation must include exact `id`, `name`, `created_at`, and host-proven `bounded_parent_proven` + `ownership_proven`. The runtime plans deletion only for:
+
+- caches with a matching consumption receipt; or
+- unconsumed caches whose age is at least 7 days.
+
+Unconsumed, unexpired caches remain. A cache with unproven ownership/parent becomes `cleanup_pending`, never a guessed delete. Matching/orphan consumption receipts are removed only inside the same bounded proof scope. Neighboring Drive folders and non-cache objects are ignored.
+
+This means effective Workspace Cache retention is:
+
+```text
+min(successful consumption time, created_at + 7 days)
+```
+
+with later opportunistic cleanup for permission-related deletion residue.
+
+## State-only cleanup
+
+State-only manifests retain their existing status-dependent TTL policy. `persistence-cleanup-plan` remains artifact-class-specific: unresolved external actions are retained; expired state manifests are delete-eligible only with exact ownership + bounded task-folder proof. Prefer recoverable deletion when available; exact permanent deletion is permitted only when that is the adapter's supported primitive.
+
+Workspace Cache cleanup rules do not apply to public-read `ChatGPT-GitHub-Staging` publication transport objects; those remain one-time publication artifacts governed by `web-mode-publish.md`.
 
 ## Capability degradation
 
-A missing or disconnected Drive connector is not a task failure when persistence is optional. Report one concise degradation warning and continue with ephemeral runtime state. Persistence becomes a completion requirement only when the user explicitly requires cross-conversation recoverability for the current objective.
-
-Workspace snapshots are deliberately outside the MVP. Git-backed work should normally reconstruct source from verified repository lineage plus state-only recovery. A future `state_and_workspace` mode must have a separate size/privacy policy and explicit user opt-in.
+A disconnected Drive connector is not a correctness failure when persistence/cache is optional. If the user explicitly requires cross-conversation workspace recoverability, inability to create or retrieve the capsule is a completion blocker. Never substitute model-carried source text, hidden memory, or an installed Skill copy without explicit installed-source authorization.

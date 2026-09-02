@@ -194,6 +194,15 @@
       "status": "LOCAL_DIVERGENCE",
       "divergence": "Google Drive persistence is a ChatGPT Web reliability adapter, not an upstream Codex storage implementation.",
       "upgrade_path": "Keep a backend-neutral persistence interface so a future native host durable store can replace Drive without changing task semantics."
+    },
+    {
+      "id": "workspace_capsule_persistence",
+      "layer": "concept",
+      "paths": [],
+      "required_patterns": [],
+      "status": "LOCAL_DIVERGENCE",
+      "divergence": "Drive-backed Workspace Capsules preserve exact Web Git commit/tree plus staged, unstaged, and non-ignored untracked state across ephemeral conversation workspaces. This is a ChatGPT host recovery adapter, not an upstream Codex persistence implementation.",
+      "upgrade_path": "Prefer a native host workspace snapshot/restore primitive if one becomes available while retaining one-shot consumption, 7-day bounded retention, exact Git/state verification, and cleanup-failure independence."
     }
   ]
 }

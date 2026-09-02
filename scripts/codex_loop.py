@@ -75,7 +75,13 @@ from codex_loop_runtime.model_relay import (
     receive_file,
 )
 from codex_loop_runtime.protocol import emit_error, emit_ok
-from codex_loop_runtime.web_publish import build_web_publish_archive, web_publish_plan
+from codex_loop_runtime.web_publish import build_web_publish_archive, build_web_publish_bundle, web_publish_plan
+from codex_loop_runtime.workspace_cache import (
+    build_workspace_cache,
+    restore_workspace_cache,
+    validate_workspace_cache,
+    workspace_cache_cleanup_plan,
+)
 from codex_loop_runtime.state import active_task_id, open_store
 from codex_loop_runtime.workspace import repo_root
 from codex_loop_runtime.workspace_registry import (
@@ -102,7 +108,8 @@ HOST_ADAPTER_COMMANDS = (
     ('permission-preflight-plan', 'plan only permission probes not covered by fresh scoped current-session observations'),
     ('permission-observation-record', 'record a scoped expiring host capability observation'),
     ('permission-observation-status', 'check freshness of a scoped current-session host capability observation'),
-    ('web-publish-archive', 'build and bind a reusable deterministic publish-ready Web source archive'),
+    ('web-publish-bundle', 'build and bind a verified exact-identity Web Git bundle'),
+    ('web-publish-archive', 'compatibility alias for exact-identity Web Git bundle creation'),
     ('web-publish-plan', 'plan verified Web publication with an optional validated-tree fast path'),
     ('interaction-route', 'resolve Cloud Browser vs local browser target without granting access'),
     ('persistence-export', 'export private cross-conversation recovery state'),
@@ -110,6 +117,10 @@ HOST_ADAPTER_COMMANDS = (
     ('persistence-resume-plan', 'plan deterministic recovery observations'),
     ('persistence-resume', 'reconcile current reality and create a fresh resumed task'),
     ('persistence-cleanup-plan', 'plan recovery-manifest cleanup'),
+    ('workspace-cache-create', 'create an immutable 7-day Git/worktree Workspace Capsule for private Drive staging'),
+    ('workspace-cache-validate', 'validate a Workspace Capsule and its exact Git/worktree identity'),
+    ('workspace-cache-restore', 'restore a Workspace Capsule into a fresh Git workspace and emit a consumption receipt'),
+    ('workspace-cache-cleanup-plan', 'plan bounded consumed/expired Drive Workspace Capsule cleanup'),
     ('objective-audit', 'record requirement-by-requirement completion evidence'),
     ('workspace-register', 'register a private host workspace alias'),
     ('workspace-registry-list', 'list private host workspace aliases'),
@@ -823,9 +834,21 @@ def _cmd_permission_observation_status(argv: list[str]) -> int:
     a=p.parse_args(argv[1:]); emit_ok(permission_observation_status(session_id=a.session_id,capability=a.capability,scope=a.scope)); return 0
 
 
+def _cmd_web_publish_bundle(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py web-publish-bundle')
+    p.add_argument('--cwd')
+    p.add_argument('--task-id')
+    p.add_argument('--output', required=True)
+    p.add_argument('--prerequisite-commit')
+    args = p.parse_args(argv[1:])
+    _cwd_path, root, store = _scope_from_argv(argv)
+    emit_ok(build_web_publish_bundle(root, store, output=Path(args.output), prerequisite_commit=args.prerequisite_commit))
+    return 0
+
+
 def _cmd_web_publish_archive(argv: list[str]) -> int:
-    p=argparse.ArgumentParser(prog='codex_loop.py web-publish-archive'); p.add_argument('--cwd'); p.add_argument('--task-id'); p.add_argument('--output',required=True); p.add_argument('--top-level')
-    a=p.parse_args(argv[1:]); cwd,root,store=_scope_from_argv(argv); emit_ok(build_web_publish_archive(root,store,output=Path(a.output),top_level=a.top_level)); return 0
+    p=argparse.ArgumentParser(prog='codex_loop.py web-publish-archive'); p.add_argument('--cwd'); p.add_argument('--task-id'); p.add_argument('--output',required=True); p.add_argument('--top-level'); p.add_argument('--prerequisite-commit')
+    a=p.parse_args(argv[1:]); cwd,root,store=_scope_from_argv(argv); emit_ok(build_web_publish_archive(root,store,output=Path(a.output),top_level=a.top_level,prerequisite_commit=a.prerequisite_commit)); return 0
 
 
 def _cmd_web_publish_plan(argv: list[str]) -> int:
@@ -942,6 +965,63 @@ def _cmd_persistence_cleanup_plan(argv: list[str]) -> int:
         recoverable_delete_supported=args.recoverable_delete_supported,
         permanent_delete_supported=args.permanent_delete_supported,
     ))
+    return 0
+
+
+def _cmd_workspace_cache_create(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-cache-create')
+    p.add_argument('--cwd')
+    p.add_argument('--output', required=True)
+    p.add_argument('--repository')
+    args = p.parse_args(argv[1:])
+    cwd = _cwd(args.cwd)
+    root = repo_root(cwd)
+    emit_ok(build_workspace_cache(root, output=Path(args.output), repository=args.repository))
+    return 0
+
+
+def _cmd_workspace_cache_validate(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-cache-validate')
+    p.add_argument('--capsule', required=True)
+    p.add_argument('--expected-sha256')
+    args = p.parse_args(argv[1:])
+    data = validate_workspace_cache(Path(args.capsule), expected_sha256=args.expected_sha256)
+    data.pop('manifest', None)
+    emit_ok(data)
+    return 0
+
+
+def _cmd_workspace_cache_restore(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-cache-restore')
+    p.add_argument('--capsule', required=True)
+    p.add_argument('--destination', required=True)
+    p.add_argument('--expected-sha256')
+    p.add_argument('--consumption-receipt-output')
+    args = p.parse_args(argv[1:])
+    emit_ok(restore_workspace_cache(
+        Path(args.capsule),
+        destination=Path(args.destination),
+        expected_sha256=args.expected_sha256,
+        consumption_receipt_output=None if args.consumption_receipt_output is None else Path(args.consumption_receipt_output),
+    ))
+    return 0
+
+
+def _cmd_workspace_cache_cleanup_plan(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-cache-cleanup-plan')
+    p.add_argument('--objects-json', required=True)
+    p.add_argument('--preserve-cache-id', action='append', default=[])
+    args = p.parse_args(argv[1:])
+    payload = Path(args.objects_json).resolve().read_bytes()
+    if len(payload) > 512 * 1024:
+        raise ValueError('workspace cache cleanup object list exceeds 512 KiB')
+    try:
+        objects = json.loads(payload.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError('workspace cache cleanup object list must be valid UTF-8 JSON') from exc
+    if isinstance(objects, dict) and set(objects) == {'objects'}:
+        objects = objects['objects']
+    emit_ok(workspace_cache_cleanup_plan(objects, preserve_cache_ids=set(args.preserve_cache_id)))
     return 0
 
 
@@ -1117,6 +1197,8 @@ def main() -> int:
             return _cmd_permission_observation_record(argv)
         if argv[0] == 'permission-observation-status':
             return _cmd_permission_observation_status(argv)
+        if argv[0] == 'web-publish-bundle':
+            return _cmd_web_publish_bundle(argv)
         if argv[0] == 'web-publish-archive':
             return _cmd_web_publish_archive(argv)
         if argv[0] == 'web-publish-plan':
@@ -1137,6 +1219,14 @@ def main() -> int:
             return _cmd_persistence_resume(argv)
         if argv[0] == 'persistence-cleanup-plan':
             return _cmd_persistence_cleanup_plan(argv)
+        if argv[0] == 'workspace-cache-create':
+            return _cmd_workspace_cache_create(argv)
+        if argv[0] == 'workspace-cache-validate':
+            return _cmd_workspace_cache_validate(argv)
+        if argv[0] == 'workspace-cache-restore':
+            return _cmd_workspace_cache_restore(argv)
+        if argv[0] == 'workspace-cache-cleanup-plan':
+            return _cmd_workspace_cache_cleanup_plan(argv)
         if argv[0] == 'objective-audit':
             return _cmd_objective_audit(argv)
         if argv[0] == 'workspace-register':

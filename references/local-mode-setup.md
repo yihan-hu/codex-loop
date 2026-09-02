@@ -77,7 +77,7 @@ Schema-v1 root `default_local_workspace` and historical `default_local_root` rem
 
 Store only non-sensitive preferences/locators. `host.json` may also contain progress, browser, Web-publish, and persistence preferences; see `host-profile.md`. Never store observed capability claims, Git/OAuth tokens, passwords, cookies, connector credentials, approval tokens, session grant nonces, or other secrets in this file.
 
-Because host-local files live outside the repository, normal Git commits, Web-mode source archives, Local-mode `git push`, and Skill packaging must not include them. Do not copy them into a repository merely to make them easier to discover.
+Because host-local files live outside the repository, normal Git commits, Web-mode source transport artifacts, Local-mode `git push`, and Skill packaging must not include them. Do not copy them into a repository merely to make them easier to discover.
 
 A new conversation still starts in Web mode even when the registry or `host.json` exists. Persistent knowledge of a path never becomes implicit consent to use the local checkout.
 

@@ -1,91 +1,99 @@
 # Source acquisition and bootstrap policy
 
-Use this reference whenever Codex Loop must establish a new mutable workspace from GitHub source or from an installed Skill. Source acquisition happens **before** ordinary development; publication and deployment are separate stages.
+Use this reference whenever Codex Loop must establish a new mutable workspace from GitHub, Google Drive, or a user-provided source. Source acquisition happens **before** ordinary development; persistence, publication, packaging, and deployment are separate stages.
 
 ## Invariants
 
 - Resolve `workspace_mode` first. A source-transfer problem never silently selects Local mode.
-- The destination development workspace must be fresh and becomes the only mutable source authority after successful acquisition.
-- Transport objects (Actions ZIPs, tarballs, release packages, staging folders) are evidence/data plane, not later development baselines.
+- A successfully materialized fresh workspace becomes the only mutable source authority.
+- Normal source acquisition is limited to **user upload, Google Drive, or GitHub**.
+- Transport objects (Actions artifacts, Workspace Capsules, tarballs, release packages, Drive cache files) are evidence/data plane, never later mutable source authorities.
 - Never edit a host-installed Skill directory in place.
+- Never auto-select an installed Skill as a development source merely because it is available, current, convenient, or the GitHub path is blocked.
 - Never infer success or failure from a tool's inability to observe an event it does not support.
 
 ## GitHub -> Web workspace: required path
 
-When the user asks to pull, open, refresh, or synchronize repository source **from GitHub** into the current Web workspace, use this path:
+When the user asks to pull, open, refresh, or synchronize repository source **from GitHub** into the current Web workspace, preserve Git identity through this path:
 
 ```text
 observe exact repository + target branch/commit
   -> audited .github/workflows/workspace-download.yml
   -> workflow run whose head_sha == exact target commit
-  -> source artifact from that exact run
+  -> commit-bound Git bundle artifact
   -> GitHub Connector download_workflow_artifact
-  -> verify artifact ZIP digest when GitHub provides it
-  -> read the same job log and obtain the git-archive SHA-256
+  -> verify GitHub artifact ZIP digest when available
+  -> read the same job log and obtain bundle SHA-256 + exact commit/tree
   -> extract the downloaded artifact ZIP
-  -> verify the contained source tarball SHA-256
-  -> safely extract into a fresh Web workspace
+  -> verify the Git bundle SHA-256
+  -> git bundle verify
+  -> materialize a fresh real Git repository from the bundle
+  -> require restored HEAD == exact target commit
+  -> require restored HEAD^{tree} == exact target tree
   -> bind subsequent development to that workspace
 ```
 
-The standard workflow should package `git archive HEAD`, log its SHA-256, upload a `<repo-name>-source` artifact, and support both branch pushes and `workflow_dispatch` so a capable host can request a fresh artifact without changing repository source.
+The standard workflow packages a Git bundle, not `git archive`. It uses full checkout history, creates a temporary export ref pointing at the exact workflow `HEAD`, logs the bundle's SHA-256/size plus exact commit/tree, uploads a `<repo-name>-source` artifact, and supports both branch pushes and `workflow_dispatch`. The temporary export ref is transport metadata only; after restore, set the intended branch/HEAD and verify exact commit/tree before binding the workspace.
 
 Do not substitute any of the following as the ordinary Web acquisition path:
 
-- container or shell `git clone`/`git pull`;
+- container or shell `git clone`/`git pull` from GitHub;
 - GitHub Connector per-file contents/blob/tree reconstruction;
 - generic GitHub archive/download URLs chosen outside the commit-bound workflow;
+- source-only `git archive` when the bundle workflow is available;
 - model-carried text/Base64 source relay;
-- an installed Skill copy when the user explicitly asked for GitHub source.
+- an installed Skill copy unless the user explicitly invokes the exception below.
 
-If the exact commit has no usable download run, dispatch the audited workflow when the host exposes a workflow-dispatch capability and then verify the resulting `head_sha`. If that is unavailable, a **verified incremental replay** is allowed only when all of the following are proven: (1) a usable commit-bound source artifact exists for a known ancestor; (2) every intervening mutation is represented by an auditable deterministic patch or workflow-owned transformation with fixed size/hash or equivalent integrity evidence; (3) the transformation is replayed only inside a fresh Web workspace; and (4) the resulting complete Git tree SHA is computed locally and exactly equals the intended GitHub commit's tree SHA. A spot-check or per-file reconstruction is never sufficient. Record the ancestor commit, artifact digest/archive hash, replay transformation hashes, target commit, and final tree SHA as acquisition evidence.
+If the exact commit has no usable download run, dispatch the audited workflow when the host exposes a workflow-dispatch capability and verify the resulting `head_sha`. If that is unavailable, a **verified incremental replay** is allowed only when all of the following are proven: (1) a usable commit-bound Git bundle exists for a known ancestor; (2) every intervening mutation is represented by an auditable deterministic patch or workflow-owned transformation with fixed size/hash or equivalent integrity evidence; (3) the transformation is replayed only inside a fresh Web workspace; and (4) the resulting complete Git commit/tree identity exactly equals the intended GitHub revision. A spot-check or per-file reconstruction is never sufficient. Record the ancestor commit, artifact digest/bundle hash, replay transformation hashes, target commit, and final commit/tree.
 
-The Web import workflow may also publish a **receipt-bound source artifact** after creating its final source commit. Such an artifact is acceptable even though the Actions run itself is keyed by the earlier trigger commit only when the same run's receipt explicitly binds the artifact/archive hash, published commit, and published tree, and GitHub readback confirms that published commit/tree. This prevents bot-generated source commits from becoming unrecoverable merely because `GITHUB_TOKEN` pushes do not recursively trigger the download workflow.
+The Web import workflow may publish a **receipt-bound Git bundle** after verified publication. Such an artifact is acceptable even when `GITHUB_TOKEN` publication does not recursively trigger the download workflow only when the same run's receipt explicitly binds the bundle hash, published commit, and published tree, and GitHub readback confirms that published commit/tree.
 
-If neither an exact-commit artifact, a receipt-bound published artifact, nor a fully verified incremental replay is available, stop with a precise acquisition blocker. Do not mutate repository source merely to manufacture a different commit whose artifact is easier to observe.
+If neither an exact-commit bundle, a receipt-bound published bundle, nor a fully verified incremental replay is available, stop with a precise acquisition blocker. Do not mutate repository source merely to manufacture an easier artifact.
 
 Useful fail-precise classifications are descriptive, not additional runtime state:
 
-- `WORKSPACE_DOWNLOAD_WORKFLOW_MISSING`: the audited download workflow is absent.
-- `WORKSPACE_DOWNLOAD_TRIGGER_UNAVAILABLE`: no exact-commit run exists and the host cannot request one.
-- `WORKSPACE_DOWNLOAD_OBSERVABILITY_UNAVAILABLE`: the workflow may exist/run, but the available query surface cannot observe the relevant event/run.
-- `WORKSPACE_DOWNLOAD_ARTIFACT_UNAVAILABLE`: the exact run exists but its expected artifact cannot be retrieved.
-- `WORKSPACE_DOWNLOAD_INTEGRITY_FAILED`: ZIP digest, archive size, or source tarball SHA-256 does not match.
+- `WORKSPACE_DOWNLOAD_WORKFLOW_MISSING`
+- `WORKSPACE_DOWNLOAD_TRIGGER_UNAVAILABLE`
+- `WORKSPACE_DOWNLOAD_OBSERVABILITY_UNAVAILABLE`
+- `WORKSPACE_DOWNLOAD_ARTIFACT_UNAVAILABLE`
+- `WORKSPACE_DOWNLOAD_INTEGRITY_FAILED`
+- `WORKSPACE_GIT_IDENTITY_MISMATCH`
 
 An empty result from a connector action that only supports a different trigger class is `...OBSERVABILITY_UNAVAILABLE`, not proof that the workflow never ran.
 
-## Verified-latest installed Skill bootstrap
+## Google Drive / user upload -> Web workspace
 
-An installed Skill is normally deployment state. Codex Loop may use it as a **one-time bootstrap source** only when all of the following hold:
+A Drive object or user upload may be used when the user selects it as source. Prefer a Codex Loop Workspace Capsule when one is available because it preserves Git identity and resumable dirty state. For a generic uploaded/source package, validate its format and provenance as far as the available manifest permits; never call it the current GitHub revision without exact evidence.
 
-1. The intended canonical repository and target branch are known.
-2. The target branch's current remote HEAD is observed as a full 40-hex commit.
-3. The installed copy is proven to represent that exact commit. Acceptable proof is either:
-   - host/deployment evidence or a deployment receipt explicitly bound to the same repository + full commit; or
-   - an audited full source/package manifest proving content equivalence to that exact revision.
-4. The freshness evidence is current at the moment of bootstrap. A version string, filename, modification timestamp, install date, or spot-check of a few files is insufficient.
-5. The installed directory is treated as read-only. Copy it into a fresh development workspace before the first mutation.
-6. Record the bootstrap provenance: source kind `installed_skill`, repository, target branch, exact commit, and the evidence that proved freshness/content identity.
-7. After the copy, bind the task to the new workspace and never return to the installed directory as a competing source authority.
+For Drive Workspace Capsules, read `persistence.md`. Restore only into a fresh workspace, verify outer SHA-256 plus capsule internals, require exact HEAD commit/tree and staged/unstaged/non-ignored-untracked state fingerprint, then bind the restored workspace. A successfully consumed capsule is immediately cleanup-eligible; cleanup failure does not invalidate the restored workspace.
 
-If any freshness/provenance condition is missing, do not call the installed copy “latest.” Use the verified GitHub -> Web path when the requested source is GitHub, or report the missing proof when no verified acquisition path is available.
+## Installed Skill bootstrap: default off, explicit exception only
 
-For Codex Loop packages built under the current deployment-provenance contract, first run `deployment-provenance-verify` against the installed Skill root. That proves the runtime bundle matches its embedded exact repository/commit/tree claim, but freshness still requires a current target-branch observation. Only bundle-integrity proof plus exact remote-revision equality satisfies the bootstrap exception.
+An installed Skill is deployment state and is **not part of normal source resolution**. Do not inspect or copy it as fallback when GitHub/Drive/upload acquisition is inconvenient or blocked.
 
-This exception does not make arbitrary copied source directories valid. `final`/`publish` folders, release staging, downloaded artifacts, unpacked release packages, and unverified installed Skills remain non-authoritative.
+Use an installed Skill as a one-time bootstrap source only when the user explicitly authorizes that source in the **current conversation/turn context**, for example: “use the installed Codex Loop as the source for this workspace.” Generic requests such as “update Codex Loop,” “modify the installed Skill,” or “use the latest version” are not authorization to copy the installed directory.
 
-## Interaction with Local mode
+When the explicit exception is invoked:
 
-The installed-Skill bootstrap exception does not bypass Local-mode authorization. If the installed Skill lives on a user's Mac or another RDC-backed host, Local mode and current-task filesystem authorization must already permit reading that installed directory and writing the destination workspace. The copied workspace must live inside the authorized development boundary. Do not use access to an installed Skill to infer permission for sibling repositories or broader filesystem discovery.
+1. Keep the installed directory read-only and copy it into a fresh development workspace before mutation.
+2. Run deployment-provenance verification when `references/deployment-manifest.json` exists.
+3. If the user expects the current/latest target-branch revision, require a fresh GitHub remote observation and exact installed commit/tree equality before calling it current.
+4. If the installed manifest binds a different exact revision and the user explicitly accepts that installed revision as the development starting point, record `freshness=historical_explicitly_accepted`; never call it latest.
+5. If exact provenance is unavailable but the user still explicitly selects the installed copy, label it `provenance=unverified_user_selected`; require later source/remote reconciliation before publishing to an existing canonical repository.
+6. Record source kind `installed_skill_exception`, exact repository/revision when known, provenance/freshness status, and hashed current-turn authorization evidence in private runtime state only.
+7. After copying, bind only the fresh workspace and never return to the installed directory as competing source authority.
+
+This exception does not bypass Local-mode or filesystem authorization. If the installed Skill is on an RDC-backed host, Local mode and current-task filesystem authorization must already permit the read-only copy operation.
 
 ## Completion evidence
 
 Before treating source acquisition as complete, retain enough evidence to answer:
 
-- Which repository and exact revision were intended?
-- Which acquisition method was used (`github_actions_artifact`, `receipt_bound_artifact`, `verified_incremental_replay`, or `installed_skill_bootstrap`)?
-- What proved the source bytes belonged to that revision?
+- Which repository/source and exact revision were intended?
+- Which acquisition method was used (`github_git_bundle`, `receipt_bound_git_bundle`, `drive_workspace_cache`, `user_upload`, `verified_incremental_replay`, or `installed_skill_exception`)?
+- What proved the source bytes/Git objects belonged to that revision?
 - What integrity checks passed?
 - Which fresh workspace became the sole mutable baseline?
+- If the installed-Skill exception was used, what current-turn user authorization and provenance/freshness label justified it?
 
 A later publication still follows the normal Web or Local publish contract; acquisition evidence does not replace publish/readback evidence.

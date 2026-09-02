@@ -286,9 +286,9 @@ python3 scripts/codex_loop.py progress-config --reset
 
 `progress-config` writes only the `progress_visibility` section of `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`) with private file permissions and preserves the other schema-v2 Host Profile sections. Invalid existing JSON is never overwritten. `progress-policy` treats invalid/missing preference configuration as non-blocking and falls back to enhanced defaults. See `host-profile.md` and `progress-visibility.md`.
 
-## Optional state-only persistence
+## Optional state-only persistence and Workspace Cache
 
-Persistence is off by default and Drive credentials remain host-owned. For an explicitly enabled durable task:
+Persistence is off by default and Drive credentials remain host-owned. State-only recovery remains the lifecycle layer:
 
 ```bash
 python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_drive --repository OWNER/REPO --source-commit FULL_COMMIT --source-tree FULL_TREE
@@ -297,12 +297,18 @@ python3 scripts/codex_loop.py persistence-resume-plan --manifest /PRIVATE/TEMP/s
 python3 scripts/codex_loop.py persistence-resume --cwd REPO --manifest /PRIVATE/TEMP/state-only.json --observations-json observations.json
 python3 scripts/codex_loop.py persistence-cleanup-plan --manifest /PRIVATE/TEMP/state-only.json \
   --ownership-proven --bounded-runtime-scope-proven --recoverable-delete-supported
-# If the active adapter exposes no recoverable delete but does expose exact permanent deletion:
-python3 scripts/codex_loop.py persistence-cleanup-plan --manifest /PRIVATE/TEMP/state-only.json \
-  --ownership-proven --bounded-runtime-scope-proven --permanent-delete-supported
 ```
 
-`persistence-export` writes only to the task-private runtime directory and returns a path for host connector upload. `--backend off` creates no file and reports the default-disabled policy. The Google Drive connector owns upload/download/list/delete operations and all authentication. `persistence-cleanup-plan` has no connector side effect: omitted ownership/scope/capability proofs fail closed to `cleanup_pending`; when both deletion primitives are available it prefers recoverable deletion, and when only exact permanent deletion is exposed it may plan that operation for the ownership-proven bounded recovery object. `persistence-resume-plan` lists facts the host must re-observe; `persistence-resume` creates a new task/freshness domain and never restores old PASS/validation/review/audit evidence as current. See `persistence.md` and `persistence-resume.md`.
+When the user explicitly wants the **Web workspace itself** recoverable across conversations, create the separate 7-day immutable Workspace Capsule:
+
+```bash
+python3 scripts/codex_loop.py workspace-cache-create --cwd REPO --repository OWNER/REPO --output /PRIVATE/TEMP/workspace-cache.tar.gz
+python3 scripts/codex_loop.py workspace-cache-validate --capsule /PRIVATE/TEMP/workspace-cache.tar.gz --expected-sha256 FULL_SHA256
+python3 scripts/codex_loop.py workspace-cache-restore --capsule /PRIVATE/TEMP/workspace-cache.tar.gz --expected-sha256 FULL_SHA256 --destination /FRESH/WORKSPACE --consumption-receipt-output /PRIVATE/TEMP/cache-consumed.json
+python3 scripts/codex_loop.py workspace-cache-cleanup-plan --objects-json /PRIVATE/TEMP/cache-objects.json
+```
+
+The capsule preserves exact Git HEAD commit/tree plus staged, unstaged, and non-ignored untracked state while excluding ignored files, Git config/hooks, and credentials. Restore verifies exact identity/state before binding the fresh workspace. Upload the consumed receipt before deleting the restored Drive capsule; deletion failure becomes `CACHE_CLEANUP_PENDING` and never invalidates `WORKSPACE_RESTORED`. Every cache create/list/restore operation opportunistically scans only `Codex Loop/.runtime/workspace-cache` and plans cleanup for consumed or >=7-day exact owned objects, with at most one refreshed retry per failed delete in that operation. State-only resume still creates a new freshness domain and never makes historical PASS/validation/review/audit evidence current. See `persistence.md` and `persistence-resume.md`.
 
 ## External/host actions
 
@@ -431,9 +437,9 @@ Every new task records a canonical workspace binding at bootstrap. Inspect it wi
 python scripts/codex_loop.py workspace-binding --cwd REPO
 ```
 
-The canonical root and shared Git repository identity must remain stable for the task. HEAD/branch may move only through the existing Git-mutation workflow. Use Git worktrees for concurrent tasks. Installed Skills are deployment state and are never edited in place, but a verified-latest installed Skill may be copied once to bootstrap a fresh workspace under `references/source-acquisition.md`; after that copy, only the new workspace is authoritative. Copied full-source directories without that provenance/freshness proof, disposable release staging, and unpacked artifacts are never later development baselines. See `references/release-lineage.md`.
+The canonical root and shared Git repository identity must remain stable for the task. HEAD/branch may move only through the existing Git-mutation workflow. Use Git worktrees for concurrent tasks. Installed Skills are deployment state, are never edited in place, and are **default-off as source acquisition**. Only explicit current-turn user authorization may invoke the read-only installed-Skill copy exception in `references/source-acquisition.md`; current/latest claims still require exact remote equality, and explicitly accepted older/unknown provenance must be labeled honestly. Copied transport/release directories remain non-authoritative.
 
-When Web mode needs source from GitHub, use the exact-revision workspace-download Actions artifact contract in `references/source-acquisition.md`. A shell/network inability to run `git clone` in the container is not a reason to invent another source transport. Likewise, inability of one connector query to observe a workflow run must be recorded as an observability limitation, not as proof that the workflow failed or never ran.
+When Web mode needs source from GitHub, use the exact-revision **Git bundle** workspace-download Actions artifact contract in `references/source-acquisition.md`, restore a real Git repository, and require exact commit/tree equality before binding it. A shell/network inability to run `git clone` in the container is not a reason to invent another source transport. Likewise, inability of one connector query to observe a workflow run must be recorded as an observability limitation, not as proof that the workflow failed or never ran.
 
 Commit source before packaging. Plan an export from the audited Git HEAD, build outside the canonical tree, then record the artifact hash:
 

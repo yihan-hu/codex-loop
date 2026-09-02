@@ -59,9 +59,9 @@ For repository or Skill-development requests, **Web mode** is the default develo
 
 **Recommended path:** keep ordinary repository development in the ChatGPT/chatbox workspace and connect that Web workspace to GitHub when publication is needed. This is usually faster and simpler than Mac Local mode because it avoids the extra RDC hop, host-filesystem authorization, native-Git host state, and Mac-to-workspace synchronization steps.
 
-When a Web task starts from source that currently lives on GitHub, Codex Loop does **not** treat container `git clone` as the standard acquisition path. It materializes the exact GitHub revision through the audited `.github/workflows/workspace-download.yml` Actions artifact, downloads that artifact through the GitHub Connector, verifies the artifact digest and source archive SHA-256, and extracts it into a fresh Web workspace.
+When a Web task starts from source on GitHub, Codex Loop does **not** treat container `git clone` as the standard acquisition path. It materializes the exact revision through the audited `.github/workflows/workspace-download.yml`, downloads the commit-bound **Git bundle** artifact through the GitHub Connector, verifies artifact + bundle integrity, runs `git bundle verify`, restores a fresh real Git repository, and requires exact HEAD commit/tree equality before binding it.
 
-For Skill maintenance, an installed Skill may be copied into a fresh workspace only as a narrow bootstrap optimization when its deployment provenance proves that it is the latest observed target-branch revision. The installed directory stays read-only deployment state; after copying, only the new workspace is authoritative. If freshness is uncertain, acquire the source from GitHub through the verified Actions-artifact route.
+For Skill maintenance, normal source choices are user upload, Google Drive, or GitHub. An installed Skill is deployment state and is **not** an automatic source fallback. It may be copied read-only into a fresh workspace only when you explicitly tell Codex Loop to use that installed copy as source in the current conversation; current/latest claims still require exact remote equality, while an explicitly accepted older revision is labeled historical rather than silently upgraded.
 
 Example prompts (explicit Skill naming is optional):
 
@@ -99,11 +99,13 @@ The host config is private runtime state outside the repository and outside `ski
 
 ## Optional cross-conversation persistence
 
-Web conversations and ephemeral workspaces are not a durable storage contract. Codex Loop therefore supports an **optional, default-off `state_only` persistence adapter** for long objectives. The first adapter is Google Drive, but Drive is only the storage transport: ChatGPT owns OAuth and connector credentials, while Codex Loop creates a small schema-whitelisted recovery manifest. Nothing about the user's Drive connection, folder IDs, task manifests, tokens, or connector session is committed to GitHub.
+Web conversations and ephemeral workspaces are not a durable storage contract. Codex Loop therefore separates two optional, default-off Drive recovery layers. `state_only` stores a small schema-whitelisted lifecycle/reconciliation manifest. **Workspace Cache** stores an immutable 7-day Git/worktree capsule so a later conversation can restore the actual development workspace.
 
-`python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_drive --repository OWNER/REPO` creates the private temporary manifest for a durable task. The host can upload it to a private `Codex Loop/.runtime/...` folder. A later conversation downloads it and runs `persistence-validate`; the recovered data is evidence for bootstrap/reconciliation, never a second source of truth. The manifest deliberately excludes chain of thought, hidden instructions, credentials, raw tool transcripts, local roots, and raw external-action identities.
+`python3 scripts/codex_loop.py workspace-cache-create --cwd REPO --repository OWNER/REPO --output /PRIVATE/TEMP/workspace-cache.tar.gz` preserves the exact HEAD commit/tree plus staged, unstaged, and non-ignored untracked state. It excludes ignored build/runtime material, Git config/hooks, and credentials. Upload the returned binary privately to `Codex Loop/.runtime/workspace-cache` through the Drive connector.
 
-Cleanup uses refreshable TTLs plus opportunistic garbage collection, but deletion semantics follow the artifact class and the capabilities of the active storage adapter. Durable recovery manifests are retained while external actions are unresolved and are eligible for deletion only after TTL expiry plus exact Codex Loop ownership and bounded runtime-folder scope proof. Prefer a recoverable delete when available; if the adapter exposes only exact permanent deletion, that operation may be used for the proven expired recovery object. Missing Drive access degrades recoverability only and does not block normal work unless the user explicitly required cross-conversation recovery. See `references/persistence.md`.
+On restore, verify the externally retained capsule SHA-256, run `workspace-cache-validate`, restore into a fresh directory with `workspace-cache-restore`, and require exact HEAD/tree + state fingerprint before binding the new workspace. After success, upload the small consumed receipt and delete the exact capsule. If deletion fails, the restore remains successful and cleanup becomes `CACHE_CLEANUP_PENDING`; every later cache create/list/restore operation opportunistically scans only the bounded cache folder and retries cleanup of consumed or >=7-day exact owned objects. Consumed cache IDs are excluded from automatic restore selection even when their capsule could not be deleted.
+
+State-only manifests retain their separate TTL/reconciliation rules and always resume into a new freshness domain. Drive is recovery transport, not a second mutable truth source. See `references/persistence.md` and `references/persistence-resume.md`.
 
 ## Architecture fidelity governance
 
@@ -169,7 +171,7 @@ Then `~/.codex-loop/host.json` can remember only the preferred alias:
 
 Older installations may still contain `"default_local_root"`. Codex Loop treats that as a compatibility/migration input after you explicitly choose Local mode; it does not itself select Local mode or grant access. Register the path as `piwork` and prefer `default_local_workspace` afterward.
 
-The host-local config and registry are deliberately outside every repository and outside the packaged Skill. Git commits, GitHub pushes, Web-mode source archives, and `skill.zip` must not include them. Do not put tokens, passwords, cookies, OAuth credentials, approval state, or session-grant nonces in either file.
+The host-local config and registry are deliberately outside every repository and outside the packaged Skill. Git commits, GitHub pushes, Web-mode Git bundles, and `skill.zip` must not include them. Do not put tokens, passwords, cookies, OAuth credentials, approval state, or session-grant nonces in either file.
 
 ### Remembering local workspaces without permanent access
 
@@ -285,104 +287,49 @@ Each durable runtime task still has its own repository/worktree binding even tho
 
 ## Acquiring GitHub source into Web mode
 
-For requests such as “pull this repository into the Web workspace”, “open the GitHub version here”, or “sync this exact commit into ChatGPT”, Codex Loop uses one verified materialization path:
+For “pull this repository into the Web workspace”, “open the GitHub version here”, or “sync this exact commit into ChatGPT”, Codex Loop preserves Git identity end to end:
 
 ```text
 exact GitHub commit
   -> .github/workflows/workspace-download.yml
-  -> commit-bound GitHub Actions artifact
+  -> commit-bound Git bundle artifact
   -> GitHub Connector artifact download
   -> artifact ZIP digest verification
-  -> source tarball SHA-256 verification from the same job log
-  -> safe extraction into a fresh ChatGPT workspace
+  -> bundle SHA-256/size + logged commit/tree verification
+  -> git bundle verify
+  -> fresh real Git repository
+  -> exact restored HEAD commit/tree verification
 ```
 
-The workflow should support push-triggered packaging and `workflow_dispatch` for hosts that can explicitly request a fresh artifact. Codex Loop must bind the selected workflow run to the exact `head_sha`; choosing the newest artifact is not enough. If no exact run can be produced or observed, report that acquisition/observability blocker instead of falling back to shell `git clone`, GitHub per-file reconstruction, or generic repository archive URLs.
+The workflow supports push-triggered packaging and `workflow_dispatch`. Codex Loop binds the selected run to the exact `head_sha`; choosing the newest artifact is not enough. If no exact run can be produced or observed, it reports the acquisition/observability blocker instead of falling back to shell `git clone`, per-file reconstruction, or source-only archives.
 
-If an installed Skill is proven by deployment evidence or an audited full manifest to be exactly the latest observed GitHub revision, Codex Loop may copy it once into a fresh workspace as a bootstrap shortcut. This is not allowed when the user explicitly asked to acquire from GitHub, and it never permits editing the installed Skill directory itself.
+Installed Skills are excluded from normal source resolution. Only an explicit current-conversation instruction such as “use the installed Codex Loop as this workspace source” invokes the read-only copy exception. See `references/source-acquisition.md`.
 
 ## Publishing from Web mode
 
-For a repository being developed in the current ChatGPT workspace, the standard GitHub publication path is:
+For a repository developed in the current ChatGPT Web workspace, publication now preserves the **audited Git commit object itself**:
 
 ```text
-ChatGPT workspace
-  -> deterministic source archive + exact size/SHA-256
+ChatGPT Web Git workspace
+  -> validated clean audited commit/tree
+  -> verified Git bundle + exact size/SHA-256
   -> Google Drive `ChatGPT-GitHub-Staging` via binary file_uri
-  -> inherited anyone-with-link read permission verified
-  -> tiny GitHub import-request commit
+  -> tiny GitHub import-request trigger commit
   -> audited `.github/workflows/workspace-import.yml`
-  -> runner size/SHA verification + safe extraction
-  -> source commit/push
-  -> GitHub commit/tree readback
-  -> permanently delete the temporary Drive transport archive
+  -> bundle verify + source commit/tree + ancestry verification
+  -> bounded force-with-lease replacing only that trigger commit
+  -> remote branch points to the original audited commit
+  -> require remote commit == audited commit and remote tree == audited tree
+  -> permanently delete the temporary Drive bundle
 ```
 
-### Fast path after a just-finished validation
+The GitHub Connector remains control plane only; source Git objects travel through the Drive binary bridge. The staging folder is a temporary anyone-with-link trust boundary for the GitHub-hosted runner. If that is unacceptable for the source, stop rather than invent another transport.
 
-If a Web workspace was already validated/reviewed and you immediately say `push`, Codex Loop reuses the same active task/generation and routing session instead of restarting the lifecycle. `web-publish-plan --verified-tree-fast-path` returns `FAST_PUBLISH` only when the workspace/tree, validation/review, scoped capability observations, and optional publish-ready archive receipt are still fresh. Otherwise it returns `FULL_VERIFIED_PUBLISH` and names only the stale gates.
+`web-publish-bundle` creates the exact bundle. A verified remote base may be supplied as a Git bundle prerequisite when an acquired Web workspace intentionally lacks older history; the prerequisite must be an exact ancestor of audited HEAD. `web-publish-plan --verified-tree-fast-path` may reuse fresh validation/review/capability evidence and an unchanged bundle receipt, but it never weakens identity requirements. The remote short-circuit is valid only when **both** commit and tree already equal the audited source.
 
-The security model is unchanged: source bytes still go through Drive staging and audited Workspace Import. Success is proven by `remote tree == validated tree`, not by a new commit SHA alone.
+The importer is allowed one narrowly scoped non-fast-forward action: it may use `force-with-lease` only to remove the single request trigger commit it just received, after proving that trigger's parent equals the previously observed branch base and its only file delta is the request JSON. Any branch concurrency, extra trigger delta, ancestry failure, bundle mismatch, or lease failure stops publication. This is not general force-push permission.
 
-### One-time Web-mode setup
-
-This path does **not** require Remote Desktop Commander, a local checkout, local Git, or your computer to stay online. The ChatGPT workspace remains the source of truth and the transfer is completed by connected cloud services.
-
-#### 1. Connect Google Drive to ChatGPT
-
-Connect Google Drive with permission to upload and delete files. In Drive, create a dedicated folder named `ChatGPT-GitHub-Staging` (or another explicitly configured name), then set **Share -> General access -> Anyone with the link -> Viewer**. Keep this folder dedicated to temporary publication archives.
-
-Codex Loop does not hard-code your Drive folder ID. It resolves the configured folder by name or by a folder URL/ID supplied in the conversation, verifies that the folder is `anyone: reader`, uploads the real workspace archive through the connector's binary `file_uri` input, and reads metadata back to confirm the parent folder and byte size.
-
-#### 2. Connect GitHub to ChatGPT
-
-The GitHub connection must have access to the target repository and permission to create or update the small control-plane files used by the importer. Web-mode publication does not require a local `gh` login, a local Git credential helper, or the OAuth `workflow` scope used by Local-mode native Git.
-
-#### 3. Configure GitHub Actions for each target repository
-
-Open **Repository -> Settings -> Actions -> General** and check the following:
-
-- **Actions permissions:** allow GitHub Actions to run for the repository. `Allow all actions and reusable workflows` is the simplest compatible setting unless your organization has a stricter approved policy.
-- **Workflow permissions:** select **Read and write permissions** so the import workflow's `GITHUB_TOKEN` can create the verified source commit.
-- **Branch rules:** the destination branch must permit the workflow's normal non-force push. Codex Loop never disables branch protection or force-pushes around it. If organization policy blocks the workflow, change the repository/organization policy rather than weakening the importer.
-
-The repository also needs the audited `.github/workflows/workspace-import.yml`. On first use, if it is absent, Codex Loop may bootstrap that small trusted workflow through the GitHub Connector. In an empty repository this control-plane bootstrap can be the first commit; source files themselves must still arrive through Drive -> Actions, not through GitHub contents/blob APIs.
-
-#### 4. What happens on the first and later pushes
-
-When you ask Codex Loop to push a Web-mode workspace, it will:
-
-1. build one deterministic `tar.gz` with exactly one top-level source directory;
-2. record the archive byte size and SHA-256;
-3. upload the binary archive to the dedicated Drive staging folder and verify inherited public-read metadata;
-4. observe the exact GitHub branch head and create one small import-request JSON bound to that base commit, target branch, Drive file ID, size, and SHA-256;
-5. wait for the audited Actions workflow to download the archive, verify size/SHA-256, reject unsafe archive entries, and perform a non-force source commit/push;
-6. verify the workflow receipt and independently read back the target GitHub branch commit/tree;
-7. permanently delete the exact temporary Drive archive after verified success.
-
-A workflow conclusion of `success` alone is not enough: Codex Loop requires the receipt-bound commit/tree to match the actual target branch before reporting `SOURCE_PUSHED`. The staging archive is a one-time anyone-with-link transport object, not durable recovery state, so it should not be retained in Trash after verified consumption.
-
-### Web-mode setup checklist
-
-Before the first push to a repository, confirm:
-
-- [ ] Google Drive is connected to ChatGPT with file upload/delete capability.
-- [ ] `ChatGPT-GitHub-Staging` exists and is **Anyone with the link -> Viewer**.
-- [ ] GitHub is connected to ChatGPT and can write the target repository's small control-plane files.
-- [ ] GitHub Actions is enabled for the repository.
-- [ ] Workflow permissions are **Read and write permissions**.
-- [ ] Branch rules allow the audited workflow's ordinary non-force push.
-- [ ] The source can tolerate temporary anyone-with-link readability while staged.
-
-The Drive archive is temporarily anyone-with-link readable. Do not use this path for credentials, private keys, secrets, or source that cannot tolerate that temporary exposure. GitHub Connector writes are control plane only; repository source bytes do not travel through connector-created blobs/trees, model text, or Base64.
-
-A Web-mode `push` does not switch the conversation into Local mode. If the prerequisites are missing or the staging trust boundary is unacceptable, Codex Loop reports the blocker and preserves the Web workspace.
-
-Example prompt:
-
-```text
-Use Codex Loop in Web mode to update this repository, test it, and push the current workspace to OWNER/REPO main.
-```
+Repository setup therefore needs Actions enabled, `contents: write` for the audited importer, and branch policy that permits this exact lease-guarded trigger replacement. The workflow never creates a new source commit; its receipt and independent remote readback must both equal the audited workspace commit/tree. See `references/web-mode-publish.md`.
 
 ## Publishing from Local mode
 
@@ -418,11 +365,12 @@ The verified path is:
 
 ```text
 verified pushed commit
-  -> GitHub Actions source artifact
+  -> GitHub Actions Git bundle artifact
   -> GitHub Connector artifact download
-  -> artifact digest verification
-  -> source archive SHA-256 verification
-  -> current ChatGPT workspace
+  -> artifact digest + bundle SHA-256/size verification
+  -> git bundle verify
+  -> fresh real Git repository
+  -> exact restored HEAD commit/tree verification
 ```
 
 The workflow run must be bound to the exact pushed `head_sha`. The target repository needs `.github/workflows/workspace-download.yml` or an explicitly equivalent audited workflow. This repository contains a working example.
@@ -440,7 +388,7 @@ Workspace synchronization works for ordinary repositories as well as Skills. It 
 Source publication, workspace synchronization, Skill packaging, and ChatGPT installation are separate states.
 
 ```text
-SOURCE_PUSHED      GitHub matches the audited local commit/tree
+SOURCE_PUSHED      GitHub matches the exact audited source commit/tree
 WORKSPACE_SYNCED   that exact commit has been verified in the ChatGPT workspace
 SKILL_PACKAGED     a validated skill.zip exists for the intended commit
 DEPLOY_PENDING     the intended Skill revision still needs an observed current/installed-Skill update
@@ -489,10 +437,10 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 - Preserve pre-existing user changes and untracked files.
 - Keep local filesystem access inside the resolved RDC-authorized `LOCAL_ROOT` unless the user explicitly authorizes another narrow root.
 - Never read credential files directly.
-- Treat native Git commit/tree readback as Local-mode publication success evidence; for Web mode require the archive-bound Actions receipt plus GitHub branch commit/tree readback.
-- Treat the public-read Google Drive staging folder as a temporary publication trust boundary and delete staged archives after verified success.
+- Treat exact commit/tree readback as publication success evidence in both modes: native Git readback in Local mode, and bundle-bound workflow receipt plus independent GitHub branch readback in Web mode.
+- Treat the public-read Google Drive staging folder as a temporary publication trust boundary and delete staged Git bundles after verified success.
 - Do not invent a binary transfer route when no verified bridge exists.
-- Never edit an installed Skill in place or treat it as ongoing source authority. A verified-latest installed Skill may only bootstrap a fresh workspace once; downloaded artifacts and copied release folders remain transport/release material rather than development baselines.
+- Never edit an installed Skill in place or treat it as ongoing source authority. An installed Skill may bootstrap a fresh workspace only after explicit current-conversation source authorization; downloaded artifacts and copied release folders remain transport/release material rather than development baselines.
 - Materialize GitHub source into Web mode through the exact-commit `workspace-download.yml` Actions artifact path, not shell `git clone` or per-file reconstruction.
 
 ## Troubleshooting
