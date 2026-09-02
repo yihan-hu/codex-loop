@@ -4,6 +4,12 @@ Use this contract when the current conversation remains in Web mode and the user
 
 This path is Web mode only. Do not switch to RDC + native Git merely to gain transport; Local mode has its own native-Git contract.
 
+## Publication intent translation
+
+Treat `git push`, “push this branch”, “publish this commit”, “send these changes to GitHub”, and equivalent wording as **publication intent**, not as a requirement to execute native network `git push`. In Web mode, automatically satisfy that intent through this verified bundle/staging/import path. The absence of native `git push` in the Web container is not itself a blocker.
+
+Report a publication blocker only when this canonical Web publication path itself cannot satisfy its preconditions, permissions, integrity checks, or exact remote identity requirements. Do not switch transports merely because the user used Git terminology.
+
 ## Trust and data-plane boundary
 
 Source Git objects move only through a binary Git bundle:
@@ -126,7 +132,7 @@ Before reporting `SOURCE_PUSHED`:
 3. for `FAST_PUBLISH`, require the one-line `CODEX_LOOP_FAST_IMPORT_RECEIPT=<json>` log receipt from `.github/workflows/workspace-import-fast.yml`; do **not** upload or download receipt/source artifacts for the iterative fast path;
 4. for `FULL_VERIFIED_PUBLISH`, download and verify the ordinary receipt artifact from `.github/workflows/workspace-import.yml`;
 5. require receipt `published_commit == audited source_commit`;
-6. require receipt `published_tree == audited source_tree`;
+6. require receipt `published_tree == audited source tree`;
 7. independently read target branch from GitHub;
 8. require remote commit == audited source commit and remote tree == audited source tree.
 

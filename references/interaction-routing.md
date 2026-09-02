@@ -2,6 +2,23 @@
 
 Repository source location, computer/browser interaction, and Skill deployment destination are independent routing decisions. Never infer one from another, and never derive any of them from long conversation context, tool availability, or remembered host state.
 
+## Semantic compatibility routing
+
+Interpret common operation words as **user intent**, not as a demand for one literal transport or executor. When Web mode has a pre-registered semantic equivalent, route to that equivalent automatically and continue; do not report the literal command or transport as unavailable unless the equivalent path itself cannot satisfy the objective.
+
+Canonical intent translations include:
+
+- `git clone`, `git pull`, `git fetch`, “open this repo”, “refresh from GitHub”, or “sync from GitHub” -> the verified GitHub-to-Web source acquisition contract in `source-acquisition.md`;
+- `git push`, “push this branch”, “publish this commit”, or “send these changes to GitHub” -> the verified Web publication contract in `web-mode-publish.md`;
+- `pytest`, `npm test`, build, lint, typecheck, or another ordinary validation command -> Codex Loop plans/binds the exact command, the host executes it visibly, and the runtime records the observed result; a local-runtime `requires_host_visible_execution` response is routing, not a capability failure;
+- “use a subagent/reviewer” -> a native host subagent when available, otherwise the declared logical-isolation/serialized delegation path in `delegation.md`;
+- “save this workspace”, “continue this in another chat”, or equivalent explicit recoverability intent -> the Workspace Cache path in `persistence.md`;
+- generic Skill `install`/`update` on a ChatGPT Web host -> the native `chatgpt_web_skill` target unless the user explicitly selected a different deployment target.
+
+Only **pre-registered semantic equivalents** qualify. Do not substitute a path that changes the user's required identity, authorization boundary, security property, or state semantics. In particular, a task that specifically requires the user's local Chrome profile/session, a local filesystem checkout, or another unique host capability remains blocked when that exact capability is unavailable unless the user explicitly selects a different target.
+
+A negative transport rule such as “do not shell `git clone`” or “the local runtime does not execute pytest” must therefore be read as “use the canonical equivalent path,” not as “stop the objective.”
+
 ## Conversation-scoped routing state
 
 Before the first routing-sensitive host action, initialize the deterministic routing plane with `route-init`. The runtime writes one private JSON file under the system temp directory for the current conversation. The file is not repository state, Host Profile state, authorization state, or durable cross-conversation memory. Its session id is opaque and remains current-conversation context only.

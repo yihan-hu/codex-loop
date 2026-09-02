@@ -14,6 +14,10 @@ Use this reference whenever Codex Loop must establish a new mutable workspace fr
 
 ## GitHub -> Web workspace: required path
 
+Treat `git clone`, `git pull`, `git fetch`, “open this repo”, “refresh from GitHub”, and “sync from GitHub” as **source-acquisition intent**, not as a requirement to execute those literal shell commands. In Web mode, automatically translate that intent into this verified Git-bundle path. Do not report “shell git clone/pull is forbidden” as the blocker when the canonical bundle path is available; block only when the canonical path itself cannot produce, retrieve, or verify the required revision.
+
+For an already bound Web repository, interpret `git pull`/`git fetch` as “synchronize the canonical Web repository to the requested remote revision while preserving exact Git identity.” Satisfy that through the verified acquisition/replay mechanisms below rather than network Git from the container.
+
 When the user asks to pull, open, refresh, or synchronize repository source **from GitHub** into the current Web workspace, preserve Git identity through this path:
 
 ```text
