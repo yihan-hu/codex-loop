@@ -6,6 +6,7 @@ on:
       - main
     paths-ignore:
       - '.github/import-requests/**'
+      - '.github/fast-import-requests/**'
   workflow_dispatch:
 
 permissions:

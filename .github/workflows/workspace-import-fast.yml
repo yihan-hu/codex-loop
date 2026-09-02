@@ -1,0 +1,125 @@
+name: Workspace Import Fast
+
+on:
+  push:
+    paths:
+      - '.github/fast-import-requests/*.json'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: workspace-import-fast-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trigger commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Resolve exact-identity request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" -- '.github/fast-import-requests/*.json')
+          test "${#files[@]}" -eq 1
+          req="${files[0]}"
+          echo "request=$req" >> "$GITHUB_OUTPUT"
+          jq -e '.version == 2
+            and (.transfer_id | type == "string" and length > 0)
+            and (.bundle_file_id | type == "string" and length > 0)
+            and (.bundle_size | type == "number" and . > 0)
+            and (.bundle_sha256 | type == "string")
+            and (.bundle_ref | type == "string")
+            and (.expected_base | type == "string")
+            and (.target_branch | type == "string" and length > 0)
+            and (.source_commit | type == "string")
+            and (.source_tree | type == "string")' "$req" >/dev/null
+          bundle_sha="$(jq -r .bundle_sha256 "$req")"
+          bundle_ref="$(jq -r .bundle_ref "$req")"
+          base="$(jq -r .expected_base "$req")"
+          source_commit="$(jq -r .source_commit "$req")"
+          source_tree="$(jq -r .source_tree "$req")"
+          [[ "$bundle_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$bundle_ref" =~ ^refs/heads/codex-loop-publish-[0-9a-f]{32}$ ]]
+          [[ "$base" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$source_tree" =~ ^[0-9a-f]{40}$ ]]
+          test "$base" = "${{ github.event.before }}"
+          test "$(git rev-parse "$GITHUB_SHA^")" = "$base"
+          test "$(jq -r .target_branch "$req")" = "${{ github.ref_name }}"
+          mapfile -t changed < <(git diff-tree --no-commit-id --name-status -r "$GITHUB_SHA")
+          test "${#changed[@]}" -eq 1
+          [[ "${changed[0]}" == A$'\t'.github/fast-import-requests/* ]]
+          cp "$req" /tmp/workspace-import-request.json
+
+      - name: Download and verify Git bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          req='${{ steps.request.outputs.request }}'
+          file_id="$(jq -r .bundle_file_id "$req")"
+          expected_size="$(jq -r .bundle_size "$req")"
+          expected_sha="$(jq -r .bundle_sha256 "$req")"
+          curl -fL --retry 3 --retry-all-errors \
+            "https://drive.usercontent.google.com/download?id=${file_id}&export=download&confirm=t" \
+            -o /tmp/source.bundle
+          test "$(stat -c %s /tmp/source.bundle)" = "$expected_size"
+          echo "$expected_sha  /tmp/source.bundle" | sha256sum -c -
+          git bundle verify /tmp/source.bundle
+
+      - name: Verify audited Git identity and ancestry
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          req=/tmp/workspace-import-request.json
+          bundle_ref="$(jq -r .bundle_ref "$req")"
+          source_commit="$(jq -r .source_commit "$req")"
+          source_tree="$(jq -r .source_tree "$req")"
+          expected_base="$(jq -r .expected_base "$req")"
+          git fetch /tmp/source.bundle "$bundle_ref:refs/codex-loop/publish"
+          test "$(git rev-parse refs/codex-loop/publish)" = "$source_commit"
+          test "$(git rev-parse "$source_commit^{tree}")" = "$source_tree"
+          git merge-base --is-ancestor "$expected_base" "$source_commit"
+          echo "commit=$source_commit" >> "$GITHUB_OUTPUT"
+          echo "tree=$source_tree" >> "$GITHUB_OUTPUT"
+
+      - name: Publish exact audited commit
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_commit='${{ steps.verify.outputs.commit }}'
+          source_tree='${{ steps.verify.outputs.tree }}'
+          remote_head="$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | awk '{print $1}')"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push \
+            --force-with-lease="refs/heads/$GITHUB_REF_NAME:$GITHUB_SHA" \
+            origin "$source_commit:refs/heads/$GITHUB_REF_NAME"
+          published_commit="$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | awk '{print $1}')"
+          test "$published_commit" = "$source_commit"
+          echo "commit=$published_commit" >> "$GITHUB_OUTPUT"
+          echo "tree=$source_tree" >> "$GITHUB_OUTPUT"
+
+      - name: Emit structured receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          req=/tmp/workspace-import-request.json
+          receipt="$(jq -cn \
+            --arg transfer_id "$(jq -r .transfer_id "$req")" \
+            --arg trigger "$GITHUB_SHA" \
+            --arg branch "$GITHUB_REF_NAME" \
+            --arg bundle_sha256 "$(jq -r .bundle_sha256 "$req")" \
+            --argjson bundle_size "$(jq -r .bundle_size "$req")" \
+            --arg bundle_ref "$(jq -r .bundle_ref "$req")" \
+            --arg published_commit '${{ steps.publish.outputs.commit }}' \
+            --arg published_tree '${{ steps.publish.outputs.tree }}' \
+            '{version:1,receipt_mode:"structured_log",transfer_id:$transfer_id,trigger_sha:$trigger,target_branch:$branch,bundle_sha256:$bundle_sha256,bundle_size:$bundle_size,bundle_ref:$bundle_ref,published_commit:$published_commit,published_tree:$published_tree}')"
+          echo "CODEX_LOOP_FAST_IMPORT_RECEIPT=$receipt"
