@@ -69,7 +69,7 @@ class FastPublishTests(unittest.TestCase):
             finally:
                 self.cleanup(route)
 
-    def test_dirty_workspace_falls_back(self):
+    def test_dirty_workspace_fails_closed_for_direct_fast_publish(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             head, tree = init_repo(root)
@@ -79,8 +79,57 @@ class FastPublishTests(unittest.TestCase):
             (root / "tracked.txt").write_text("dirty\n")
             try:
                 plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=head, remote_tree=tree, capability_scopes=scopes(), verified_tree_fast_path=True)
-                self.assertEqual(plan["mode"], "FULL_VERIFIED_PUBLISH")
-                self.assertIn("workspace_not_clean", plan["fallback_reasons"])
+                self.assertEqual(plan["mode"], "FAIL_CLOSED")
+                self.assertTrue(plan["fail_closed"])
+                self.assertTrue(plan["design_repair_required"])
+                self.assertFalse(plan["fallback_allowed"])
+                self.assertIn("workspace_not_clean", plan["surprise_reasons"])
+                self.assertIsNone(plan["workflow_path"])
+                self.assertIsNone(plan["request_directory"])
+                self.assertIn("repair the design/control-plane contract", plan["next"])
+            finally:
+                self.cleanup(route)
+
+    def test_fast_publish_stale_gate_fails_closed_without_design_repair_or_fallback(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            base, base_tree = init_repo(root)
+            (root / "second.txt").write_text("second\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "second"], cwd=root, check=True)
+            store = ready_store(root)
+            route = self.route()
+            try:
+                plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(), verified_tree_fast_path=True)
+                self.assertEqual(plan["mode"], "FAIL_CLOSED")
+                self.assertTrue(plan["fail_closed"])
+                self.assertFalse(plan["design_repair_required"])
+                self.assertFalse(plan["fallback_allowed"])
+                self.assertEqual(plan["surprise_reasons"], [])
+                self.assertIn("capability_observations_not_fresh", plan["fallback_reasons"])
+                self.assertIsNone(plan["workflow_path"])
+                self.assertIn("refresh stale gates only", plan["next"])
+            finally:
+                self.cleanup(route)
+
+    def test_explicit_standard_publish_remains_available_but_is_not_fast_fallback(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            head, tree = init_repo(root)
+            store = ready_store(root)
+            route = self.route()
+            try:
+                plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=head, remote_tree=tree, capability_scopes=scopes(), verified_tree_fast_path=False)
+                self.assertEqual(plan["mode"], "ALREADY_PUBLISHED")
+                # Change HEAD so transport is needed and prove standard mode is an explicit selection, not a fast fallback.
+                (root / "second.txt").write_text("second\n")
+                subprocess.run(["git", "add", "."], cwd=root, check=True)
+                subprocess.run(["git", "commit", "-qm", "second"], cwd=root, check=True)
+                store = ready_store(root)
+                standard = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=head, remote_tree=tree, capability_scopes=scopes(), verified_tree_fast_path=False)
+                self.assertEqual(standard["mode"], "FULL_VERIFIED_PUBLISH")
+                self.assertTrue(standard["fallback_allowed"])
+                self.assertEqual(standard["workflow_path"], ".github/workflows/workspace-import.yml")
             finally:
                 self.cleanup(route)
 
@@ -170,14 +219,16 @@ class FastPublishTests(unittest.TestCase):
             route = self.route(); self.caps(route["session_id"])
             try:
                 plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(), verified_tree_fast_path=True)
-                self.assertEqual(plan["mode"], "FULL_VERIFIED_PUBLISH")
+                self.assertEqual(plan["mode"], "FAIL_CLOSED")
+                self.assertTrue(plan["fail_closed"])
+                self.assertTrue(plan["design_repair_required"])
                 self.assertFalse(plan["remote_has_fast_import_workflow"])
-                self.assertEqual(plan["bundle_strategy"], "thin_from_remote_head")
-                self.assertIn("fast_import_workflow_not_in_remote_base", plan["fallback_reasons"])
-                self.assertEqual(plan["workflow_path"], ".github/workflows/workspace-import.yml")
-                self.assertEqual(plan["request_directory"], ".github/import-requests")
-                self.assertEqual(plan["receipt_mode"], "artifact")
-                self.assertIn("bootstrap fast importer", plan["next"])
+                self.assertIn("fast_import_workflow_not_in_remote_base", plan["surprise_reasons"])
+                self.assertIsNone(plan["bundle_strategy"])
+                self.assertIsNone(plan["workflow_path"])
+                self.assertIsNone(plan["request_directory"])
+                self.assertIsNone(plan["receipt_mode"])
+                self.assertIn("repair the design/control-plane contract", plan["next"])
             finally:
                 self.cleanup(route)
 

@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -16,13 +18,38 @@ SPEC.loader.exec_module(MODULE)
 
 
 class SkillPackageTests(unittest.TestCase):
+    def setUp(self):
+        self._source_tmp = tempfile.TemporaryDirectory()
+        self.source = Path(self._source_tmp.name) / "repo"
+        self.source_commit, self.source_tree = self._copy_git_fixture(self.source)
+
+    def tearDown(self):
+        self._source_tmp.cleanup()
+
+    def _copy_git_fixture(self, destination: Path) -> tuple[str, str]:
+        shutil.copytree(
+            ROOT,
+            destination,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".pytest_cache"),
+        )
+        subprocess.run(["git", "init", "-q"], cwd=destination, check=True)
+        subprocess.run(["git", "add", "."], cwd=destination, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"],
+            cwd=destination,
+            check=True,
+        )
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=destination, check=True, text=True, stdout=subprocess.PIPE).stdout.strip()
+        tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=destination, check=True, text=True, stdout=subprocess.PIPE).stdout.strip()
+        return head, tree
+
     def _build(self, path: Path):
         return MODULE.build_skill_zip(
-            ROOT,
+            self.source,
             path,
             repository="yihan-hu/codex-loop",
-            commit="a" * 40,
-            tree=git_tree_sha(ROOT),
+            commit=self.source_commit,
+            tree=self.source_tree,
         )
 
     def test_runtime_package_is_deterministic(self):
@@ -54,10 +81,10 @@ class SkillPackageTests(unittest.TestCase):
         for name in MODULE.ROOT_FILES:
             expected.append(f"codex-loop/{name}")
         for dirname in MODULE.RUNTIME_DIRS:
-            for path in (ROOT / dirname).rglob("*"):
+            for path in (self.source / dirname).rglob("*"):
                 if not path.is_file():
                     continue
-                rel = path.relative_to(ROOT)
+                rel = path.relative_to(self.source)
                 if rel == DEPLOYMENT_MANIFEST_REL:
                     continue
                 if any(part in MODULE.IGNORED_PARTS for part in rel.parts):
@@ -81,13 +108,36 @@ class SkillPackageTests(unittest.TestCase):
                 payload = archive.read(f"codex-loop/{DEPLOYMENT_MANIFEST_REL.as_posix()}")
             manifest = json.loads(payload)
             self.assertEqual(manifest["source"]["repository"], "yihan-hu/codex-loop")
-            self.assertEqual(manifest["source"]["commit"], "a" * 40)
-            self.assertEqual(manifest["source"]["tree"], git_tree_sha(ROOT))
+            self.assertEqual(manifest["source"]["commit"], self.source_commit)
+            self.assertEqual(manifest["source"]["tree"], self.source_tree)
             self.assertEqual(manifest["bundle"]["manifest_sha256"], result["bundle_manifest_sha256"])
             self.assertNotIn("package_sha256", payload.decode("utf-8"))
 
+
+    def test_git_tracked_projection_ignores_untracked_runtime_and_cache_files(self):
+        (self.source / "scripts" / "untracked-runtime-note.txt").write_text("scratch\n", encoding="utf-8")
+        cache = self.source / "scripts" / "__pycache__"
+        cache.mkdir(exist_ok=True)
+        (cache / "ignored.cpython-313.pyc").write_bytes(b"cache")
+        with tempfile.TemporaryDirectory() as td:
+            package = Path(td) / "skill.zip"
+            result = self._build(package)
+            self.assertEqual(result["source"]["tree"], self.source_tree)
+            self.assertEqual(git_tree_sha(self.source), self.source_tree)
+            with zipfile.ZipFile(package) as archive:
+                names = set(archive.namelist())
+        self.assertNotIn("codex-loop/scripts/untracked-runtime-note.txt", names)
+        self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))
+
+    def test_git_tracked_dirty_source_fails_closed_before_packaging(self):
+        readme = self.source / "README.md"
+        readme.write_text(readme.read_text(encoding="utf-8") + "\ndirty\n", encoding="utf-8")
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(ValueError, "tracked source is dirty"):
+                self._build(Path(td) / "skill.zip")
+
     def test_install_verified_metadata_is_enforced(self):
-        metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        metadata = (self.source / "agents" / "openai.yaml").read_text(encoding="utf-8")
         self.assertIn('icon_small: "./assets/icon.svg"', metadata)
         self.assertIn('icon_large: "./assets/icon.svg"', metadata)
         self.assertNotIn("products:", metadata)

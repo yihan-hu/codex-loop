@@ -21,11 +21,11 @@ Terse continuation requests such as `revise`, `verify`, `export`, `push`, `publi
 
 Automatic Skill invocation is routing, not authorization. It never grants Local-mode source mutation, local filesystem access, browser control, or native macOS GUI control. Keep the existing explicit current-task authorization gates for local source mutation and computer use, and keep `workspace_mode` separate from `interaction_target`.
 
-### Goal-pursuit continuation policy
+### Target-pursuit continuation policy
 
-When the user explicitly asks Codex Loop to keep iterating until a concrete objective is achieved (for example, “keep going until this works”, “iterate until all tests pass”, or “do not stop after the plan”), treat that as an opt-in **goal-pursuit** continuation policy for the current objective. This is a host-facing execution policy layered on top of the existing lifecycle; it is not a second mutable state machine and does not create a separate Skill.
+When the user explicitly asks Codex Loop to keep iterating until a concrete objective is achieved (for example, “keep going until this works”, “iterate until all tests pass”, or “do not stop after the plan”), treat that as an opt-in **target-pursuit** continuation policy for the current objective. This is a host-facing execution policy layered on top of the existing lifecycle; it is not a second mutable state machine and does not create a separate Skill.
 
-While goal-pursuit is active:
+While target-pursuit is active:
 
 - Keep the original objective and its observable acceptance criteria as the terminal condition.
 - After every meaningful action or new piece of evidence, re-evaluate the unmet criteria and choose the smallest useful next action.
@@ -33,9 +33,10 @@ While goal-pursuit is active:
 - Stop only for an evidence-backed `PASS`, a genuine `BLOCKED` condition (including a required authorization/capability boundary), an explicit user stop/cancel, or an explicit iteration/resource budget that has been exhausted.
 - Do not treat “ask the user whether to continue” as a terminal state when the next safe, authorized action is already available.
 - Do not blindly retry the same failed action. If repeated attempts make no meaningful progress, re-observe the evidence and change strategy or re-plan before acting again.
-- Goal-pursuit never implies background, asynchronous, hidden, or indefinitely running execution. It remains bounded by the current host turn/session, available tools, approvals, and any explicit user budget.
+- Treat an unmodeled surprise that prevents the intended direct publish, deploy, install, or other external-action path as a **design defect**, not permission to improvise a fallback. Fail closed before the external action, make design repair the immediate next objective, add regression evidence for the surprise, revalidate/review, then re-plan the original direct path. An alternate route is allowed only when it was already part of the explicit design contract or the user explicitly selects it after the blocker is surfaced.
+- Target-pursuit never implies background, asynchronous, hidden, or indefinitely running execution. It remains bounded by the current host turn/session, available tools, approvals, and any explicit user budget.
 
-Use the existing Codex Loop completion machinery as the source of truth: `CONTINUE` means keep pursuing, `BLOCKED` means report the concrete blocker, and `PASS` requires the ordinary fresh validation/review/evidence/objective-audit gates. Do not add a parallel completion flag merely to represent goal-pursuit.
+Use the existing Codex Loop completion machinery as the source of truth: `CONTINUE` means keep pursuing, `BLOCKED` means report the concrete blocker, and `PASS` requires the ordinary fresh validation/review/evidence/objective-audit gates. Do not add a parallel completion flag merely to represent target-pursuit.
 
 ## Deterministic session routing plane
 

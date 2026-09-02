@@ -5,6 +5,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -27,11 +28,96 @@ def _canonical_json_bytes(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _git_repo_root(source: Path) -> Path | None:
+    proc = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        root = Path(proc.stdout.decode("utf-8", errors="strict").strip()).resolve()
+    except UnicodeDecodeError:
+        return None
+    return root if root == source else None
+
+
+def _git_text(source: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(source), *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise ValueError(
+            "Git source probe failed: "
+            + proc.stderr.decode("utf-8", errors="replace").strip()
+        )
+    return proc.stdout.decode("utf-8", errors="strict").strip()
+
+
+def _assert_git_tracked_source_clean(source: Path) -> None:
+    proc = subprocess.run(
+        ["git", "-C", str(source), "status", "--porcelain=v1", "--untracked-files=no"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise ValueError(
+            "Git source cleanliness probe failed: "
+            + proc.stderr.decode("utf-8", errors="replace").strip()
+        )
+    if proc.stdout:
+        raise ValueError(
+            "tracked source is dirty; commit or restore tracked changes before packaging"
+        )
+
+
+def _tracked_runtime_files(source: Path) -> list[Path] | None:
+    if _git_repo_root(source) is None:
+        return None
+    pathspecs = [*ROOT_FILES, *RUNTIME_DIRS]
+    proc = subprocess.run(
+        ["git", "-C", str(source), "ls-files", "-z", "--", *pathspecs],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise ValueError(
+            "Git tracked-file projection failed: "
+            + proc.stderr.decode("utf-8", errors="replace").strip()
+        )
+    rels = [Path(os.fsdecode(raw)) for raw in proc.stdout.split(b"\0") if raw]
+    tracked = set(rels)
+    for name in ROOT_FILES:
+        if Path(name) not in tracked:
+            raise ValueError(f"required runtime file is not tracked by Git: {name}")
+    files: list[Path] = []
+    for rel in rels:
+        if rel == DEPLOYMENT_MANIFEST_REL:
+            continue
+        if any(part in IGNORED_PARTS for part in rel.parts) or rel.suffix in IGNORED_SUFFIXES:
+            continue
+        path = source / rel
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"tracked runtime file missing or unsafe: {rel}")
+        files.append(path)
+    return sorted(set(files), key=lambda p: p.relative_to(source).as_posix())
+
+
 def runtime_files(source: Path) -> list[Path]:
     source = source.resolve()
     generated = (source / DEPLOYMENT_MANIFEST_REL).resolve()
     if generated.exists() or generated.is_symlink():
         raise ValueError("references/deployment-manifest.json is build-generated and must not exist in source")
+    tracked = _tracked_runtime_files(source)
+    if tracked is not None:
+        return tracked
     files: list[Path] = []
     for name in ROOT_FILES:
         path = source / name
@@ -121,6 +207,8 @@ def git_tree_sha(source: Path) -> str:
     source = source.resolve()
     if not source.is_dir():
         raise ValueError("source must be a directory")
+    if _git_repo_root(source) is not None:
+        return _git_text(source, "rev-parse", "HEAD^{tree}")
     return _tree_sha(source, root=source).hex()
 
 
@@ -143,6 +231,11 @@ def build_deployment_manifest(
         raise ValueError("tree must be a full 40-hex Git tree SHA")
     if skill_name != "codex-loop":
         raise ValueError("unexpected Skill name")
+    if _git_repo_root(source) is not None:
+        _assert_git_tracked_source_clean(source)
+        actual_commit = _git_text(source, "rev-parse", "HEAD")
+        if actual_commit != commit:
+            raise ValueError(f"source commit mismatch: expected {commit}, observed {actual_commit}")
     file_manifest = build_runtime_file_manifest(source)
     actual_tree = git_tree_sha(source)
     if actual_tree != tree:

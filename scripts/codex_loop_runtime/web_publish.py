@@ -261,15 +261,80 @@ def web_publish_plan(
     if not already and not remote_has_fast_workflow:
         reasons.append("fast_import_workflow_not_in_remote_base")
     fast = not reasons
+    refreshable_reasons = {
+        "validation_not_fresh",
+        "change_review_not_fresh",
+        "capability_observations_not_fresh",
+    }
+    surprise_reasons = [
+        reason
+        for reason in reasons
+        if reason not in refreshable_reasons
+        and reason != "verified_tree_fast_path_not_requested"
+    ]
+    fail_closed = bool(verified_tree_fast_path and reasons and (not already or not clean))
+    design_repair_required = bool(fail_closed and surprise_reasons)
     bundle = _current_bundle_receipt(root, store, prerequisite_commit=desired_prerequisite)
     bundle_strategy = (
         "reuse_exact_bundle" if bundle else
         "thin_from_remote_head" if desired_prerequisite else
         "full_verified_bundle"
     )
+    if fail_closed:
+        mode = "FAIL_CLOSED"
+    elif already:
+        mode = "ALREADY_PUBLISHED"
+    elif fast:
+        mode = "FAST_PUBLISH"
+    else:
+        mode = "FULL_VERIFIED_PUBLISH"
+    transport_ready = mode in {"FAST_PUBLISH", "FULL_VERIFIED_PUBLISH"}
+    workflow_path = (
+        fast_workflow_path
+        if mode == "FAST_PUBLISH"
+        else ".github/workflows/workspace-import.yml"
+        if mode == "FULL_VERIFIED_PUBLISH"
+        else None
+    )
+    request_directory = (
+        ".github/fast-import-requests"
+        if mode == "FAST_PUBLISH"
+        else ".github/import-requests"
+        if mode == "FULL_VERIFIED_PUBLISH"
+        else None
+    )
+    receipt_mode = (
+        "structured_log"
+        if mode == "FAST_PUBLISH"
+        else "artifact"
+        if mode == "FULL_VERIFIED_PUBLISH"
+        else None
+    )
+    if fail_closed and design_repair_required:
+        next_action = (
+            "stop before transport; repair the design/control-plane contract for: "
+            + ", ".join(surprise_reasons)
+            + "; add regression evidence, validate/review, then re-plan the same direct publish path"
+        )
+    elif fail_closed:
+        next_action = "stop before transport; refresh stale gates only, then re-plan the same direct publish path"
+    elif already:
+        next_action = "skip transport; continue post-push reconciliation"
+    elif mode == "FAST_PUBLISH":
+        next_action = (
+            "build exactly one thin Git bundle from expected_base, stage it, and run audited Workspace Import"
+            if desired_prerequisite and not bundle
+            else "stage the exact reusable Git bundle and run audited Workspace Import"
+        )
+    else:
+        next_action = "build the explicitly selected standard verified Git bundle and run audited Workspace Import"
     return {
-        "mode": "FAST_PUBLISH" if fast else "FULL_VERIFIED_PUBLISH",
+        "mode": mode,
         "fast_path_ready": fast,
+        "fail_closed": fail_closed,
+        "design_repair_required": design_repair_required,
+        "surprise_reasons": surprise_reasons,
+        "fallback_allowed": not bool(verified_tree_fast_path),
         "fallback_reasons": reasons,
         "repository": repository,
         "branch": branch,
@@ -283,9 +348,9 @@ def web_publish_plan(
         "capability_observations": cap_status,
         "capability_observations_reused": sorted(fresh),
         "bundle": bundle,
-        "bundle_action": "reuse" if bundle else "build",
-        "bundle_strategy": bundle_strategy,
-        "bundle_build_prerequisite_commit": desired_prerequisite,
+        "bundle_action": ("reuse" if bundle else "build") if transport_ready else None,
+        "bundle_strategy": bundle_strategy if transport_ready else None,
+        "bundle_build_prerequisite_commit": desired_prerequisite if transport_ready else None,
         "remote_head_is_local_ancestor": remote_is_local_ancestor,
         "remote_has_fast_import_workflow": remote_has_fast_workflow,
         "already_published_exactly": already,
@@ -298,29 +363,11 @@ def web_publish_plan(
             "bundle_build_attempts": 0 if bundle else (1 if fast else None),
             "workflow_artifact_uploads": 0 if fast else None,
         },
-        "workflow_path": fast_workflow_path if fast else ".github/workflows/workspace-import.yml",
-        "request_directory": ".github/fast-import-requests" if fast else ".github/import-requests",
-        "receipt_mode": "structured_log" if fast else "artifact",
+        "workflow_path": workflow_path,
+        "request_directory": request_directory,
+        "receipt_mode": receipt_mode,
         "post_push_success_requirement": "read back target branch and require remote commit == audited source commit and remote tree == audited source tree",
         "transport": "google_drive_git_bundle_to_audited_workspace_import",
         "trigger_rewrite_policy": "the import workflow may use force-with-lease only to replace its own single request trigger commit with the audited source commit",
-        "next": (
-            "skip transport; continue post-push reconciliation"
-            if already
-            else (
-                (
-                    "build exactly one thin Git bundle from expected_base, stage it, and run audited Workspace Import"
-                    if desired_prerequisite and not bundle else
-                    "stage the exact reusable Git bundle and run audited Workspace Import"
-                )
-                if fast
-                else (
-                    "bootstrap fast importer with standard audited Workspace Import"
-                    if "fast_import_workflow_not_in_remote_base" in reasons and all(
-                        reason == "fast_import_workflow_not_in_remote_base" for reason in reasons
-                    )
-                    else "refresh only stale gates, then publish"
-                )
-            )
-        ),
+        "next": next_action,
     }
