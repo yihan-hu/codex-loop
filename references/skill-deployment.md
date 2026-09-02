@@ -158,6 +158,32 @@ python3 scripts/codex_loop.py skill-deploy-complete \
 
 `SOURCE_PUSHED`, `SKILL_PACKAGED`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored Save/Update instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence. For Codex Loop self-update, the native install surface is also a **terminal ownership boundary for the current turn**: the next Codex Loop lifecycle action belongs to a later host turn and starts with `skill-deploy-resume`.
 
+### Same-name native update surface diagnosis
+
+Treat an Install/Update control that visibly appears and then disappears as an observed host-surface failure, not as automatic proof that the Skill archive is malformed. Use this bounded A/B diagnosis for Codex Loop self-update or another already-installed same-name Skill:
+
+1. Validate the intended production package with Skill Creator plus the package's ordinary structure/provenance checks. If validation fails, fix the package and stop; do not run host-surface probes against a known-invalid artifact.
+2. If validation passes but the **same-name** native update UI appears and then disappears, do not start speculative source edits, metadata normalization, ZIP-layout changes, or repeated repackaging. One exact-content repack through Skill Creator's official `package_skill.py` is allowed only to rule out a custom packager.
+3. If the same symptom persists, generate a minimal disposable **new-name** probe Skill. Give it a unique diagnostic name, no production scripts/connectors/assets, no implicit invocation, and only enough metadata/instructions to satisfy Skill Creator validation. Invoke its native install surface only to test whether the host can keep a new-Skill install control available.
+4. If the new-name probe remains stable while the validated same-name update disappears, classify `HOST_SAME_NAME_SKILL_UPDATE_SURFACE_UNSTABLE`. This is strong evidence that the current blocker is the host's same-name/update/self-update path rather than the production package bytes. Stop modifying the canonical package solely to chase the UI symptom.
+5. If the new-name probe also disappears, classify the broader native Skill install/update surface as unstable/unavailable. Do not blame the production package without separate package evidence.
+6. The probe is diagnostic only. Never rename Codex Loop (or another canonical Skill) in production merely to bypass the update problem, never report the probe as `DEPLOYED` for the real Skill, and never leave a probe installed/active as an implicit fallback. Removing/replacing an existing production Skill before reinstall is a separate deployment mutation and requires explicit user authorization plus whatever host confirmation the platform requires.
+
+### Fixed different-name bridge recovery
+
+When step 4 above has proven `HOST_SAME_NAME_SKILL_UPDATE_SURFACE_UNSTABLE`, use one fixed recovery control plane instead of improvising more package variants:
+
+1. Freeze the production artifact. Keep the validated canonical `codex-loop` `skill.zip` byte-for-byte unchanged and retain its repository commit/tree/provenance receipt. The recovery path is not permission to rename, rebuild, normalize, or otherwise mutate the production package.
+2. Generate the bridge source outside the Codex Loop Skill tree with `python3 scripts/build_self_update_bridge.py --output-dir OUT`. The generator must create exactly one separate Skill named `codex-loop-update-bridge`; never embed its `SKILL.md` inside the Codex Loop package.
+3. Preserve the **proven-minimal install profile** exactly unless a new host experiment proves a replacement: the bridge package contains only `SKILL.md` and `agents/openai.yaml`; `allow_implicit_invocation` is `false`; `policy.products` contains `chatgpt`, `codex`, `api`, and `atlas`; and `interface.default_prompt` explicitly self-references `$codex-loop-update-bridge`. Keep the Skill body minimal (`UPDATE_BRIDGE_ACTIVE`) rather than embedding the canonical updater workflow in the package. Package it with Skill Creator's official `package_skill.py`.
+4. Install the bridge under its different name. This step intentionally uses the host path already proven stable by the new-name probe. A previously observed `Library not found` from a richer bridge is not evidence that the canonical Codex Loop ZIP is invalid: first compare the bridge against this proven-minimal profile. Do not add metadata or updater prose speculatively. If the proven-minimal bridge also fails, classify the broader host install/library surface as unstable and stop.
+5. On a **later user/host turn**, explicitly invoke the installed bridge so that the host turn is owned by a different Skill identity. The bridge's packaged instruction remains minimal; the surrounding deployment workflow supplies the already-validated canonical Codex Loop `skill.zip` and requires that exact package to be presented through the native update surface. Do not invoke Codex Loop or any Codex Loop runtime command in that bridge-owned update turn. Once the canonical update surface is initiated, end the turn immediately with no trailing status prose or second artifact.
+6. On a subsequent turn, verify whether the intended canonical Codex Loop revision is observably active. Only that evidence can establish `DEPLOYED`; otherwise retain `DEPLOY_PENDING`.
+
+This bridge path is the fixed recovery after a successful A/B diagnosis because it separates the **executing Skill identity** from the **Skill being updated** while preserving the canonical production package and name. The diagnostic probe remains diagnostic-only; never promote it into the production updater. The minimal bridge shape is itself evidence-backed compatibility state: do not grow it into a general updater Skill without a fresh install-surface A/B test.
+
+This diagnosis does not relax the terminal self-update ownership rule. If the native same-name update surface is actually stable and actionable, `skill-creator`/the host still owns the final install action and Codex Loop must not reclaim that turn.
+
 This rule does not grant browser/computer-use authorization. If completing the update requires interacting with ChatGPT through Chrome or macOS UI, the normal explicit computer-use authorization gate still applies.
 
 ## Local post-push workspace synchronization

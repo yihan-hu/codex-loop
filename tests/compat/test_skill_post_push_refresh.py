@@ -343,6 +343,19 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         self.assertIn("terminal handoff", completion)
         self.assertIn("native Skill installation/update surface", readme)
         self.assertIn("terminal self-update", readme)
+        self.assertIn("HOST_SAME_NAME_SKILL_UPDATE_SURFACE_UNSTABLE", skill)
+        self.assertIn("Same-name native update surface diagnosis", deployment)
+        self.assertIn("minimal disposable **new-name** probe Skill", deployment)
+        self.assertIn("HOST_SAME_NAME_SKILL_UPDATE_SURFACE_UNSTABLE", readme)
+        self.assertIn("Codex Loop Update Bridge", skill)
+        self.assertIn("build_self_update_bridge.py", skill)
+        self.assertIn("Fixed different-name bridge recovery", deployment)
+        self.assertIn("codex-loop-update-bridge", deployment)
+        self.assertIn("executing Skill identity", deployment)
+        self.assertIn("Codex Loop Update Bridge", readme)
+        self.assertIn("proven-minimal install profile", deployment)
+        self.assertIn("$codex-loop-update-bridge", deployment)
+        self.assertIn("Library not found", deployment)
 
 
 if __name__ == "__main__":
