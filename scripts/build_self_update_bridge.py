@@ -70,7 +70,8 @@ def main() -> int:
         "file_count": 2,
         "production_skill_name": "codex-loop",
         "production_package_mutation_allowed": False,
-        "next_step": "package_generated_bridge_with_skill_creator_official_packager",
+        "assistant_follow_up_command_required": False,
+        "next_step": "package_and_save_generated_bridge_with_skill_creator_official_packager",
     }
     if args.json:
         print(json.dumps(payload, sort_keys=True))

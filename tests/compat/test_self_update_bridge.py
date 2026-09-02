@@ -26,6 +26,8 @@ class SelfUpdateBridgeTests(unittest.TestCase):
             self.assertEqual(payload["bridge_name"], bridge_name)
             self.assertEqual(payload["instance_id"], "b5a748")
             self.assertFalse(payload["production_package_mutation_allowed"])
+            self.assertFalse(payload["assistant_follow_up_command_required"])
+            self.assertEqual(payload["next_step"], "package_and_save_generated_bridge_with_skill_creator_official_packager")
             self.assertEqual(payload["file_count"], 2)
 
             bridge = Path(payload["path"])
@@ -76,6 +78,8 @@ policy:
             self.assertNotIn("HOST_SAME_NAME_SKILL_UPDATE_SURFACE_UNSTABLE", text)
             self.assertNotIn("Try in chat", text)
             self.assertNotIn("A/B", text)
+            self.assertIn("do not emit a follow-up bridge command", text.lower())
+            self.assertNotIn("explicitly invoke that exact bridge", text.lower())
         self.assertIn("exactly `SKILL.md` and `agents/openai.yaml`", deployment)
         self.assertIn("quoted", deployment)
         self.assertIn("no `policy.products`", deployment)

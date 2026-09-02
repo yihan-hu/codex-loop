@@ -172,18 +172,17 @@ python3 scripts/codex_loop.py skill-deploy-complete \
 
 `SOURCE_PUSHED`, `SKILL_PACKAGED`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored Save/Update instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence. For Codex Loop self-update, `INSTALL_READY` is a separate pre-terminal state: the result-bearing turn remains normal. Only `skill-deploy-install-begin` creates the **terminal ownership boundary** for the install-only turn; the next Codex Loop lifecycle action after that boundary belongs to a later host turn and starts with `skill-deploy-resume`.
 
-### Canonical Codex Loop self-update recovery
+### Canonical Codex Loop self-update Library path
 
-Use one recovery path when the validated Codex Loop update surface disappears or a bridge Save reports `Library not found`:
+Use one path when Codex Loop self-update needs the ChatGPT Library surface, including recovery after `Library not found`:
 
 1. Freeze the canonical production artifact. Keep the validated `codex-loop` `skill.zip` byte-for-byte unchanged with its existing commit/tree/provenance evidence.
-2. Generate a fresh bridge outside the Codex Loop Skill tree with `python3 scripts/build_self_update_bridge.py --output-dir OUT`. Never reuse an existing bridge identity.
-3. Preserve the generated **user-verified `b5a748` Library-safe envelope exactly**: the bridge contains exactly `SKILL.md` and `agents/openai.yaml`; the `interface` strings are quoted; `allow_implicit_invocation` is `false`; there is no `policy.products`; the description and `default_prompt` use the install-compatible Skill save-path wording; and `default_prompt` self-references the exact fresh bridge name. Do not hand-edit this envelope.
-4. Package the generated bridge with Skill Creator's official `package_skill.py` and Save that fresh Skill to the Library. This exact envelope was user-verified to Save successfully after the prior `Library not found` failure.
-5. On a later user/host turn, explicitly invoke the exact saved bridge. The bridge presents only the already-validated canonical Codex Loop package through the host-native update surface, does not invoke Codex Loop or mutate/repackage/rename the production package, and ends the turn immediately after surface initiation.
-6. On the following turn, verify the installed `skills://codex-loop/references/deployment-manifest.json`. Record `DEPLOYED` only when it proves the intended repository commit/tree.
+2. Generate a bridge outside the Codex Loop Skill tree with `python3 scripts/build_self_update_bridge.py --output-dir OUT`. Production recovery must omit `--instance-id` so every attempt receives a fresh identity.
+3. Preserve the **user-verified `b5a748` Library-safe envelope exactly**: exactly `SKILL.md` and `agents/openai.yaml`; quoted `interface` strings; `allow_implicit_invocation: false`; no `policy.products`; the verified `Library not found` recovery description/default-prompt wording; and a `default_prompt` self-reference to the fresh bridge name. The regression fixture deliberately runs the generator with `--instance-id b5a748` and requires both generated files to match the successful Save sample byte-for-byte. Do not hand-edit the envelope.
+4. Run the pinned self-update regression, Skill Creator `quick_validate.py`, and the official `package_skill.py`. Save only that freshly generated bridge through the host-native Library surface. Do not substitute the production ZIP, a fixed-name bridge, an alternate profile, or a probe build.
+5. When the fresh bridge Save succeeds, end assistant-side recovery guidance there: **do not emit a follow-up bridge command**. The saved Skill is explicit-only; if the host later invokes it through the native Skill surface, it may only present the already-validated canonical production package unchanged and end immediately. On a later observed turn, verify `skills://codex-loop/references/deployment-manifest.json`; record `DEPLOYED` only when it proves the intended repository commit/tree.
 
-Treat this as the single canonical recovery for this failure class until a later host test explicitly supersedes the `b5a748` template. Do not keep alternate probe profiles, fixed-name bridge variants, or speculative compatibility branches in the normal deployment instructions.
+This is the only canonical Library path until a later host-verified success explicitly replaces the `b5a748` envelope. Do not retain any alternate recovery branch in normal deployment instructions. ZIP SHA-256 is not a template invariant because the official packager may encode varying ZIP timestamps; the two generated source files are the invariant.
 
 ## Local post-push workspace synchronization
 
