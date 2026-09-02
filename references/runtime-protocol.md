@@ -85,6 +85,31 @@ python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action 
 
 Supported actions are `repository_observe`, `repository_mutate`, `rdc_repository`, `browser_interaction`, `skill_install`, `chatgpt_skill_install`, `local_skill_install`, and `github_publish`. In a ChatGPT Web routing session, generic `skill_install` resolves to `chatgpt_web_skill` when no explicit deployment target exists. It never selects local Codex from RDC availability, a remembered Mac checkout, or prior context. If `host_surface=unknown`, generic install remains unresolved and fails closed. Local repository mutation, computer use, workspace access, and local installation still require their separate current-task/current-conversation authorization inputs.
 
+## Post-task-review permission smoke planning
+
+After the task/workflow has been reviewed and routing is resolved, but before substantive execution, plan the live host probes for any predictable external permissions:
+
+```bash
+python3 scripts/codex_loop.py permission-preflight-plan \
+  --session-id ROUTING_SESSION \
+  --capability github_push \
+  --capability github_actions \
+  --capability google_drive_write
+```
+
+Supported capability keys are `github_push`, `github_actions`, `google_drive_read`, and `google_drive_write`. The command deduplicates repeated keys and returns an ordered probe contract. A Drive-only task may omit `--session-id`; repository publication should pass the active routing session so the GitHub push probe can distinguish Web from Local mode.
+
+This command **does not execute connectors, request OAuth scopes, store approvals, or mark a capability granted**. It returns `runtime_state_written=false`. The host must execute every returned probe through the actual integration/native path. Schema discovery, tool availability, connection booleans, or a prior-turn success do not satisfy the plan.
+
+The standard probe semantics are:
+
+- `github_push`: Local mode uses host-visible native `git push --dry-run` against the intended remote/ref. Web mode combines live push-capable repository permission readback with one Git-database create-blob/write-object call containing fixed empty content; the blob must remain unreferenced and no tree/commit/ref may be created. A permission readback alone does not prove the host write-approval boundary was exercised. If the host exposes no isolated unreferenced object-write primitive, report the safe probe unavailable rather than create a source/ref mutation.
+- `github_actions`: invoke a write-scoped Actions operation only on an audited workflow/job that cannot mutate source or refs. In this repository, `Workspace Download` is acceptable; `Workspace Import` is forbidden as a smoke probe.
+- `google_drive_read`: live list/search/metadata access in the intended Drive scope.
+- `google_drive_write`: create one uniquely named non-sensitive sentinel owned by the preflight, read back its exact ID/metadata, then delete that exact sentinel.
+
+Probe results remain host observations. They may be reused while still live in the current task/session but must never be persisted as permanent authorization or used to bypass a later host-required sensitive-action approval. See `references/capability-preflight.md`.
+
 ## Adaptive pre-runtime assessment
 
 Before bootstrap, the host/Skill may deterministically record whether durable runtime is needed from concrete capability signals:

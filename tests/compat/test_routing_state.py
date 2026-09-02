@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from scripts.codex_loop_runtime.routing_state import (
+    permission_preflight_plan,
     route_check,
     route_init,
     route_show,
@@ -144,6 +145,72 @@ class RoutingStateTests(unittest.TestCase):
                 route_init(session_id=state["session_id"], host_surface="codex_local")
             shown = route_show(session_id=state["session_id"])
             self.assertEqual(shown["host_surface"], "chatgpt_web")
+        finally:
+            self.cleanup(state)
+
+    def test_permission_preflight_plan_requires_live_host_probes_without_persisting_grants(self):
+        state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
+        try:
+            plan = permission_preflight_plan(
+                session_id=state["session_id"],
+                capabilities=["github_push", "github_actions", "google_drive_write", "github_push"],
+            )
+            self.assertEqual(plan["phase"], "post_task_review_pre_execution")
+            self.assertEqual(plan["required_capabilities"], ["github_push", "github_actions", "google_drive_write"])
+            self.assertFalse(plan["runtime_state_written"])
+            self.assertIn("current live host observation", plan["completion_rule"])
+            probes = {item["capability"]: item for item in plan["probes"]}
+            self.assertIn("unreferenced empty-blob write", probes["github_push"]["success_evidence"])
+            self.assertIn("no tree/commit/ref", probes["github_push"]["side_effect_budget"])
+            self.assertIn("fixed empty content", probes["github_push"]["preferred_probe"])
+            self.assertIn("audited", probes["github_actions"]["preferred_probe"])
+            self.assertTrue(probes["google_drive_write"]["cleanup_required"])
+            shown = route_show(session_id=state["session_id"])
+            self.assertEqual(shown["generation"], 0)
+        finally:
+            self.cleanup(state)
+
+    def test_github_push_probe_requires_routing_but_drive_only_does_not(self):
+        with self.assertRaises(ValueError):
+            permission_preflight_plan(capabilities=["github_push"])
+        drive_plan = permission_preflight_plan(capabilities=["google_drive_read"])
+        self.assertIsNone(drive_plan["workspace_mode"])
+        self.assertEqual(drive_plan["required_capabilities"], ["google_drive_read"])
+
+    def test_local_github_push_probe_is_native_git_dry_run(self):
+        state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
+        sid = state["session_id"]
+        try:
+            route_transition(
+                session_id=sid,
+                workspace_mode="local",
+                selection_evidence="user explicitly selected local development",
+            )
+            plan = permission_preflight_plan(session_id=sid, capabilities=["github_push"])
+            probe = plan["probes"][0]
+            self.assertEqual(plan["workspace_mode"], "local")
+            self.assertIn("git push --dry-run", probe["preferred_probe"])
+            self.assertEqual(probe["side_effect_budget"], "none")
+        finally:
+            self.cleanup(state)
+
+    def test_cli_exposes_permission_preflight_plan(self):
+        sid = self.sid()
+        proc = subprocess.run(
+            [sys.executable, str(CLI), "route-init", "--session-id", sid, "--host-surface", "chatgpt_web"],
+            cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        )
+        import json
+        state = json.loads(proc.stdout)["data"]
+        try:
+            planned = subprocess.run(
+                [sys.executable, str(CLI), "permission-preflight-plan", "--session-id", sid,
+                 "--capability", "github_actions", "--capability", "google_drive_read"],
+                cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            )
+            payload = json.loads(planned.stdout)["data"]
+            self.assertEqual(payload["required_capabilities"], ["github_actions", "google_drive_read"])
+            self.assertFalse(payload["runtime_state_written"])
         finally:
             self.cleanup(state)
 

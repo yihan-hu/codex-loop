@@ -36,6 +36,8 @@ from codex_loop_runtime.routing_state import (
     INTERACTION_TARGETS as ROUTING_INTERACTION_TARGETS,
     ROUTE_ACTIONS,
     WORKSPACE_MODES,
+    PERMISSION_PROBE_CAPABILITIES,
+    permission_preflight_plan,
     route_check,
     route_init,
     route_show,
@@ -94,6 +96,7 @@ HOST_ADAPTER_COMMANDS = (
     ('route-show', 'show deterministic conversation-scoped routing state'),
     ('route-transition', 'change workspace, interaction, or deployment routing with evidence gates'),
     ('route-check', 'fail closed before repository, browser, deployment, or publish host actions'),
+    ('permission-preflight-plan', 'plan live post-review host permission smoke probes without granting permission'),
     ('interaction-route', 'resolve Cloud Browser vs local browser target without granting access'),
     ('persistence-export', 'export private cross-conversation recovery state'),
     ('persistence-validate', 'validate a recovery manifest'),
@@ -783,6 +786,15 @@ def _cmd_route_check(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_permission_preflight_plan(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py permission-preflight-plan')
+    p.add_argument('--session-id')
+    p.add_argument('--capability', action='append', required=True, choices=sorted(PERMISSION_PROBE_CAPABILITIES))
+    args = p.parse_args(argv[1:])
+    emit_ok(permission_preflight_plan(capabilities=args.capability, session_id=args.session_id))
+    return 0
+
+
 def _cmd_interaction_route(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py interaction-route')
     p.add_argument('--requires-web-interaction', action='store_true')
@@ -1062,6 +1074,8 @@ def main() -> int:
             return _cmd_route_transition(argv)
         if argv[0] == 'route-check':
             return _cmd_route_check(argv)
+        if argv[0] == 'permission-preflight-plan':
+            return _cmd_permission_preflight_plan(argv)
         if argv[0] == 'interaction-route':
             return _cmd_interaction_route(argv)
         if argv[0] == 'validate':

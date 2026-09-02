@@ -236,11 +236,25 @@ This path is **not Browser Control** and does not satisfy Browser capability che
 
 ## Capability and permission preflight
 
-For multi-step work, Codex Loop should determine the required integrations before substantive execution and check them together. Depending on the planned workflow this can include RDC, GitHub, Google Drive, local Chrome, native Git authentication, or macOS GUI permissions.
+For multi-step work, Codex Loop reviews the intended workflow early, resolves routing, and then runs a **real permission smoke test before substantive execution**. This early task review is separate from the final code/change review. The goal is to surface predictable GitHub/Actions/Drive/RDC/browser permission prompts before the task has already spent most of its work budget.
 
-The goal is to avoid stopping halfway through a task to ask for predictable setup. Capabilities that are already connected and still valid are reused during the task. If several connections are missing and the host allows it, Codex Loop should present them as one setup/preflight stage rather than discovering them one by one later.
+When the bundled runtime is available, the host can make that stage explicit:
 
-Preflight does not disable ChatGPT or operating-system security. If the host requires a fresh confirmation for a sensitive individual action, that confirmation still happens at the required boundary. Credentials and approval tokens are never stored in Codex Loop's local config.
+```bash
+python3 scripts/codex_loop.py permission-preflight-plan \
+  --session-id ROUTING_SESSION \
+  --capability github_push \
+  --capability github_actions \
+  --capability google_drive_write
+```
+
+The command only plans probes; it does **not** grant or persist permission. ChatGPT must then execute each probe through the live host integration. Seeing a connector in the tool list, reading its schema, or observing a cached `connected=true`-style flag does not count.
+
+Typical probes are deliberately low-risk: Local GitHub publication uses `git push --dry-run`; Web GitHub publication combines live push-capable repository permission readback with one Git-database create-blob/write-object call containing fixed empty content that remains unreferenced, so no tree/commit/ref or source is changed; GitHub Actions uses only an audited read-only/ref-nonmutating workflow job (for this repository, `Workspace Download`, never `Workspace Import`); Drive write access creates one uniquely named non-sensitive sentinel, reads back its exact ID/metadata, and deletes that exact sentinel immediately. A repository permission readback alone may prove access, but does not count as prewarming the host's write approval.
+
+For Web-mode publication, the common early set is `github_push + github_actions + google_drive_write`. For tasks that do not publish, Codex Loop does not request those permissions just because the integrations exist. Live successful observations may be reused during the current task/session while they remain valid.
+
+Preflight is early permission discovery, not a security bypass. A later sensitive action can still require a fresh ChatGPT/OS/provider confirmation. Credentials, OAuth tokens, approval tokens, and claims of permanent authorization are never stored in Codex Loop's local config or runtime state. See `references/capability-preflight.md` for the full probe contract.
 
 ## Web mode versus Local mode
 

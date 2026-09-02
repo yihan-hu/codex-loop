@@ -24,6 +24,12 @@ ROUTE_ACTIONS = frozenset({
     "local_skill_install",
     "github_publish",
 })
+PERMISSION_PROBE_CAPABILITIES = frozenset({
+    "github_push",
+    "github_actions",
+    "google_drive_read",
+    "google_drive_write",
+})
 
 
 def _session_id(raw: str | None, *, generate: bool = False) -> str | None:
@@ -376,3 +382,109 @@ def route_check(
     result["allowed"] = True
     result["local_codex_auto_selected"] = False if state["host_surface"] == "chatgpt_web" else target == "local_codex_skill" and source == "host_surface_native_default"
     return result
+
+
+def permission_preflight_plan(
+    *,
+    capabilities: list[str] | tuple[str, ...],
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Return host-executed permission probes without claiming or persisting permission state."""
+    requested: list[str] = []
+    for raw in capabilities:
+        capability = str(raw).strip()
+        if capability not in PERMISSION_PROBE_CAPABILITIES:
+            raise ValueError(f"permission probe capability must be one of {sorted(PERMISSION_PROBE_CAPABILITIES)}")
+        if capability not in requested:
+            requested.append(capability)
+    if not requested:
+        raise ValueError("at least one permission probe capability is required")
+    if "github_push" in requested and session_id is None:
+        raise ValueError("github_push permission probing requires a routing session so Web versus Local publication is not guessed")
+
+    route = route_show(session_id=session_id) if session_id is not None else None
+    workspace_mode = route.get("workspace_mode") if route else None
+    probes: list[dict[str, Any]] = []
+
+    for capability in requested:
+        if capability == "github_push":
+            if workspace_mode == "local":
+                preferred = (
+                    "From the canonical authorized worktree, run host-visible native Git `git push --dry-run` "
+                    "to the intended remote/ref. The dry run must not create or move a ref."
+                )
+                evidence = "host-visible dry-run reaches the remote and reports a push-capable result without ref mutation"
+                side_effect_budget = "none"
+            else:
+                preferred = (
+                    "Read live permissions for the exact target repository and require push-capable access, then invoke a "
+                    "GitHub Git-database blob/write-object primitive with fixed empty content. The probe object must remain "
+                    "unreferenced: do not create a tree, commit, tag, branch, or ref. This reaches repository contents-write "
+                    "scope without moving refs or changing source. If the host exposes no isolated unreferenced object-write "
+                    "primitive, do not manufacture a source/ref mutation; report the safe probe as unavailable."
+                )
+                evidence = "push-capable repository access is observed and the host accepts an unreferenced empty-blob write without any tree/commit/ref mutation"
+                side_effect_budget = "one unreferenced empty Git blob object; no tree/commit/ref or source mutation"
+            probes.append({
+                "capability": capability,
+                "probe_kind": "live_host_permission_probe",
+                "preferred_probe": preferred,
+                "success_evidence": evidence,
+                "cleanup_required": False,
+                "side_effect_budget": side_effect_budget,
+                "failure_classification": "GITHUB_PUSH_PERMISSION_NOT_PROVEN",
+            })
+        elif capability == "github_actions":
+            probes.append({
+                "capability": capability,
+                "probe_kind": "live_host_write_scope_probe",
+                "preferred_probe": (
+                    "Invoke a write-scoped GitHub Actions operation only against an audited workflow/job that cannot "
+                    "mutate repository source or refs (dispatch/rerun is acceptable when the workflow is source-read-only). "
+                    "For Codex Loop, Workspace Download is an acceptable probe; Workspace Import is not."
+                ),
+                "success_evidence": "host accepts the Actions write-scoped call and the audited no-source-write run is observable",
+                "cleanup_required": False,
+                "side_effect_budget": "one bounded workflow run; no source/ref mutation",
+                "failure_classification": "GITHUB_ACTIONS_PERMISSION_NOT_PROVEN",
+            })
+        elif capability == "google_drive_read":
+            probes.append({
+                "capability": capability,
+                "probe_kind": "live_host_read_probe",
+                "preferred_probe": "List/search metadata in the exact Drive scope needed by the workflow; do not open unrelated user files.",
+                "success_evidence": "the intended Drive scope is readable through the live connector",
+                "cleanup_required": False,
+                "side_effect_budget": "none",
+                "failure_classification": "GOOGLE_DRIVE_READ_PERMISSION_NOT_PROVEN",
+            })
+        elif capability == "google_drive_write":
+            probes.append({
+                "capability": capability,
+                "probe_kind": "live_host_write_cleanup_probe",
+                "preferred_probe": (
+                    "Create one uniquely named, non-sensitive Drive sentinel owned by this preflight, read back its ID/metadata, "
+                    "then delete that exact sentinel immediately. Never use a pre-existing user file as the write probe."
+                ),
+                "success_evidence": "sentinel creation/readback succeeds and the exact sentinel is deleted",
+                "cleanup_required": True,
+                "side_effect_budget": "one temporary owned sentinel only",
+                "failure_classification": "GOOGLE_DRIVE_WRITE_PERMISSION_NOT_PROVEN",
+            })
+
+    return {
+        "phase": "post_task_review_pre_execution",
+        "required_capabilities": requested,
+        "routing_generation": route.get("generation") if route else None,
+        "workspace_mode": workspace_mode,
+        "probes": probes,
+        "completion_rule": (
+            "A permission smoke test is complete only after each required capability has a current live host observation. "
+            "Tool/schema discovery, connector-listed status, cached prose, or a capability boolean alone is not probe evidence."
+        ),
+        "authority_rule": (
+            "Probe results are host observations, not grants. Reuse them only while still live in the current task/session; "
+            "never persist OAuth tokens, approvals, or a claim of permanent authorization, and never bypass per-action host approval."
+        ),
+        "runtime_state_written": False,
+    }
