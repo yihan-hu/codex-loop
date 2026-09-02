@@ -30,6 +30,7 @@ class SemanticCompatibilityRoutingTests(unittest.TestCase):
         self.assertIn("publication intent", publish)
         self.assertIn("absence of native `git push`", publish)
         self.assertIn("canonical Web publication path itself", publish)
+        self.assertIn("published_tree == audited source_tree", publish)
 
     def test_equivalence_rule_does_not_weaken_unique_capability_boundaries(self):
         routing = (ROOT / "references" / "interaction-routing.md").read_text()

@@ -132,7 +132,7 @@ Before reporting `SOURCE_PUSHED`:
 3. for `FAST_PUBLISH`, require the one-line `CODEX_LOOP_FAST_IMPORT_RECEIPT=<json>` log receipt from `.github/workflows/workspace-import-fast.yml`; do **not** upload or download receipt/source artifacts for the iterative fast path;
 4. for `FULL_VERIFIED_PUBLISH`, download and verify the ordinary receipt artifact from `.github/workflows/workspace-import.yml`;
 5. require receipt `published_commit == audited source_commit`;
-6. require receipt `published_tree == audited source tree`;
+6. require receipt `published_tree == audited source_tree`;
 7. independently read target branch from GitHub;
 8. require remote commit == audited source commit and remote tree == audited source tree.
 
