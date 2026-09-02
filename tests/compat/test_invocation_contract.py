@@ -26,6 +26,17 @@ class InvocationContractTests(unittest.TestCase):
         self.assertIn("This section applies only when the active objective includes repository/filesystem work", skill)
         self.assertIn("skip `workspace_mode` and Web-vs-Local development machinery", skill)
 
+    def test_goal_pursuit_is_opt_in_and_reuses_existing_completion_semantics(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("### Goal-pursuit continuation policy", skill)
+        self.assertIn("explicitly asks Codex Loop to keep iterating until a concrete objective is achieved", skill)
+        self.assertIn("it is not a second mutable state machine and does not create a separate Skill", skill)
+        self.assertIn("If the objective is still unmet and a useful next action is available, continue", skill)
+        self.assertIn("Do not blindly retry the same failed action", skill)
+        self.assertIn("Goal-pursuit never implies background, asynchronous, hidden, or indefinitely running execution", skill)
+        self.assertIn("`CONTINUE` means keep pursuing", skill)
+        self.assertIn("`PASS` requires the ordinary fresh validation/review/evidence/objective-audit gates", skill)
+
     def test_implicit_invocation_stays_enabled(self):
         metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
         self.assertIn('short_description: "Adaptive lifecycle for multi-step objectives"', metadata)

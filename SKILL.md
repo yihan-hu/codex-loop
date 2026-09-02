@@ -21,6 +21,22 @@ Terse continuation requests such as `revise`, `verify`, `export`, `push`, `publi
 
 Automatic Skill invocation is routing, not authorization. It never grants Local-mode source mutation, local filesystem access, browser control, or native macOS GUI control. Keep the existing explicit current-task authorization gates for local source mutation and computer use, and keep `workspace_mode` separate from `interaction_target`.
 
+### Goal-pursuit continuation policy
+
+When the user explicitly asks Codex Loop to keep iterating until a concrete objective is achieved (for example, “keep going until this works”, “iterate until all tests pass”, or “do not stop after the plan”), treat that as an opt-in **goal-pursuit** continuation policy for the current objective. This is a host-facing execution policy layered on top of the existing lifecycle; it is not a second mutable state machine and does not create a separate Skill.
+
+While goal-pursuit is active:
+
+- Keep the original objective and its observable acceptance criteria as the terminal condition.
+- After every meaningful action or new piece of evidence, re-evaluate the unmet criteria and choose the smallest useful next action.
+- If the objective is still unmet and a useful next action is available, continue in the current turn/workflow instead of returning control merely because a plan, partial implementation, or intermediate validation completed.
+- Stop only for an evidence-backed `PASS`, a genuine `BLOCKED` condition (including a required authorization/capability boundary), an explicit user stop/cancel, or an explicit iteration/resource budget that has been exhausted.
+- Do not treat “ask the user whether to continue” as a terminal state when the next safe, authorized action is already available.
+- Do not blindly retry the same failed action. If repeated attempts make no meaningful progress, re-observe the evidence and change strategy or re-plan before acting again.
+- Goal-pursuit never implies background, asynchronous, hidden, or indefinitely running execution. It remains bounded by the current host turn/session, available tools, approvals, and any explicit user budget.
+
+Use the existing Codex Loop completion machinery as the source of truth: `CONTINUE` means keep pursuing, `BLOCKED` means report the concrete blocker, and `PASS` requires the ordinary fresh validation/review/evidence/objective-audit gates. Do not add a parallel completion flag merely to represent goal-pursuit.
+
 ## Deterministic session routing plane
 
 Treat Web-vs-Local routing as machine state, not model memory. Before the first repository/filesystem, browser/computer, Skill installation/deployment, Git publication, transfer, or synchronization host action in a conversation, initialize the lightweight routing plane with `route-init`. In ChatGPT Web, pass `--host-surface chatgpt_web`. The command creates a conversation-scoped private JSON file under the system temp directory and returns an opaque routing session id. Keep the id only in current-conversation context; never write it to Git, Host Profile, user memory, a package, or cross-conversation persistence.
