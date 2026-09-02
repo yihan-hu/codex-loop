@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "transfer_id": "self-update-bridge-minimal-20260902-1215-ac376e51",
+  "file_id": "1B34UWOJ0KCrdrGfiHeoWK5eYgnEhTIZC",
+  "size": 315155,
+  "sha256": "ac376e5159c5e7b5751c875b823c15ec143bf78cbeb66d7b1e3e253752b1c3db",
+  "expected_base": "eaf1c17364d9c651c5bf0b681b57f78c7490e487",
+  "target_branch": "main"
+}
