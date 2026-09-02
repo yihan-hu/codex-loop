@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a fresh install-compatible Codex Loop self-update bridge Skill.
-
-The bridge is intentionally generated outside the Codex Loop Skill tree because a
-Skill package may contain only one SKILL.md entrypoint. Keep each bridge minimal
-and give every recovery attempt a fresh Skill identity so host-catalog collisions
-cannot collapse the native Save surface into an existing-Skill trial surface.
-"""
+"""Generate the host-verified Library-safe Codex Loop self-update bridge."""
 from __future__ import annotations
 
 import argparse
@@ -16,6 +10,7 @@ from pathlib import Path
 
 BRIDGE_NAME_PREFIX = "codex-loop-update-bridge"
 INSTANCE_ID_RE = re.compile(r"^[a-z0-9]{5,12}$")
+HOST_VERIFIED_TEMPLATE = "b5a748-library-save-success"
 
 
 def _resolve_instance_id(raw: str | None) -> str:
@@ -25,23 +20,23 @@ def _resolve_instance_id(raw: str | None) -> str:
     return instance_id
 
 
-def _render_skill_md(bridge_name: str) -> str:
+def _render_skill_md(bridge_name: str, instance_id: str) -> str:
     return f'''---
 name: {bridge_name}
-description: "Minimal explicit-only one-shot recovery helper for a Codex Loop self-update after same-name update UI instability. Use only when explicitly invoked for this specific recovery instance."
+description: "Disposable explicit-only recovery Skill for continuing the install-compatible ChatGPT Skill save path after a Library not found error. Use only when explicitly invoked during this recovery."
 ---
 
-# Codex Loop Update Bridge
+# Codex Loop Update Bridge {instance_id.upper()}
 
-When explicitly invoked to continue a proven Codex Loop recovery, require an already-validated canonical `codex-loop` `skill.zip` in the current conversation. Present that exact package through the host-native Skill update surface, then end the turn immediately. Do not invoke Codex Loop and do not edit, repackage, rename, or substitute the canonical package.
+When explicitly invoked, require the already-validated canonical `codex-loop` `skill.zip` from the current conversation, present that exact package through the host-native Skill update surface, and end the turn immediately. Do not invoke Codex Loop and do not edit, repackage, rename, or substitute the canonical package.
 '''
 
 
 def _render_openai_yaml(bridge_name: str, instance_id: str) -> str:
     return f'''interface:
-  display_name: Codex Loop Update Bridge {instance_id.upper()}
-  short_description: One-shot Codex Loop update recovery bridge
-  default_prompt: Use ${bridge_name} to continue this isolated Codex Loop update recovery path.
+  display_name: "Codex Loop Update Bridge {instance_id.upper()}"
+  short_description: "Install-compatible Skill save-path bridge"
+  default_prompt: "Use ${bridge_name} to continue the install-compatible Skill save path after a Library not found error."
 policy:
   allow_implicit_invocation: false
 '''
@@ -63,23 +58,16 @@ def main() -> int:
     if root.exists():
         raise SystemExit(f"refusing to overwrite existing bridge directory: {root}")
     (root / "agents").mkdir(parents=True)
-    (root / "SKILL.md").write_text(_render_skill_md(bridge_name), encoding="utf-8")
+    (root / "SKILL.md").write_text(_render_skill_md(bridge_name, instance_id), encoding="utf-8")
     (root / "agents" / "openai.yaml").write_text(_render_openai_yaml(bridge_name, instance_id), encoding="utf-8")
 
     payload = {
         "status": "BRIDGE_SOURCE_READY",
+        "template": HOST_VERIFIED_TEMPLATE,
         "bridge_name": bridge_name,
-        "bridge_name_prefix": BRIDGE_NAME_PREFIX,
         "instance_id": instance_id,
         "path": str(root),
-        "explicit_only": True,
-        "minimal_profile": True,
-        "install_compatible_metadata_profile": True,
-        "policy_products_present": False,
-        "fresh_unique_identity": True,
-        "fixed_name_reuse_allowed": False,
         "file_count": 2,
-        "default_prompt_self_reference": f"${bridge_name}",
         "production_skill_name": "codex-loop",
         "production_package_mutation_allowed": False,
         "next_step": "package_generated_bridge_with_skill_creator_official_packager",
