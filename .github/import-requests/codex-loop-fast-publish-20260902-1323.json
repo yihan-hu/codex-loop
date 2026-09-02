@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "transfer_id": "codex-loop-fast-publish-20260902-1323",
+  "file_id": "1dHCs_8S64AKcHvL3je8a3lRd6MFgmbWf",
+  "size": 308842,
+  "sha256": "5c4b9bc45f94342315411e1a3214d0e0eec623fbf5aa25f8fc8d4b052e736400",
+  "expected_base": "32e47be2d3fc3b219e2e55a98a6ef3e46678e817",
+  "target_branch": "main"
+}
