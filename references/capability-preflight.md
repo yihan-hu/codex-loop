@@ -78,6 +78,7 @@ Repository push capability does not prove GitHub Actions write capability; probe
 Exercise an **Actions write-scoped** host operation only against a workflow/job already audited to be source-read-only and ref-nonmutating. Dispatching or rerunning such a job is an acceptable bounded side effect because it creates only a workflow run.
 
 For the Codex Loop repository, `Workspace Download` is an acceptable permission probe because it has `contents: read` and only packages the current source. `Workspace Import` is **not** a permission probe because it has `contents: write` and can publish source changes.
+Record the resulting `github_actions` observation at repository scope (`actions:OWNER/REPO`), not at workflow-name scope. The safe `Workspace Download` job is the probe mechanism; the observed Actions write capability is repository-scoped, so later publication must not miss the observation merely because the production workflow is `Workspace Import`.
 
 If the host exposes no safe Actions write-scope operation and no audited no-source-write workflow exists, classify the capability as `GITHUB_ACTIONS_PERMISSION_NOT_PROVEN` before substantive work. Do not invent a source mutation to force an approval prompt.
 

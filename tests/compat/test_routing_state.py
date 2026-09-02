@@ -184,6 +184,29 @@ class RoutingStateTests(unittest.TestCase):
             self.assertFalse(permission_observation_status(session_id=sid,capability="github_push",scope="repo:owner/repo",now=120)["fresh"])
         finally: self.cleanup(state)
 
+    def test_github_actions_observation_scope_is_repository_level(self):
+        sid = self.sid()
+        state = route_init(session_id=sid, host_surface="chatgpt_web")
+        try:
+            record_permission_observation(
+                session_id=sid, capability="github_actions",
+                scope="actions:owner/repo:workspace-download", evidence="safe read-only workflow rerun accepted",
+                ttl_seconds=60,
+            )
+            status = permission_observation_status(
+                session_id=sid, capability="github_actions",
+                scope="actions:owner/repo:workspace-import",
+            )
+            self.assertTrue(status["fresh"])
+            plan = permission_preflight_plan(
+                capabilities=["github_actions"], session_id=sid,
+                observation_scopes={"github_actions": "actions:owner/repo"},
+                reuse_fresh_observations=True,
+            )
+            self.assertEqual(plan["probe_capabilities"], [])
+        finally:
+            self.cleanup(state)
+
     def test_preflight_skips_only_fresh_scope_matched_observations(self):
         state=route_init(session_id=self.sid(),host_surface="chatgpt_web"); sid=state["session_id"]
         try:

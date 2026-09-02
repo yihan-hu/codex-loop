@@ -105,6 +105,7 @@ The standard probe semantics are:
 
 - `github_push`: Local mode uses host-visible native `git push --dry-run` against the intended remote/ref. Web mode combines live push-capable repository permission readback with one Git-database create-blob/write-object call containing fixed empty content; the blob must remain unreferenced and no tree/commit/ref may be created. A permission readback alone does not prove the host write-approval boundary was exercised. If the host exposes no isolated unreferenced object-write primitive, report the safe probe unavailable rather than create a source/ref mutation.
 - `github_actions`: invoke a write-scoped Actions operation only on an audited workflow/job that cannot mutate source or refs. In this repository, `Workspace Download` is acceptable; `Workspace Import` is forbidden as a smoke probe.
+  Record/reuse this capability at repository scope (`actions:OWNER/REPO`). Workflow names describe the safe probe versus production action; they are not separate permission-observation scopes.
 - `google_drive_read`: live list/search/metadata access in the intended Drive scope.
 - `google_drive_write`: create one uniquely named non-sensitive sentinel owned by the preflight, read back its exact ID/metadata, then delete that exact sentinel.
 

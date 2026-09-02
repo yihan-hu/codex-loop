@@ -408,6 +408,18 @@ def _permission_observation_state(session_id: str) -> dict[str, Any]:
     return payload
 
 
+def _canonical_permission_observation_scope(capability: str, scope: str) -> str:
+    value = str(scope).strip()
+    if not value or len(value) > 1024:
+        raise ValueError("permission observation scope must be 1-1024 non-whitespace characters")
+    if capability == "github_actions" and value.startswith("actions:"):
+        repository = value[len("actions:"):].split(":", 1)[0].strip()
+        if not repository or "/" not in repository:
+            raise ValueError("github_actions observation scope must identify actions:OWNER/REPO")
+        return f"actions:{repository}"
+    return value
+
+
 def _observation_scope_digest(scope: str) -> str:
     value = str(scope).strip()
     if not value or len(value) > 1024:
@@ -428,7 +440,8 @@ def record_permission_observation(*, session_id: str, capability: str, scope: st
     evidence_sha = _evidence_digest(evidence)
     if evidence_sha is None:
         raise ValueError("permission observation requires concise host-observed evidence")
-    scope_sha = _observation_scope_digest(scope)
+    canonical_scope = _canonical_permission_observation_scope(capability, scope)
+    scope_sha = _observation_scope_digest(canonical_scope)
     observed_at = int(time.time() if now is None else now)
     key = f"{capability}:{scope_sha}"
     state = _permission_observation_state(route["session_id"])
@@ -452,7 +465,8 @@ def permission_observation_status(*, session_id: str, capability: str, scope: st
     if capability not in PERMISSION_PROBE_CAPABILITIES:
         raise ValueError(f"permission observation capability must be one of {sorted(PERMISSION_PROBE_CAPABILITIES)}")
     route = route_show(session_id=session_id)
-    scope_sha = _observation_scope_digest(scope)
+    canonical_scope = _canonical_permission_observation_scope(capability, scope)
+    scope_sha = _observation_scope_digest(canonical_scope)
     key = f"{capability}:{scope_sha}"
     item = _permission_observation_state(route["session_id"])["observations"].get(key)
     if not isinstance(item, dict):
