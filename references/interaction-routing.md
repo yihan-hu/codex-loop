@@ -1,6 +1,20 @@
-# Workspace mode and interaction-target routing
+# Deterministic workspace, interaction, and deployment routing
 
-Repository source location and computer/browser interaction are independent routing decisions. Never infer one from the other.
+Repository source location, computer/browser interaction, and Skill deployment destination are independent routing decisions. Never infer one from another, and never derive any of them from long conversation context, tool availability, or remembered host state.
+
+## Conversation-scoped routing state
+
+Before the first routing-sensitive host action, initialize the deterministic routing plane with `route-init`. The runtime writes one private JSON file under the system temp directory for the current conversation. The file is not repository state, Host Profile state, authorization state, or durable cross-conversation memory. Its session id is opaque and remains current-conversation context only.
+
+In ChatGPT Web, initialize with `--host-surface chatgpt_web`. The initial state is:
+
+```text
+workspace_mode     = web
+interaction_target = none
+deployment_target  = unresolved
+```
+
+Use `route-transition` to change an axis and `route-check` before repository, browser/computer, deployment, or publish actions. Local/cross-surface transitions require explicit user-selection evidence; the file stores only its SHA-256 digest. Current-task permissions are deliberately not persisted in this file. `workspace-grant`, local-source-mutation authorization, local computer-use authorization, and local Skill-install authorization remain separate gates.
 
 ## Axis 1: `workspace_mode`
 
@@ -35,6 +49,21 @@ explicit user target
 ```
 
 The built-in preference is `cloud_browser`; read `host-profile.md` for the private schema. A preference is not a capability claim. If Cloud Browser is unavailable, do not silently select `local_chrome`. Local Chrome is surfaced only when the task specifically needs the user's signed-in/local session, and interaction still requires explicit current-task computer-use authorization. The profile field `allow_local_chrome_fallback` is only permission to surface that option, never permission to interact.
+
+## Axis 3: `deployment_target`
+
+`deployment_target` selects where a Skill/package install or deployment action belongs and is independent of `workspace_mode`:
+
+- unresolved: no explicit deployment target has been persisted.
+- `artifact_only`: package/export only; do not install.
+- `chatgpt_web_skill`: use the native ChatGPT Web Skill installation/update surface.
+- `local_codex_skill`: install/update the Skill in a local Codex environment.
+
+A Web development workspace may legitimately deploy to ChatGPT Web or, after explicit user selection, to local Codex. Likewise Local repository development does not force local deployment.
+
+For a generic `install` action with unresolved deployment state, `route-check` resolves to the native deployment surface declared by `host_surface`. Therefore `host_surface=chatgpt_web` resolves to `chatgpt_web_skill`; RDC availability, a Mac checkout, or a previously installed local Skill cannot change that result. `local_codex_skill` becomes valid from ChatGPT Web only after an explicit `route-transition --deployment-target local_codex_skill --selection-evidence ...`, and the actual local install still requires current-task local-install authorization at `route-check`.
+
+If `host_surface=unknown`, a generic install remains unresolved and fails closed rather than guessing.
 
 ## Explicit computer-use authorization
 
@@ -74,6 +103,6 @@ Treat generic GUI automation as visible local computer use, not as Browser Contr
 
 ## Repository isolation
 
-An interaction-only RDC call must not inspect or mutate a local repository merely because the Mac is reachable. Repository operations continue to route exclusively by `workspace_mode`.
+An interaction-only RDC call must not inspect or mutate a local repository merely because the Mac is reachable. Repository operations continue to route exclusively by `workspace_mode`, and `route-check --action rdc_repository` fails closed while that state remains `web`.
 
-Conversely, Local-mode repository development does not force `interaction_target=local_chrome`; the task may still use no browser or a cloud browser.
+Conversely, Local-mode repository development does not force `interaction_target=local_chrome`; the task may still use no browser or a cloud browser. Neither repository mode nor interaction target implies a Skill deployment destination; `deployment_target` remains an independent axis.

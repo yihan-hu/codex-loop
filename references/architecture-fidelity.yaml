@@ -178,6 +178,15 @@
       "upgrade_path": "Add owner/scope/freshness/replace semantics only when multiple injected projections require them."
     },
     {
+      "id": "conversation_routing_plane",
+      "layer": "control_plane",
+      "paths": [],
+      "required_patterns": [],
+      "status": "LOCAL_DIVERGENCE",
+      "divergence": "The ChatGPT Skill host does not expose a native conversation-scoped workspace/interaction/deployment routing register or a tool-dispatch interceptor. Codex Loop therefore materializes routing in a private temp JSON file and requires deterministic route-check preflights before host actions.",
+      "upgrade_path": "Replace the local routing file/adapter with native host routing metadata or tool-dispatch policy when exposed, while preserving the independent workspace_mode, interaction_target, and deployment_target semantics and fail-closed local transitions."
+    },
+    {
       "id": "optional_cloud_persistence",
       "layer": "concept",
       "paths": [],

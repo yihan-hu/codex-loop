@@ -2,7 +2,11 @@
 
 RDC is a host execution/interaction transport and does not select repository development mode. Apply the repository boundary below when `workspace_mode=local`; apply the interaction-only boundary when RDC is used for `local_chrome` or `local_mac_gui` while the repository may remain in Web mode. See `interaction-routing.md`.
 
-Registered workspace identity, current-conversation semantic grants, and RDC filesystem authorization are separate layers. See `workspace-registry.md`.
+Before **any repository-affecting RDC action**, require an initialized conversation routing session and run `route-check --action rdc_repository` with the current conversation's workspace-grant state. While `workspace_mode=web`, that check must fail closed regardless of RDC connectivity, a known Mac checkout, an installed local Skill, or prior local use. Do not probe the local repository first and resolve routing afterward.
+
+Before interaction-only RDC/browser use, require the routing session to select the intended `interaction_target` and run `route-check --action browser_interaction` with current-task computer-use authorization. Capability availability may confirm that the selected route can execute; it must never select or mutate the route.
+
+Registered workspace identity, current-conversation semantic grants, RDC filesystem authorization, and routing state are separate layers. See `workspace-registry.md`.
 
 ## Local repository-development boundary
 
@@ -32,6 +36,7 @@ REGISTERED + GRANTED THIS CONVERSATION + HOST/RDC AUTHORIZED = ACCESSIBLE
 
 A KNOWN alias is not permission. Before the first RDC filesystem action for a registered workspace:
 
+- require `route-check --action rdc_repository` to allow the repository route;
 - confirm the current conversation has an explicit semantic grant;
 - resolve the configured path to its real path and reject missing/non-directory/changed-symlink targets;
 - pass only host-observed authorized roots to `workspace-resolve` and require access;
@@ -55,9 +60,9 @@ If the alias is known but not granted, ask for current-conversation path permiss
 
 ## Interaction-only RDC boundary
 
-When `interaction_target` is `local_chrome` or `local_mac_gui`, RDC may be used even while `workspace_mode=web`. In that case:
+When `interaction_target` is `local_chrome` or `local_mac_gui`, RDC may be used even while `workspace_mode=web`. Before the first interaction action, require `route-check --action browser_interaction` to allow the selected target using current-task computer-use authorization. In that case:
 
-- Do not inspect, edit, test, package, commit, or publish a local repository unless the user separately selected Local repository development; interaction-only RDC use must not touch the local checkout while `workspace_mode=web`.
+- Do not inspect, edit, test, package, commit, or publish a local repository unless the user separately selected Local repository development; interaction-only RDC use must not touch the local checkout while `workspace_mode=web`. A successful browser-interaction route check does not authorize `rdc_repository`.
 - Limit commands and observations to the requested application/computer interaction and narrowly necessary host capability checks.
 - For Chrome Browser Control, RDC is diagnostic/setup transport only; do not use AppleScript, Chrome `execute javascript`, generic coordinates, or internal Browser sockets as a Browser Control fallback.
 - If the user explicitly requests a separate nonstandard RDC/GUI automation path after the limitation is disclosed, use the minimum scope needed, follow `local-mac-gui.md`, verify the resulting state, and label it as computer automation rather than Browser Control evidence.
@@ -87,4 +92,4 @@ The placeholders are documentation only. Before tool execution, use the exact re
 
 ## Fail-closed rule
 
-If the primary root is unresolved, a registered workspace is not granted, RDC rejects the resolved path, a symlink changes the real boundary, or an operation would touch an unauthorized path, stop that operation. Do not infer consent from device connectivity, filesystem visibility, a prior conversation, successful tool access, registry knowledge, or the ability to execute a command.
+If the conversation routing session is missing/invalid, the relevant `route-check` denies the action, `workspace_mode` is still `web` for a repository-affecting RDC request, the primary root is unresolved, a registered workspace is not granted, RDC rejects the resolved path, a symlink changes the real boundary, or an operation would touch an unauthorized path, stop that operation. Do not infer consent or routing state from device connectivity, filesystem visibility, a prior conversation, successful tool access, registry knowledge, an installed local Skill, or the ability to execute a command.

@@ -30,6 +30,17 @@ from codex_loop_runtime.execution_supervision import (
     observation_from_strings,
 )
 from codex_loop_runtime.interaction_routing import resolve_interaction_target
+from codex_loop_runtime.routing_state import (
+    DEPLOYMENT_TARGETS,
+    HOST_SURFACES,
+    INTERACTION_TARGETS as ROUTING_INTERACTION_TARGETS,
+    ROUTE_ACTIONS,
+    WORKSPACE_MODES,
+    route_check,
+    route_init,
+    route_show,
+    route_transition,
+)
 from codex_loop_runtime.lifecycle import DURABLE_SIGNAL_KEYS, assess_runtime_need
 from codex_loop_runtime.host_config import (
     PROGRESS_MODES,
@@ -79,6 +90,10 @@ HOST_ADAPTER_COMMANDS = (
     ('host-config', 'show or update the unified private Host Profile'),
     ('progress-config', 'compatibility facade for private progress-visibility preferences'),
     ('progress-policy', 'resolve effective progress behavior for direct or durable work'),
+    ('route-init', 'initialize deterministic conversation-scoped routing state'),
+    ('route-show', 'show deterministic conversation-scoped routing state'),
+    ('route-transition', 'change workspace, interaction, or deployment routing with evidence gates'),
+    ('route-check', 'fail closed before repository, browser, deployment, or publish host actions'),
     ('interaction-route', 'resolve Cloud Browser vs local browser target without granting access'),
     ('persistence-export', 'export private cross-conversation recovery state'),
     ('persistence-validate', 'validate a recovery manifest'),
@@ -711,6 +726,63 @@ def _cmd_skill_deploy_complete(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_route_init(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py route-init')
+    p.add_argument('--session-id')
+    p.add_argument('--host-surface', choices=sorted(HOST_SURFACES), default='unknown')
+    args = p.parse_args(argv[1:])
+    emit_ok(route_init(session_id=args.session_id, host_surface=args.host_surface))
+    return 0
+
+
+def _cmd_route_show(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py route-show')
+    p.add_argument('--session-id')
+    args = p.parse_args(argv[1:])
+    emit_ok(route_show(session_id=args.session_id))
+    return 0
+
+
+def _cmd_route_transition(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py route-transition')
+    p.add_argument('--session-id')
+    p.add_argument('--workspace-mode', choices=sorted(WORKSPACE_MODES))
+    p.add_argument('--interaction-target', choices=sorted(ROUTING_INTERACTION_TARGETS))
+    p.add_argument('--deployment-target', choices=sorted(DEPLOYMENT_TARGETS | {'none'}))
+    p.add_argument('--selection-evidence')
+    args = p.parse_args(argv[1:])
+    if args.workspace_mode is None and args.interaction_target is None and args.deployment_target is None:
+        raise ValueError('route-transition requires at least one routing field')
+    emit_ok(route_transition(
+        session_id=args.session_id,
+        workspace_mode=args.workspace_mode,
+        interaction_target=args.interaction_target,
+        deployment_target=args.deployment_target,
+        selection_evidence=args.selection_evidence,
+    ))
+    return 0
+
+
+def _cmd_route_check(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py route-check')
+    p.add_argument('--session-id')
+    p.add_argument('--action', required=True, choices=sorted(ROUTE_ACTIONS))
+    p.add_argument('--workspace-granted', action='store_true')
+    p.add_argument('--local-source-mutation-authorized', action='store_true')
+    p.add_argument('--local-computer-authorized', action='store_true')
+    p.add_argument('--local-install-authorized', action='store_true')
+    args = p.parse_args(argv[1:])
+    emit_ok(route_check(
+        action=args.action,
+        session_id=args.session_id,
+        workspace_granted=args.workspace_granted,
+        local_source_mutation_authorized=args.local_source_mutation_authorized,
+        local_computer_authorized=args.local_computer_authorized,
+        local_install_authorized=args.local_install_authorized,
+    ))
+    return 0
+
+
 def _cmd_interaction_route(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py interaction-route')
     p.add_argument('--requires-web-interaction', action='store_true')
@@ -982,6 +1054,14 @@ def main() -> int:
             return _cmd_progress_config(argv)
         if argv[0] == 'progress-policy':
             return _cmd_progress_policy(argv)
+        if argv[0] == 'route-init':
+            return _cmd_route_init(argv)
+        if argv[0] == 'route-show':
+            return _cmd_route_show(argv)
+        if argv[0] == 'route-transition':
+            return _cmd_route_transition(argv)
+        if argv[0] == 'route-check':
+            return _cmd_route_check(argv)
         if argv[0] == 'interaction-route':
             return _cmd_interaction_route(argv)
         if argv[0] == 'validate':

@@ -41,6 +41,8 @@ This repository is the Skill source. In a normal external deployment, a Git chec
 
 There is one important workspace-hosted rule that applies to **all Skills and Skill installation packages**: if the Skill/package is already present or active in the current workspace or host-managed Skill environment, prefer supported host-managed non-browser update operations and never treat deployment intent as permission to automate browser clicks.
 
+Codex Loop now also keeps the install destination in a **conversation-scoped deterministic routing file**. In ChatGPT Web, a generic `install` resolves to the native `chatgpt_web_skill` target unless the user explicitly selects another deployment target. RDC availability, a remembered Mac checkout, or an existing `~/.codex/skills` directory cannot silently redirect that request to local Codex. The routing file is private temp state and resets with a new routing session; it is not stored in Host Profile or Git.
+
 For the **active current-workspace Skill being maintained in Web mode**, Codex Loop now has a stronger post-push invariant: when you ask to push/publish the edited Skill, verified GitHub publication must be followed by deployment reconciliation for the same pushed revision. Codex Loop records a completion-blocking `chatgpt_skill_update` planning handoff, but the native Skill installation/update surface is owned by `skill-creator`/the ChatGPT host. The handoff itself cannot count as UI evidence. If the host never exposes/initiates a native update surface, the result stays `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED` instead of silently finishing.
 
 For **Codex Loop updating itself**, that handoff is terminal for the initiating turn. `skill-deploy-handoff` activates a terminal self-update barrier, `skill-creator`/the native installer must be the final current-turn owner, and Codex Loop must not issue another command or append its own closing/status response after the install surface is initiated. Reconciliation starts only on a later user/host turn with `skill-deploy-resume --later-host-turn-observed`. This prevents the orchestrator from reclaiming the response slot and displacing a just-surfaced Web install control.
@@ -93,7 +95,7 @@ Codex Loop increases user-visible progress for real multi-step/durable objective
 
 The preference is user-specific and is never committed. `python3 scripts/codex_loop.py progress-config` shows the effective values; `progress-config --mode enhanced --interval-seconds 20 --tool-call-interval 4` writes overrides atomically to `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`). The supported modes are `enhanced`, `standard`, and `quiet`; upfront planning and material-event updates can be toggled independently. `progress-config --reset` removes only the progress override and returns to built-in defaults. See `references/progress-visibility.md`.
 
-The host config is private runtime state outside the repository and outside `skill.zip`. It may coexist with non-sensitive workspace-routing defaults, but must never contain credentials, approval/session tokens, or other secrets.
+The host config is private runtime state outside the repository and outside `skill.zip`. It may coexist with non-sensitive workspace locators/preferences, but it does not store current `workspace_mode`, `interaction_target`, or `deployment_target`; those live in the conversation routing file. Host config must never contain credentials, approval/session tokens, or other secrets.
 
 ## Optional cross-conversation persistence
 
@@ -202,14 +204,19 @@ For Local mode, the access model is `Primary Local Root + Session Granted Roots 
 
 ## Workspace mode versus interaction target
 
-Codex Loop treats **where the repository lives** and **which computer/browser is being controlled** as separate axes:
+Codex Loop treats **where the repository lives**, **which computer/browser is being controlled**, and **where a Skill should be deployed** as separate axes. These values live in a private conversation-scoped routing JSON file created by `route-init`, rather than being reconstructed from long conversation context:
 
 ```text
 workspace_mode:      web | local
 interaction_target:  none | cloud_browser | local_chrome | local_mac_gui
+deployment_target:   unresolved | artifact_only | chatgpt_web_skill | local_codex_skill
 ```
 
+A new routing session starts with `workspace_mode=web`, `interaction_target=none`, and unresolved deployment target. In ChatGPT Web, initialize with `python3 scripts/codex_loop.py route-init --host-surface chatgpt_web`. Before a repository, browser/computer, installation, or publication host action, use `route-check`; local/cross-surface changes go through `route-transition` with explicit user-selection evidence. Current-task permissions are not persisted by the routing file.
+
 For example, `workspace_mode=web` plus `interaction_target=local_chrome` means the repository remains in the current ChatGPT workspace while ChatGPT uses your Mac only to interact with your signed-in local Chrome. Using RDC for that interaction does not make the Mac checkout authoritative.
+
+Likewise, `workspace_mode=web` does not by itself determine installation destination. A bare Skill `install` on `host_surface=chatgpt_web` deterministically targets `chatgpt_web_skill`; selecting `local_codex_skill` from that host requires an explicit deployment transition, and the actual local install still requires current-task authorization. This prevents Mac/RDC history from becoming an accidental deployment instruction.
 
 For `local_chrome`, Codex Loop keeps ChatGPT as the reasoning authority and does not launch a local Codex agent. Browser Control requires an official/supported host-exposed Chrome/Computer Use executor or native bridge that is actually attached to the current conversation. RDC/AppleScript, Chrome `execute javascript`, generic screenshot/mouse/keyboard automation, and private Browser/Codex sockets are not Browser Control fallbacks and must not be reported as Browser capability success.
 

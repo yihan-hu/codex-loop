@@ -43,6 +43,48 @@ python3 scripts/codex_loop.py workspace-resolve epiagent \
 
 This check cannot create RDC permission or change `allowedDirectories`. See `references/workspace-registry.md`.
 
+## Conversation routing state
+
+Routing-sensitive host actions use a lightweight conversation-scoped state file even when the task is otherwise direct and does not need durable lifecycle bootstrap. Initialize it once per conversation:
+
+```bash
+python3 scripts/codex_loop.py route-init --host-surface chatgpt_web
+# Optional: provide/reuse the opaque nonce explicitly
+python3 scripts/codex_loop.py route-show --session-id ROUTING_SESSION
+```
+
+`route-init` stores a private JSON file under the system temp directory with `workspace_mode=web`, `interaction_target=none`, and unresolved `deployment_target`. `host_surface` is immutable for that routing session. The returned session id may also be supplied through host-owned ephemeral `CODEX_LOOP_SESSION_ID`; never persist it in Git, Host Profile, user memory, packages, or recovery manifests.
+
+Change routing only through deterministic transitions:
+
+```bash
+python3 scripts/codex_loop.py route-transition --session-id ROUTING_SESSION \
+  --workspace-mode local \
+  --selection-evidence "user explicitly selected the local repository baseline"
+
+python3 scripts/codex_loop.py route-transition --session-id ROUTING_SESSION \
+  --deployment-target local_codex_skill \
+  --selection-evidence "user explicitly requested local Codex installation"
+
+python3 scripts/codex_loop.py route-transition --session-id ROUTING_SESSION \
+  --deployment-target none
+```
+
+Entering Local workspace mode, selecting a local interaction target, or selecting a non-native deployment target requires explicit user-selection evidence. The file stores only a SHA-256 digest of that evidence. It does not persist current-task authorization.
+
+Before the host dispatches a routing-sensitive action, check it:
+
+```bash
+python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action repository_observe
+python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action rdc_repository --workspace-granted
+python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action browser_interaction --local-computer-authorized
+python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action skill_install
+python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action local_skill_install --local-install-authorized
+python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action github_publish
+```
+
+Supported actions are `repository_observe`, `repository_mutate`, `rdc_repository`, `browser_interaction`, `skill_install`, `chatgpt_skill_install`, `local_skill_install`, and `github_publish`. In a ChatGPT Web routing session, generic `skill_install` resolves to `chatgpt_web_skill` when no explicit deployment target exists. It never selects local Codex from RDC availability, a remembered Mac checkout, or prior context. If `host_surface=unknown`, generic install remains unresolved and fails closed. Local repository mutation, computer use, workspace access, and local installation still require their separate current-task/current-conversation authorization inputs.
+
 ## Adaptive pre-runtime assessment
 
 Before bootstrap, the host/Skill may deterministically record whether durable runtime is needed from concrete capability signals:
@@ -204,7 +246,7 @@ python3 scripts/codex_loop.py host-config unset web_publish.staging_folder_id
 python3 scripts/codex_loop.py host-config reset progress_visibility
 ```
 
-Missing/unsafe configuration degrades to built-in safe defaults for reads; writes fail closed on malformed/unsafe existing files. Preferences never assert current capability, permission, grant, or Local-mode selection. See `host-profile.md`.
+Missing/unsafe configuration degrades to built-in safe defaults for reads; writes fail closed on malformed/unsafe existing files. Preferences never assert current capability, permission, grant, Local-mode selection, or Skill deployment target. Conversation routing state lives in the separate temp-file routing plane above. See `host-profile.md`.
 
 ## Progress visibility configuration
 

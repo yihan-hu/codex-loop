@@ -467,6 +467,7 @@
     "scripts/codex_loop_runtime/process_state.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/protocol.py": "BEHAVIORAL_PORT",
     "scripts/codex_loop_runtime/release_lineage.py": "LOCAL_EXTENSION",
+    "scripts/codex_loop_runtime/routing_state.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/service.py": "HYBRID",
     "scripts/codex_loop_runtime/shell.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/shell_snapshot.py": "HOST_ADAPTER",

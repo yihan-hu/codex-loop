@@ -34,6 +34,8 @@
 
 Missing config uses these built-in defaults. A preference never asserts capability or permission: `preferred_target=cloud_browser` does not prove Cloud Browser exists, and a workspace alias never means the path is granted or bound. `KNOWN != GRANTED != BOUND` remains authoritative.
 
+Conversation routing is deliberately **not** stored here. `workspace_mode`, `interaction_target`, `deployment_target`, and their selection evidence belong to the private conversation-scoped routing file created by `route-init` under the system temp directory. New conversations therefore cannot inherit yesterday's Mac/Web/deployment routing merely because Host Profile persists. Host Profile may provide a browser preference or workspace locator, but `route-check` remains authoritative for the current conversation and current action.
+
 ## CLI
 
 ```bash
@@ -54,6 +56,6 @@ Reads require a regular, owner-controlled, non-symlink file of bounded size with
 
 Schema v1 `default_local_workspace` migrates into `workspace.default_local_workspace` on write. `default_local_root` remains compatibility input only and is not a new configuration surface.
 
-The profile may be read for non-sensitive global preferences at any time, but local path resolution still requires explicit Local-development intent and the ordinary current-conversation grant/host authorization checks.
+The profile may be read for non-sensitive global preferences at any time, but local path resolution still requires explicit Local-development intent and the ordinary current-conversation grant/host authorization checks. It must never be used as a fallback source for `deployment_target` or to reconstruct a missing routing-session file.
 
 Host Profile files, Drive IDs, workspace aliases/paths, browser preferences, credentials, session grants, and task state must never enter Git, source archives, or Skill packages.

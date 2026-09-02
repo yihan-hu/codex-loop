@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "transfer_id": "routing-plane-20260902-477ff048",
-  "file_id": "1RweMYbZs4BDgWLrCd3oSiU1QYADeFnZq",
-  "size": 294697,
-  "sha256": "477ff0488eec57be1cd1ef058f74a6d99afd062e98f8f06a839bcd09924f5474",
-  "expected_base": "5df705f5cfc3f7be0faba93be19e0b6c7422b54c",
-  "target_branch": "main"
-}

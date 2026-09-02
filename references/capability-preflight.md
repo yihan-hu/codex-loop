@@ -6,12 +6,12 @@ The purpose is to avoid discovering predictable permission blockers halfway thro
 
 ## Procedure
 
-1. Resolve `workspace_mode` and the intended `interaction_target` first.
-2. Infer the capabilities required by the reasonably planned workflow, including downstream steps the user already requested such as publish, sync, browser validation, or local GUI work.
-3. Inspect only the relevant live connection/capability state. For `local_chrome` or `local_mac_gui`, checking that a transport is connected is not permission to interact with the user's computer; do not inspect tabs/windows or take GUI/browser actions before explicit current-task authorization.
-4. Batch missing connection, explicit computer-use authorization, or setup requests into one user-facing preflight whenever the host supports doing so.
+1. Initialize/read the conversation routing session before capability probing. Resolve all relevant destination axes (`workspace_mode`, `interaction_target`, and, for install/deploy work, `deployment_target`) through the deterministic routing plane, then run the applicable `route-check` for the intended downstream action. A capability observation must never create or mutate routing state.
+2. Infer the capabilities required by the already-selected route and reasonably planned workflow, including downstream steps the user already requested such as publish, sync, Skill install, browser validation, or local GUI work.
+3. Inspect only the relevant live connection/capability state. For `local_chrome` or `local_mac_gui`, checking that a transport is connected is not permission to interact with the user's computer; do not inspect tabs/windows or take GUI/browser actions before explicit current-task authorization. RDC connectivity, a local checkout, or a local Skill directory is capability/host evidence only and must never select `workspace_mode=local` or `deployment_target=local_codex_skill`.
+4. Batch missing connection, explicit computer-use/local-install authorization, or setup requests into one user-facing preflight whenever the host supports doing so.
 5. After required capabilities are available, continue the task without re-asking for capabilities that remain valid.
-6. Re-run preflight only if the workflow expands to a new capability or an already-checked capability becomes unavailable.
+6. Re-run preflight only if the workflow expands to a new capability, the selected route changes through an authorized transition, or an already-checked capability becomes unavailable.
 
 For `local_chrome`, keep `browser_host_health` separate from `browser_session_health`. If the extension/native host is healthy but the current conversation has no Browser executor, classify `SESSION_BROWSER_CAPABILITY_MISSING` and stop Browser execution at that boundary rather than repairing Chrome again or switching to RDC/AppleScript.
 
@@ -19,8 +19,10 @@ Request the capabilities needed by the task, not every integration the host happ
 
 ## Common capability sets
 
-- Web repository edit only: current writable Web workspace; no RDC requirement.
-- Web-mode GitHub publication: Google Drive staging access, GitHub connector access, and the repository's audited Actions prerequisites.
+- Web repository edit only: routing session resolves `workspace_mode=web`; current writable Web workspace; no RDC requirement.
+- Web-mode GitHub publication: routing check allows the Web publication route; Google Drive staging access, GitHub connector access, and the repository's audited Actions prerequisites.
+- ChatGPT Web Skill install/update: on `host_surface=chatgpt_web`, a generic Skill-install intent resolves natively to `deployment_target=chatgpt_web_skill`; use the host-managed Skill surface when available. Do not probe or use RDC merely because a local Codex installation also exists.
+- Local Codex Skill install/update: require an explicit transition to `deployment_target=local_codex_skill` plus current-task local-install authorization before local installation capability is considered. A generic `install` request, RDC connectivity, or `~/.codex/skills` existence is insufficient.
 - Optional cross-conversation persistence: check Google Drive only when the user enabled persistence or made recoverability a requirement. Persistence is off by default; a disconnected Drive must not block ordinary tasks. Credentials remain host-owned.
 - Local repository read/inspection: RDC access plus resolved/authorized `LOCAL_ROOT`; this does not authorize source mutation.
 - Local repository edit: the Local read capabilities plus explicit current-task local-source-mutation authorization.
@@ -44,4 +46,4 @@ If the host requires a fresh approval for a particular sensitive write/action, r
 
 ## Failure behavior
 
-If a required capability cannot be established during preflight, report the missing capability before making unrelated source mutations when practical. Preserve the authoritative workspace and do not silently change `workspace_mode`, interaction transport, publication transport, or trust boundary just to avoid the blocker.
+If a required capability cannot be established during preflight, report the missing capability before making unrelated source mutations when practical. Preserve the authoritative routing state and workspace; do not silently change `workspace_mode`, `interaction_target`, `deployment_target`, publication transport, or trust boundary just to avoid the blocker. Missing capability is not evidence for a route transition.
