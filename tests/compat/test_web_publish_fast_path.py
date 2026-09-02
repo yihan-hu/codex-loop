@@ -13,11 +13,15 @@ def git(root, *args):
     return subprocess.run(["git", *args], cwd=root, text=True, stdout=subprocess.PIPE, check=True).stdout.strip()
 
 
-def init_repo(root):
+def init_repo(root, *, with_fast_workflow=True):
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "t@e"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
     (root / "tracked.txt").write_text("x\n")
+    if with_fast_workflow:
+        workflow = root / ".github" / "workflows" / "workspace-import-fast.yml"
+        workflow.parent.mkdir(parents=True, exist_ok=True)
+        workflow.write_text("name: Fast Import\n")
     subprocess.run(["git", "add", "."], cwd=root, check=True)
     subprocess.run(["git", "commit", "-qm", "init"], cwd=root, check=True)
     return git(root, "rev-parse", "HEAD"), git(root, "rev-parse", "HEAD^{tree}")
@@ -145,6 +149,35 @@ class FastPublishTests(unittest.TestCase):
                 self.assertEqual(plan["fast_path_budget"]["full_bundle_attempts"], 0)
                 self.assertEqual(plan["fast_path_budget"]["production_packaging_steps"], 0)
                 self.assertEqual(plan["fast_path_budget"]["bundle_build_attempts"], 1)
+                self.assertEqual(plan["fast_path_budget"]["workflow_artifact_uploads"], 0)
+                self.assertEqual(plan["workflow_path"], ".github/workflows/workspace-import-fast.yml")
+                self.assertEqual(plan["request_directory"], ".github/fast-import-requests")
+                self.assertEqual(plan["receipt_mode"], "structured_log")
+            finally:
+                self.cleanup(route)
+
+
+    def test_fast_workflow_must_exist_in_remote_base(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            base, base_tree = init_repo(root, with_fast_workflow=False)
+            workflow = root / ".github" / "workflows" / "workspace-import-fast.yml"
+            workflow.parent.mkdir(parents=True, exist_ok=True)
+            workflow.write_text("name: Fast Import\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "add fast importer"], cwd=root, check=True)
+            store = ready_store(root)
+            route = self.route(); self.caps(route["session_id"])
+            try:
+                plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(), verified_tree_fast_path=True)
+                self.assertEqual(plan["mode"], "FULL_VERIFIED_PUBLISH")
+                self.assertFalse(plan["remote_has_fast_import_workflow"])
+                self.assertEqual(plan["bundle_strategy"], "thin_from_remote_head")
+                self.assertIn("fast_import_workflow_not_in_remote_base", plan["fallback_reasons"])
+                self.assertEqual(plan["workflow_path"], ".github/workflows/workspace-import.yml")
+                self.assertEqual(plan["request_directory"], ".github/import-requests")
+                self.assertEqual(plan["receipt_mode"], "artifact")
+                self.assertIn("bootstrap fast importer", plan["next"])
             finally:
                 self.cleanup(route)
 

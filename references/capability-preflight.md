@@ -135,7 +135,7 @@ Persist only non-sensitive host preferences/defaults that the user explicitly wa
 
 Do not persist OAuth tokens, Git credentials, browser cookies, passwords, connector secrets, approval tokens, or a claim that a permission is permanently granted. Connector/RDC/browser permission state remains host-owned.
 
-Within the current task/session, a successful live probe may be reused while the corresponding host capability remains demonstrably live. This is an execution optimization, not a grant and not cross-conversation state.
+Within the current task/session, a successful live probe may be reused while the corresponding host capability remains demonstrably live. The default observation freshness window is four hours so a long repair/publish loop does not redo identical smoke merely because debugging exceeded 30 minutes. This is an execution optimization, not a grant and not cross-conversation state; routing changes or expiry invalidate it, and every real connector action remains host-enforced.
 
 ## Host approval boundary
 

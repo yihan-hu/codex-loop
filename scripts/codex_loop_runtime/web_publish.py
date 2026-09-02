@@ -50,6 +50,11 @@ def _is_local_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
     return probe.returncode == 0
 
 
+def _commit_has_path(root: Path, commit: str, path: str) -> bool:
+    probe = run_git(root, ["cat-file", "-e", f"{commit}:{path}"])
+    return probe.returncode == 0
+
+
 def _validation_fresh(store: Any) -> tuple[bool, dict[str, Any]]:
     generation = store.generation()
     if not bool(store.get_meta("requires_validation", True)):
@@ -248,9 +253,13 @@ def web_publish_plan(
     remote_tree_normalized = str(remote_tree).lower()
     already = remote_head_normalized == head.lower() and remote_tree_normalized == tree.lower()
     remote_is_local_ancestor = _is_local_ancestor(root, remote_head_normalized, head)
+    fast_workflow_path = ".github/workflows/workspace-import-fast.yml"
+    remote_has_fast_workflow = _commit_has_path(root, remote_head_normalized, fast_workflow_path)
     desired_prerequisite = None if already else (remote_head_normalized if remote_is_local_ancestor else None)
     if not already and not remote_is_local_ancestor:
         reasons.append("remote_head_not_local_ancestor")
+    if not already and not remote_has_fast_workflow:
+        reasons.append("fast_import_workflow_not_in_remote_base")
     fast = not reasons
     bundle = _current_bundle_receipt(root, store, prerequisite_commit=desired_prerequisite)
     bundle_strategy = (
@@ -278,6 +287,7 @@ def web_publish_plan(
         "bundle_strategy": bundle_strategy,
         "bundle_build_prerequisite_commit": desired_prerequisite,
         "remote_head_is_local_ancestor": remote_is_local_ancestor,
+        "remote_has_fast_import_workflow": remote_has_fast_workflow,
         "already_published_exactly": already,
         "fast_path_budget": {
             "permission_smoke_probes": 0 if fast else None,
@@ -286,7 +296,11 @@ def web_publish_plan(
             "full_bundle_attempts": 0 if fast and desired_prerequisite else None,
             "production_packaging_steps": 0 if fast else None,
             "bundle_build_attempts": 0 if bundle else (1 if fast else None),
+            "workflow_artifact_uploads": 0 if fast else None,
         },
+        "workflow_path": fast_workflow_path if fast else ".github/workflows/workspace-import.yml",
+        "request_directory": ".github/fast-import-requests" if fast else ".github/import-requests",
+        "receipt_mode": "structured_log" if fast else "artifact",
         "post_push_success_requirement": "read back target branch and require remote commit == audited source commit and remote tree == audited source tree",
         "transport": "google_drive_git_bundle_to_audited_workspace_import",
         "trigger_rewrite_policy": "the import workflow may use force-with-lease only to replace its own single request trigger commit with the audited source commit",
@@ -300,7 +314,13 @@ def web_publish_plan(
                     "stage the exact reusable Git bundle and run audited Workspace Import"
                 )
                 if fast
-                else "refresh only stale gates, then publish"
+                else (
+                    "bootstrap fast importer with standard audited Workspace Import"
+                    if "fast_import_workflow_not_in_remote_base" in reasons and all(
+                        reason == "fast_import_workflow_not_in_remote_base" for reason in reasons
+                    )
+                    else "refresh only stale gates, then publish"
+                )
             )
         ),
     }

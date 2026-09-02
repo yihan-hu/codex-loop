@@ -59,6 +59,15 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("workspace-import-receipt-${{ github.run_id }}", workflow)
         self.assertNotIn("git commit -m 'Import verified ChatGPT workspace source'", workflow)
 
+    def test_fast_import_workflow_omits_artifact_upload_tail(self):
+        workflow = (ROOT / ".github" / "workflows" / "workspace-import-fast.yml").read_text()
+        self.assertIn(".github/fast-import-requests/*.json", workflow)
+        self.assertIn("permissions:\n  contents: write", workflow)
+        self.assertIn("git bundle verify", workflow)
+        self.assertIn("--force-with-lease", workflow)
+        self.assertIn("CODEX_LOOP_FAST_IMPORT_RECEIPT=", workflow)
+        self.assertNotIn("actions/upload-artifact", workflow)
+
     def test_skill_description_stays_within_package_limit(self):
         skill = (ROOT / "SKILL.md").read_text()
         description_line = next(line for line in skill.splitlines() if line.startswith("description: "))

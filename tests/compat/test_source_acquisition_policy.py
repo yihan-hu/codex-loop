@@ -60,6 +60,7 @@ class SourceAcquisitionPolicyTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("paths-ignore:", workflow)
         self.assertIn(".github/import-requests/**", workflow)
+        self.assertIn(".github/fast-import-requests/**", workflow)
         self.assertIn("fetch-depth: 0", workflow)
         self.assertIn("git bundle create", workflow)
         self.assertIn("git bundle verify", workflow)

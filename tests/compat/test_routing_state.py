@@ -184,6 +184,23 @@ class RoutingStateTests(unittest.TestCase):
             self.assertFalse(permission_observation_status(session_id=sid,capability="github_push",scope="repo:owner/repo",now=120)["fresh"])
         finally: self.cleanup(state)
 
+
+    def test_default_permission_observation_ttl_supports_long_publish_loops(self):
+        route = route_init(session_id=self.sid(), host_surface="chatgpt_web")
+        try:
+            item = record_permission_observation(
+                session_id=route["session_id"], capability="github_push",
+                scope="repo:owner/repo", evidence="live probe", now=1000,
+            )
+            self.assertEqual(item["expires_at"] - item["observed_at"], 14400)
+            status = permission_observation_status(
+                session_id=route["session_id"], capability="github_push",
+                scope="repo:owner/repo", now=1000 + 3600,
+            )
+            self.assertTrue(status["fresh"])
+        finally:
+            self.cleanup(route)
+
     def test_github_actions_observation_scope_is_repository_level(self):
         sid = self.sid()
         state = route_init(session_id=sid, host_surface="chatgpt_web")

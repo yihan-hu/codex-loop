@@ -109,7 +109,7 @@ The standard probe semantics are:
 - `google_drive_read`: live list/search/metadata access in the intended Drive scope.
 - `google_drive_write`: create one uniquely named non-sensitive sentinel owned by the preflight, read back its exact ID/metadata, then delete that exact sentinel.
 
-Probe results remain host observations. They may be reused while still live in the current task/session but must never be persisted as permanent authorization or used to bypass a later host-required sensitive-action approval. See `references/capability-preflight.md`.
+Probe results remain host observations. By default they remain fresh for four hours within the same unchanged routing session, so iterative publish loops do not repeat identical smoke solely because debugging took longer than 30 minutes. They must never be persisted as permanent authorization or used to bypass a later host-required sensitive-action approval. See `references/capability-preflight.md`.
 
 ## Adaptive pre-runtime assessment
 

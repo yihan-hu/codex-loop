@@ -867,7 +867,7 @@ def _cmd_permission_preflight_plan(argv: list[str]) -> int:
 
 def _cmd_permission_observation_record(argv: list[str]) -> int:
     p=argparse.ArgumentParser(prog='codex_loop.py permission-observation-record'); p.add_argument('--session-id',required=True)
-    p.add_argument('--capability',required=True,choices=sorted(PERMISSION_PROBE_CAPABILITIES)); p.add_argument('--scope',required=True); p.add_argument('--evidence',required=True); p.add_argument('--ttl-seconds',type=int,default=1800)
+    p.add_argument('--capability',required=True,choices=sorted(PERMISSION_PROBE_CAPABILITIES)); p.add_argument('--scope',required=True); p.add_argument('--evidence',required=True); p.add_argument('--ttl-seconds',type=int,default=14400)
     a=p.parse_args(argv[1:]); emit_ok(record_permission_observation(session_id=a.session_id,capability=a.capability,scope=a.scope,evidence=a.evidence,ttl_seconds=a.ttl_seconds)); return 0
 
 

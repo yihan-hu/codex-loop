@@ -121,14 +121,14 @@ This is not general force-push authorization. The only permitted non-fast-forwar
 
 Before reporting `SOURCE_PUSHED`:
 
-1. require the exact Workflow Import run to complete successfully;
+1. require the exact selected import workflow run to complete successfully;
 2. inspect its job steps/logs for bundle download/hash/verify, source commit/tree verification, ancestry check, bounded lease push, and remote readback;
-3. download and verify the receipt artifact;
-4. require receipt `published_commit == audited source_commit`;
-5. require receipt `published_tree == audited source_tree`;
-6. independently read target branch from GitHub;
-7. require remote commit == audited source commit;
-8. require remote tree == audited source tree.
+3. for `FAST_PUBLISH`, require the one-line `CODEX_LOOP_FAST_IMPORT_RECEIPT=<json>` log receipt from `.github/workflows/workspace-import-fast.yml`; do **not** upload or download receipt/source artifacts for the iterative fast path;
+4. for `FULL_VERIFIED_PUBLISH`, download and verify the ordinary receipt artifact from `.github/workflows/workspace-import.yml`;
+5. require receipt `published_commit == audited source_commit`;
+6. require receipt `published_tree == audited source_tree`;
+7. independently read target branch from GitHub;
+8. require remote commit == audited source commit and remote tree == audited source tree.
 
 Tree-only equivalence is insufficient. A newly generated importer commit is a contract violation under this exact-identity design.
 
@@ -138,7 +138,7 @@ Tree-only equivalence is insufficient. A newly generated importer commit is a co
 
 For an unpublished audited HEAD whose observed remote head is a locally provable ancestor, the plan must return `bundle_strategy=thin_from_remote_head` and `bundle_build_prerequisite_commit=<remote_head>`. Build exactly that one thin bundle. **Do not attempt a full-history bundle first.** A full bundle belongs only to the verified fallback path when the remote head is not locally provable as an ancestor. A reusable bundle receipt is valid for FAST_PUBLISH only when its prerequisite exactly matches the plan; do not reuse a larger full bundle when the plan requires a thin one.
 
-A successful FAST_PUBLISH plan carries a zero-waste budget for gates already proven in this task/session: `permission_smoke_probes=0`, `validation_commands=0`, `change_review_repeats=0`, `full_bundle_attempts=0`, and `production_packaging_steps=0`. The only local transport build may be one thin bundle when an exact matching receipt does not already exist. During iterative performance tuning, keep each intermediate cycle source-only and measure the real publish segment; package/deploy the Skill only after the fast-path acceptance target is met. If the plan reports any fallback reason, refresh only that stale gate and re-plan before transport.
+A successful FAST_PUBLISH plan carries a zero-waste budget for gates already proven in this task/session: `permission_smoke_probes=0`, `validation_commands=0`, `change_review_repeats=0`, `full_bundle_attempts=0`, `production_packaging_steps=0`, and `workflow_artifact_uploads=0`. It selects `.github/workflows/workspace-import-fast.yml`, writes the request under `.github/fast-import-requests/`, and uses a structured log receipt. The only local transport build may be one thin bundle when an exact matching receipt does not already exist. During iterative performance tuning, keep each intermediate cycle source-only and measure the real publish segment; package/deploy the Skill only after the fast-path acceptance target is met. If the plan reports any fallback reason, refresh only that stale gate and re-plan before transport.
 For a push-bound change set, perform the authorized `git add`/index update **before** the final validation and final change review. The workspace freshness model is content-addressed across the subsequent commit when the staged content is unchanged, so that commit must not trigger another validation/review. Staging after validation is a real content-state transition and is therefore intentionally not fast-pathed.
 
 ## Cleanup
