@@ -16,20 +16,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Build source archive
+      - name: Build exact Git workspace bundle
+        shell: bash
         run: |
-          git archive \
-            --format=tar.gz \
-            --output=/tmp/codex-loop-source.tar.gz \
-            HEAD
-          sha256sum /tmp/codex-loop-source.tar.gz
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          tree="$(git rev-parse HEAD^{tree})"
+          ref='refs/heads/codex-loop-workspace-export'
+          git update-ref "$ref" "$commit"
+          git bundle create /tmp/codex-loop-source.bundle "$ref"
+          git update-ref -d "$ref"
+          git bundle verify /tmp/codex-loop-source.bundle
+          size="$(stat -c %s /tmp/codex-loop-source.bundle)"
+          sha="$(sha256sum /tmp/codex-loop-source.bundle | awk '{print $1}')"
+          echo "workspace source commit=$commit tree=$tree ref=$ref size=$size sha256=$sha"
 
-      - name: Upload source artifact
+      - name: Upload exact workspace artifact
         uses: actions/upload-artifact@v4
         with:
           name: codex-loop-source
-          path: /tmp/codex-loop-source.tar.gz
+          path: /tmp/codex-loop-source.bundle
           if-no-files-found: error
           retention-days: 1
