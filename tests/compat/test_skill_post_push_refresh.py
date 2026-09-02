@@ -47,6 +47,18 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.route(),
         )
 
+    def self_install_begin(self, root, commit, repository="owner/repo"):
+        return call(
+            root,
+            "skill-deploy-install-begin",
+            "--skill-name",
+            "codex-loop",
+            "--repository",
+            repository,
+            "--commit",
+            commit,
+        )
+
     def bootstrap(self, root, objective="reconcile deployed skill", criterion=True):
         args = [
             "bootstrap",
@@ -62,7 +74,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         if criterion:
             call(root, "criterion", "--index", "0", "--status", "pass", "--evidence", "fixture criterion")
 
-    def test_handoff_is_planning_only_and_cannot_claim_native_ui(self):
+    def test_handoff_preserves_result_turn_and_install_begin_owns_terminal_turn(self):
         commit = "0123456789abcdef0123456789abcdef01234567"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -76,24 +88,23 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertEqual(data["native_surface_state"], "NATIVE_SURFACE_NOT_OBSERVED")
             self.assertEqual(data["ui_state"], "UI_NOT_OBSERVED")
             self.assertEqual(data["deployment_state"], "DEPLOY_PENDING")
-            self.assertEqual(data["native_handoff_owner"], "skill-creator/host")
-            self.assertEqual(data["required_action"], "invoke_skill_creator_as_final_current_turn_action")
-            self.assertEqual(data["handoff_mode"], "terminal_self_update")
-            self.assertEqual(data["terminal_owner"], "skill-creator/host")
-            self.assertFalse(data["codex_loop_resume_allowed"])
-            self.assertTrue(data["same_turn_codex_loop_followup_forbidden"])
-            self.assertTrue(data["reconcile_on_next_turn"])
-            self.assertEqual(data["next_turn_reconcile_command"], "skill-deploy-resume")
+            self.assertEqual(data["install_state"], "INSTALL_READY")
+            self.assertEqual(data["required_action"], "begin_native_install_in_dedicated_turn")
+            self.assertEqual(data["handoff_mode"], "self_update_install_ready")
+            self.assertIsNone(data["terminal_owner"])
+            self.assertTrue(data["codex_loop_resume_allowed"])
+            self.assertFalse(data["same_turn_codex_loop_followup_forbidden"])
+            self.assertFalse(data["reconcile_on_next_turn"])
+            self.assertEqual(data["next_install_command"], "skill-deploy-install-begin")
             self.assertFalse(data["handoff_is_ui_evidence"])
             self.assertFalse(data["handoff_is_deployment_evidence"])
-            self.assertFalse(data["browser_automation_authorized"])
             self.assertTrue(data["completion_blocking_until_reconciled"])
 
-            blocked, proc = call(root, "completion", check=False)
-            self.assertNotEqual(proc.returncode, 0)
-            self.assertIn("terminal Codex Loop self-update handoff is active", blocked["error"]["message"])
+            # Planning the install must not consume the current response slot or activate the terminal barrier.
+            still_working, _ = call(root, "completion")
+            self.assertEqual(still_working["data"]["status"], "CONTINUE")
 
-            same_turn_surface, proc = call(
+            premature_surface, proc = call(
                 root,
                 "skill-deploy-surface-record",
                 "--skill-name",
@@ -105,11 +116,24 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--surface-kind",
                 "skill_creator_install_ui",
                 "--evidence",
-                "UI flashed in the same turn",
+                "surface was claimed before the dedicated install turn",
                 check=False,
             )
             self.assertNotEqual(proc.returncode, 0)
-            self.assertIn("terminal Codex Loop self-update handoff is active", same_turn_surface["error"]["message"])
+            self.assertIn("only after skill-deploy-install-begin", premature_surface["error"]["message"])
+
+            install_begin, _ = self.self_install_begin(root, commit)
+            install_data = install_begin["data"]
+            self.assertEqual(install_data["install_state"], "INSTALL_TURN_STARTED")
+            self.assertEqual(install_data["handoff_mode"], "terminal_self_update")
+            self.assertEqual(install_data["terminal_owner"], "skill-creator/host")
+            self.assertFalse(install_data["codex_loop_resume_allowed"])
+            self.assertTrue(install_data["same_turn_codex_loop_followup_forbidden"])
+            self.assertTrue(install_data["reconcile_on_next_turn"])
+
+            blocked, proc = call(root, "completion", check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("terminal Codex Loop self-update handoff is active", blocked["error"]["message"])
 
     def test_native_surface_and_deployment_are_separate_observed_states(self):
         commit = "0123456789abcdef0123456789abcdef01234567"
@@ -118,6 +142,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root)
             handoff, _ = self.self_handoff(root, commit)
+            self.self_install_begin(root, commit)
             resumed, _ = call(
                 root,
                 "skill-deploy-resume",
@@ -196,6 +221,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root, criterion=False)
             self.self_handoff(root, commit)
+            self.self_install_begin(root, commit)
             call(
                 root,
                 "skill-deploy-resume",
@@ -232,6 +258,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root, criterion=False)
             self.self_handoff(root, commit)
+            self.self_install_begin(root, commit)
             call(
                 root,
                 "skill-deploy-resume",
@@ -296,6 +323,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root, criterion=False)
             self.self_handoff(root, commit)
+            self.self_install_begin(root, commit)
             out, proc = call(
                 root,
                 "skill-deploy-resume",
@@ -327,6 +355,10 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             )
             call(
                 root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo",
+                "--commit", commit, "--routing-session-id", sid,
+            )
+            call(
+                root, "skill-deploy-install-begin", "--skill-name", "codex-loop", "--repository", "owner/repo",
                 "--commit", commit, "--routing-session-id", sid,
             )
             resumed, _ = call(
@@ -377,6 +409,8 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         self.assertIn("handoff itself is not UI evidence", skill)
         self.assertIn("Native Skill update surface", deployment)
         self.assertIn("Codex Loop must never emulate", deployment)
+        self.assertIn("skill-deploy-install-begin", deployment)
+        self.assertIn("INSTALL_READY", deployment)
         self.assertIn("skill-deploy-resume", deployment)
         self.assertIn("--same-conversation-observed", deployment)
         self.assertIn("routing_session_id", deployment)
@@ -389,6 +423,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         self.assertIn("terminal self-update", deployment)
         self.assertIn("skill-creator", deployment)
         self.assertIn("UI_SURFACED", runtime)
+        self.assertIn("skill-deploy-install-begin", runtime)
         self.assertIn("skill-deploy-resume", runtime)
         self.assertIn("active workspace Skill", completion)
         self.assertIn("terminal handoff", completion)

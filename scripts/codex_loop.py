@@ -130,6 +130,7 @@ HOST_ADAPTER_COMMANDS = (
     ('workspace-remove', 'remove a private host workspace alias'),
     ('workspace-sync-offer', 'prepare an exact-revision workspace sync offer'),
     ('skill-deploy-handoff', 'plan native current-workspace Skill update reconciliation'),
+    ('skill-deploy-install-begin', 'begin a dedicated terminal Codex Loop self-update install turn'),
     ('skill-deploy-resume', 'release a terminal Codex Loop self-update barrier on a later host turn'),
     ('skill-deploy-surface-record', 'record an actually observed native Skill update/install surface'),
     ('skill-deploy-complete', 'record observed activation of the intended Skill revision'),
@@ -563,14 +564,19 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         if routing_session_id is None:
             raise ValueError(
                 'Codex Loop self-update handoff requires --routing-session-id (or CODEX_LOOP_SESSION_ID) so '
-                'same-conversation Web publish capability observations can survive the terminal handoff'
+                'same-conversation Web publish capability observations can survive the later dedicated install turn'
             )
         routing_snapshot = route_show(session_id=routing_session_id)
     planned_details = {
-        'handoff_mode': 'terminal_self_update' if is_self_update else 'native_skill_update',
-        'terminal_owner': 'skill-creator/host' if is_self_update else None,
-        'reconcile_on_next_turn': bool(is_self_update),
-        'same_turn_codex_loop_resume_allowed': False if is_self_update else None,
+        'handoff_mode': 'self_update_install_ready' if is_self_update else 'native_skill_update',
+        'terminal_owner': None,
+        'install_turn_started': False if is_self_update else None,
+        'reconcile_on_next_turn': False,
+        'same_turn_codex_loop_resume_allowed': True,
+        'routing_session_id': routing_session_id,
+        'routing_generation': routing_snapshot.get('generation') if routing_snapshot else None,
+        'routing_host_surface': routing_snapshot.get('host_surface') if routing_snapshot else None,
+        'routing_workspace_mode': routing_snapshot.get('workspace_mode') if routing_snapshot else None,
     }
     action_id = store.record_external(
         'chatgpt_skill_update',
@@ -597,21 +603,7 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         native_surface_state = 'NATIVE_SURFACE_NOT_OBSERVED'
         ui_state = 'UI_NOT_OBSERVED'
         deployment_state = 'DEPLOY_PENDING'
-    terminal_handoff_active = bool(is_self_update and action_state == 'planned')
-    if terminal_handoff_active:
-        store.set_meta(_SELF_UPDATE_BARRIER_KEY, {
-            'active': True,
-            'skill_name': skill_name,
-            'repository': repository,
-            'commit': commit,
-            'identity': identity,
-            'external_action_id': action_id,
-            'terminal_owner': 'skill-creator/host',
-            'routing_session_id': routing_session_id,
-            'routing_generation': routing_snapshot.get('generation') if routing_snapshot else None,
-            'routing_host_surface': routing_snapshot.get('host_surface') if routing_snapshot else None,
-            'routing_workspace_mode': routing_snapshot.get('workspace_mode') if routing_snapshot else None,
-        })
+    install_ready = bool(is_self_update and action_state == 'planned' and not action_details.get('install_turn_started'))
     emit_ok({
         'skill_name': skill_name,
         'repository': repository,
@@ -621,18 +613,19 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'native_surface_state': native_surface_state,
         'ui_state': ui_state,
         'deployment_state': deployment_state,
+        'install_state': 'INSTALL_READY' if install_ready else None,
         'target': 'current_chatgpt_workspace_skill',
         'native_handoff_owner': 'skill-creator/host',
-        'required_action': 'invoke_skill_creator_as_final_current_turn_action' if terminal_handoff_active else 'invoke_skill_creator_or_equivalent_native_skill_update_flow',
+        'required_action': 'begin_native_install_in_dedicated_turn' if install_ready else 'invoke_skill_creator_or_equivalent_native_skill_update_flow',
         'host_managed_alternative': 'supported_host_managed_skill_update',
-        'handoff_mode': 'terminal_self_update' if terminal_handoff_active else 'native_skill_update',
-        'terminal_owner': 'skill-creator/host' if terminal_handoff_active else None,
-        'codex_loop_resume_allowed': False if terminal_handoff_active else True,
-        'same_turn_codex_loop_followup_forbidden': terminal_handoff_active,
-        'reconcile_on_next_turn': terminal_handoff_active,
-        'next_turn_reconcile_command': 'skill-deploy-resume' if terminal_handoff_active else None,
-        'routing_session_continuity_required': terminal_handoff_active,
-        'routing_session_id': routing_session_id if terminal_handoff_active else None,
+        'handoff_mode': 'self_update_install_ready' if install_ready else 'native_skill_update',
+        'terminal_owner': None,
+        'codex_loop_resume_allowed': True,
+        'same_turn_codex_loop_followup_forbidden': False,
+        'reconcile_on_next_turn': False,
+        'next_install_command': 'skill-deploy-install-begin' if install_ready else None,
+        'routing_session_continuity_required': install_ready,
+        'routing_session_id': routing_session_id if install_ready else None,
         'handoff_is_ui_evidence': False,
         'handoff_is_deployment_evidence': False,
         'browser_automation_authorized': False,
@@ -642,6 +635,86 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
     })
     return 0
 
+
+def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
+    args, skill_name, repository, commit = _parse_skill_deploy_args(argv, include_routing_session=True)
+    if skill_name != 'codex-loop':
+        raise ValueError('skill-deploy-install-begin is reserved for Codex Loop self-update')
+    _cwd_path, _root, store = _scope_from_argv(argv)
+    store.ensure_active()
+    identity = _skill_deploy_identity(skill_name, commit)
+    action = _skill_deploy_action(store, identity)
+    if action['state'] != 'planned':
+        raise ValueError(f"Codex Loop install turn can begin only while deployment is planned; current state is {action['state']}")
+    if _self_update_barrier(store) is not None:
+        raise ValueError('a terminal Codex Loop self-update install turn is already active')
+    prior_details = json.loads(action['details_json']) if action.get('details_json') else {}
+    if prior_details.get('install_turn_started') is True:
+        raise ValueError('the Codex Loop self-update install turn has already been started for this revision')
+    routing_session_id = (
+        args.routing_session_id
+        or prior_details.get('routing_session_id')
+        or os.environ.get('CODEX_LOOP_SESSION_ID')
+        or ''
+    ).strip() or None
+    if routing_session_id is None:
+        raise ValueError('Codex Loop install turn requires the routing session captured by skill-deploy-handoff')
+    captured = str(prior_details.get('routing_session_id') or '').strip() or None
+    if captured is not None and captured != routing_session_id:
+        raise ValueError('install turn routing session does not match the session captured by skill-deploy-handoff')
+    routing_snapshot = route_show(session_id=routing_session_id)
+    updated_details = dict(prior_details)
+    updated_details.update({
+        'handoff_mode': 'terminal_self_update',
+        'terminal_owner': 'skill-creator/host',
+        'install_turn_started': True,
+        'reconcile_on_next_turn': True,
+        'same_turn_codex_loop_resume_allowed': False,
+        'routing_session_id': routing_session_id,
+        'routing_generation': routing_snapshot.get('generation'),
+        'routing_host_surface': routing_snapshot.get('host_surface'),
+        'routing_workspace_mode': routing_snapshot.get('workspace_mode'),
+    })
+    store.record_external(
+        'chatgpt_skill_update',
+        'planned',
+        identity,
+        details=updated_details,
+        action_class='external_non_idempotent',
+        action_id=action['action_id'],
+    )
+    store.set_meta(_SELF_UPDATE_BARRIER_KEY, {
+        'active': True,
+        'skill_name': skill_name,
+        'repository': repository,
+        'commit': commit,
+        'identity': identity,
+        'external_action_id': action['action_id'],
+        'terminal_owner': 'skill-creator/host',
+        'routing_session_id': routing_session_id,
+        'routing_generation': routing_snapshot.get('generation'),
+        'routing_host_surface': routing_snapshot.get('host_surface'),
+        'routing_workspace_mode': routing_snapshot.get('workspace_mode'),
+    })
+    emit_ok({
+        'skill_name': skill_name,
+        'repository': repository,
+        'commit': commit,
+        'source_state': 'SOURCE_PUSHED',
+        'deployment_state': 'DEPLOY_PENDING',
+        'install_state': 'INSTALL_TURN_STARTED',
+        'handoff_mode': 'terminal_self_update',
+        'terminal_owner': 'skill-creator/host',
+        'required_action': 'invoke_skill_creator_as_final_current_turn_action',
+        'codex_loop_resume_allowed': False,
+        'same_turn_codex_loop_followup_forbidden': True,
+        'reconcile_on_next_turn': True,
+        'next_turn_reconcile_command': 'skill-deploy-resume',
+        'routing_session_continuity_required': True,
+        'routing_session_id': routing_session_id,
+        'external_action_id': action['action_id'],
+    })
+    return 0
 
 def _cmd_skill_deploy_resume(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py skill-deploy-resume')
@@ -691,6 +764,21 @@ def _cmd_skill_deploy_resume(argv: list[str]) -> int:
             routing_session_reuse_reason = 'exact_handoff_routing_session_reused'
         else:
             routing_session_reuse_reason = 'handoff_did_not_capture_routing_session'
+    prior_details = json.loads(action['details_json']) if action.get('details_json') else {}
+    prior_details.update({
+        'install_turn_started': True,
+        'install_turn_resumed': True,
+        'reconcile_on_next_turn': False,
+        'same_turn_codex_loop_resume_allowed': True,
+    })
+    store.record_external(
+        'chatgpt_skill_update',
+        action['state'],
+        identity,
+        details=prior_details,
+        action_class='external_non_idempotent',
+        action_id=action['action_id'],
+    )
     store.set_meta(_SELF_UPDATE_BARRIER_KEY, None)
     emit_ok({
         'skill_name': skill_name,
@@ -723,6 +811,9 @@ def _cmd_skill_deploy_surface_record(argv: list[str]) -> int:
     store.ensure_active()
     identity = _skill_deploy_identity(skill_name, commit)
     action = _skill_deploy_action(store, identity)
+    action_details = json.loads(action['details_json']) if action.get('details_json') else {}
+    if skill_name == 'codex-loop' and action_details.get('install_turn_started') is not True:
+        raise ValueError('Codex Loop native surface may be recorded only after skill-deploy-install-begin starts the dedicated install turn')
     if action['state'] not in {'planned', 'dispatched'}:
         raise ValueError(f"Skill deployment action is already {action['state']}; native surface cannot be newly recorded")
     action_id = store.record_external(
@@ -1287,6 +1378,8 @@ def main() -> int:
             return _cmd_workspace_sync_offer(argv)
         if argv[0] == 'skill-deploy-handoff':
             return _cmd_skill_deploy_handoff(argv)
+        if argv[0] == 'skill-deploy-install-begin':
+            return _cmd_skill_deploy_install_begin(argv)
         if argv[0] == 'skill-deploy-resume':
             return _cmd_skill_deploy_resume(argv)
         if argv[0] == 'skill-deploy-surface-record':

@@ -112,13 +112,24 @@ python3 scripts/codex_loop.py skill-deploy-handoff \
   --routing-session-id ROUTING_SESSION  # required for codex-loop self-update
 ```
 
-The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. It returns `NATIVE_UPDATE_REQUIRED`, `NATIVE_SURFACE_NOT_OBSERVED`, `UI_NOT_OBSERVED`, and `DEPLOY_PENDING`. Those values are deliberately completion-blocking. Repeated handoff calls for the same Skill/commit deduplicate to the same action. For `skill-name=codex-loop`, it additionally returns `handoff_mode=terminal_self_update`, `terminal_owner=skill-creator/host`, `codex_loop_resume_allowed=false`, and `reconcile_on_next_turn=true`, and installs a runtime barrier against further Codex Loop commands in that turn.
-For self-update, the active routing session is captured only in the private terminal barrier so the next turn in the same conversation can resume that exact route and reuse still-fresh exact-scope capability observations. It is continuity state, not permission or deployment evidence.
+The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. It returns `NATIVE_UPDATE_REQUIRED`, `NATIVE_SURFACE_NOT_OBSERVED`, `UI_NOT_OBSERVED`, and `DEPLOY_PENDING`. Those values are deliberately completion-blocking. Repeated handoff calls for the same Skill/commit deduplicate to the same action. For `skill-name=codex-loop`, it additionally returns `INSTALL_READY`, `handoff_mode=self_update_install_ready`, and `next_install_command=skill-deploy-install-begin`; **no terminal barrier is active yet**. The terminal barrier begins only when `skill-deploy-install-begin` is called in an install-only turn.
+For self-update, the active routing session is captured in private task-local deployment state at `INSTALL_READY`, then copied into the terminal barrier only when `skill-deploy-install-begin` starts the install-only turn. It is continuity state, not permission or deployment evidence.
 
 Resolve the handoff in this order:
 
-1. For a Skill creation/update task, invoke the platform `skill-creator` workflow with the validated package/source generation bound to the same pushed commit. If the host has an explicitly supported native host-managed update primitive, it may be used instead. Do not replace either with assistant-authored instructions that merely tell the user to click Save/Update. **For Codex Loop updating itself, this invocation is the final action of the current turn.** Do not execute another Codex Loop command and do not append a Codex Loop closing/status message after the native surface is initiated.
-2. For a Codex Loop self-update, wait for a later user/host turn before reconciliation. At the start of that later turn, release the terminal barrier:
+1. For a Codex Loop self-update, treat `skill-deploy-handoff` as result-preserving planning only. It returns `INSTALL_READY` and **must not activate the terminal barrier**. If the current turn also contains publication, validation, review, benchmark, or other substantive results, finish that turn with the complete user-visible result and leave deployment at `DEPLOY_PENDING`. Do not initiate the native install surface in that result-bearing turn.
+2. On a later install-only turn, start the terminal boundary explicitly:
+
+```bash
+python3 scripts/codex_loop.py skill-deploy-install-begin \
+  --cwd REPO \
+  --skill-name codex-loop \
+  --repository OWNER/REPO \
+  --commit FULL_40_HEX_SHA
+```
+
+   Then invoke the platform `skill-creator` workflow with the validated package/source generation bound to the same pushed commit. If the host has an explicitly supported native host-managed update primitive, it may be used instead. Do not replace either with assistant-authored instructions that merely tell the user to click Save/Update. Once `skill-deploy-install-begin` has activated the terminal barrier, the native installer is the final owner of that install-only turn and no later Codex Loop command is allowed.
+3. For a Codex Loop self-update, wait for a later user/host turn before reconciliation. At the start of that later turn, release the terminal barrier:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-resume \
@@ -132,7 +143,7 @@ python3 scripts/codex_loop.py skill-deploy-resume \
 ```
 
    `skill-deploy-resume` is a turn-boundary acknowledgement, not UI or deployment evidence. With `--same-conversation-observed`, reuse the returned `routing_session_id` and do not call `route-init` again; still-fresh scoped capability observations remain eligible for FAST_PUBLISH reuse. In a genuinely new conversation, omit that flag and initialize a new route. This preserves both terminal UI ownership and publish performance.
-3. Only after the later-turn resume (for self-update) and after the host actually exposes/initiates that native Skill surface, record the observation:
+4. Only after the later-turn resume (for self-update) and after the host actually exposes/initiates that native Skill surface, record the observation:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-surface-record \
@@ -145,7 +156,7 @@ python3 scripts/codex_loop.py skill-deploy-surface-record \
 ```
 
    This advances the external action to `dispatched` and returns `NATIVE_SURFACE_OBSERVED` plus `UI_SURFACED`; deployment is still `DEPLOY_PENDING`. For a truly host-managed update that requires no UI, use `--surface-kind host_managed_update`, which records `UI_NOT_REQUIRED` rather than pretending UI was shown.
-4. Only after host-visible evidence shows the intended revision is active, record deployment completion:
+5. Only after host-visible evidence shows the intended revision is active, record deployment completion:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-complete \
@@ -157,9 +168,9 @@ python3 scripts/codex_loop.py skill-deploy-complete \
 ```
 
    `skill-deploy-complete` refuses to run while the action is merely `planned`; a native surface must have actually been dispatched/observed first.
-5. If no native update/install surface can be invoked or observed, leave the action unresolved and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED`. Do not downgrade this into a closing note and do not call the task deployed.
+6. If no native update/install surface can be invoked or observed, leave the action unresolved and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED`. Do not downgrade this into a closing note and do not call the task deployed.
 
-`SOURCE_PUSHED`, `SKILL_PACKAGED`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored Save/Update instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence. For Codex Loop self-update, the native install surface is also a **terminal ownership boundary for the current turn**: the next Codex Loop lifecycle action belongs to a later host turn and starts with `skill-deploy-resume`.
+`SOURCE_PUSHED`, `SKILL_PACKAGED`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored Save/Update instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence. For Codex Loop self-update, `INSTALL_READY` is a separate pre-terminal state: the result-bearing turn remains normal. Only `skill-deploy-install-begin` creates the **terminal ownership boundary** for the install-only turn; the next Codex Loop lifecycle action after that boundary belongs to a later host turn and starts with `skill-deploy-resume`.
 
 ### Same-name native update surface diagnosis
 
