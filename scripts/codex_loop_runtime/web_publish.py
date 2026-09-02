@@ -116,12 +116,21 @@ def build_web_publish_bundle(
         prerequisite = str(prerequisite_commit).strip().lower()
         if len(prerequisite) != 40 or any(c not in "0123456789abcdef" for c in prerequisite):
             raise ValueError("Web publish bundle prerequisite must be full 40-hex")
-        direct_parent = run_git(root, ["rev-parse", f"{head}^"])
-        direct_parent_sha = direct_parent.stdout.decode("utf-8", errors="replace").strip() if direct_parent.returncode == 0 else ""
-        if direct_parent_sha != prerequisite:
+        cursor = head
+        first_parent_match = False
+        for _ in range(256):
+            parent_probe = run_git(root, ["rev-parse", f"{cursor}^"])
+            if parent_probe.returncode != 0:
+                break
+            parent_sha = parent_probe.stdout.decode("utf-8", errors="replace").strip()
+            if parent_sha == prerequisite:
+                first_parent_match = True
+                break
+            cursor = parent_sha
+        if not first_parent_match:
             ancestor = run_git(root, ["merge-base", "--is-ancestor", prerequisite, head])
             if ancestor.returncode != 0:
-                raise RuntimeError("Web publish bundle prerequisite must be a directly observed parent or a provable ancestor of audited HEAD")
+                raise RuntimeError("Web publish bundle prerequisite must be a locally provable ancestor of audited HEAD")
     bundle_ref = f"refs/heads/codex-loop-publish-{uuid.uuid4().hex}"
     output.parent.mkdir(parents=True, exist_ok=True)
     update = run_git(root, ["update-ref", bundle_ref, head])
