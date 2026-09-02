@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "transfer_id": "functional-update-bridge-20260902-1218-c756bdc6",
-  "file_id": "1D5XYtA4i8IAFN7I4Yqv_vN8B1I1polTw",
-  "size": 315386,
-  "sha256": "c756bdc60100e559c5383c7b6132f7a5cd6e030340894b555cbe646232a50ec0",
-  "expected_base": "1701aba7196421ee0b2cfb95e48608110485862c",
-  "target_branch": "main"
-}

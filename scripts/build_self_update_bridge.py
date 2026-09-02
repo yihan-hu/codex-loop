@@ -3,8 +3,8 @@
 
 The bridge is intentionally generated outside the Codex Loop Skill tree because a
 Skill package may contain only one SKILL.md entrypoint. Keep this bridge minimal:
-its purpose is to establish a stable different-name Skill execution identity for a
-later host-native Codex Loop update turn, not to embed updater logic in the package.
+its purpose is to establish a stable different-name Skill execution identity and
+perform only the final host-native presentation of an already-validated canonical package.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ description: "Minimal explicit-only recovery helper used to verify the stable di
 
 # Codex Loop Update Bridge
 
-Respond with exactly: `UPDATE_BRIDGE_ACTIVE` when this Skill is explicitly invoked.
+When explicitly invoked to continue a proven Codex Loop recovery, require an already-validated canonical `codex-loop` `skill.zip` in the current conversation. Present that exact package through the host-native Skill update surface, then end the turn immediately. Do not invoke Codex Loop and do not edit, repackage, rename, or substitute the canonical package.
 '''
 
 OPENAI_YAML = '''interface:
