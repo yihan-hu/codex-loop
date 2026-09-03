@@ -6,7 +6,12 @@ from pathlib import Path
 
 from scripts.codex_loop_runtime.routing_state import route_init, record_permission_observation
 from scripts.codex_loop_runtime.state import StateStore
-from scripts.codex_loop_runtime.web_publish import build_web_publish_bundle, web_publish_plan
+from scripts.codex_loop_runtime.web_publish import (
+    begin_web_publish_continuation,
+    build_web_publish_bundle,
+    publish_continuation_state,
+    web_publish_plan,
+)
 
 
 def git(root, *args):
@@ -70,6 +75,57 @@ class FastPublishTests(unittest.TestCase):
             finally:
                 self.cleanup(route)
 
+    def test_publish_only_continuation_freezes_fresh_evidence_for_fast_publish(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            base, base_tree = init_repo(root)
+            (root / "second.txt").write_text("second\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "second"], cwd=root, check=True)
+            store = ready_store(root)
+            route = self.route(); self.caps(route["session_id"])
+            try:
+                continuation = begin_web_publish_continuation(
+                    root, store, repository="owner/repo", branch="main"
+                )
+                self.assertTrue(continuation["active"])
+                self.assertTrue(continuation["validation_reused"])
+                self.assertTrue(continuation["review_reused"])
+                self.assertTrue(continuation["revalidation_forbidden"])
+                self.assertFalse(continuation["semantic_plan_change"])
+                self.assertTrue(publish_continuation_state(store)["active"])
+                plan = web_publish_plan(
+                    root, store, session_id=route["session_id"], repository="owner/repo",
+                    branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(),
+                )
+                self.assertEqual(plan["mode"], "FAST_PUBLISH")
+                self.assertTrue(plan["publish_continuation"]["active"])
+                self.assertTrue(plan["redundant_validation_forbidden"])
+                self.assertEqual(plan["fast_path_budget"]["validation_commands"], 0)
+            finally:
+                self.cleanup(route)
+
+    def test_fast_publish_is_the_function_default(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            base, base_tree = init_repo(root)
+            (root / "second.txt").write_text("second\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "second"], cwd=root, check=True)
+            store = ready_store(root)
+            route = self.route(); self.caps(route["session_id"])
+            try:
+                plan = web_publish_plan(
+                    root, store, session_id=route["session_id"], repository="owner/repo",
+                    branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(),
+                )
+                self.assertEqual(plan["mode"], "FAST_PUBLISH")
+                self.assertEqual(plan["planner_default"], "FAST_PUBLISH")
+                self.assertFalse(plan["standard_publish_explicitly_selected"])
+                self.assertEqual(plan["workflow_path"], ".github/workflows/workspace-import-fast.yml")
+            finally:
+                self.cleanup(route)
+
     def test_dirty_workspace_fails_closed_for_direct_fast_publish(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
@@ -94,7 +150,7 @@ class FastPublishTests(unittest.TestCase):
             finally:
                 self.cleanup(route)
 
-    def test_fast_publish_stale_gate_fails_closed_without_design_repair_or_fallback(self):
+    def test_fast_publish_stale_gate_refreshes_only_missing_fast_gates(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             base, base_tree = init_repo(root)
@@ -104,16 +160,26 @@ class FastPublishTests(unittest.TestCase):
             store = ready_store(root)
             route = self.route()
             try:
-                plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(), verified_tree_fast_path=True)
-                self.assertEqual(plan["mode"], "FAIL_CLOSED")
-                self.assertTrue(plan["fail_closed"])
+                plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes())
+                self.assertEqual(plan["mode"], "FAST_PUBLISH_REFRESH_REQUIRED")
+                self.assertFalse(plan["fail_closed"])
                 self.assertFalse(plan["design_repair_required"])
-                self.assertTrue(plan["fallback_allowed"])
+                self.assertFalse(plan["fallback_allowed"])
                 self.assertEqual(plan["recommended_recovery"], "retry_fast")
+                self.assertEqual(plan["planner_default"], "FAST_PUBLISH")
+                self.assertTrue(plan["fast_path_refresh_required"])
                 self.assertEqual(plan["surprise_reasons"], [])
-                self.assertIn("capability_observations_not_fresh", plan["fallback_reasons"])
+                self.assertEqual(
+                    plan["required_refresh_actions"],
+                    [
+                        "refresh_capability:github_push",
+                        "refresh_capability:github_actions",
+                        "refresh_capability:google_drive_write",
+                    ],
+                )
+                self.assertIn("workspace-import.yml", plan["forbidden_before_fast_retry"])
                 self.assertIsNone(plan["workflow_path"])
-                self.assertIn("recommended=retry_fast", plan["next"])
+                self.assertIn("refresh only required_refresh_actions", plan["next"])
             finally:
                 self.cleanup(route)
 

@@ -73,6 +73,20 @@ class CliSmokeTests(unittest.TestCase):
       call(root,'publish-dispatch','--action-id',action,'--transport','git')
       out,_=call(root,'publish-record','--action-id',action,'--state','terminal_success','--transport','git','--remote-commit',target,'--remote-tree',target_tree,'--evidence','native git remote commit/tree readback matched'); self.assertEqual(out['data']['state'],'terminal_success')
 
+  def test_publish_only_continuation_rejects_redundant_validation_until_content_changes(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); subprocess.run(['git','config','user.name','Test User'],cwd=root,check=True); subprocess.run(['git','config','user.email','test@example.com'],cwd=root,check=True)
+      (root/'a.txt').write_text('base'); subprocess.run(['git','add','a.txt'],cwd=root,check=True); subprocess.run(['git','commit','-qm','base'],cwd=root,check=True)
+      call(root,'bootstrap','--objective','prepare then publish','--criterion','source is ready','--no-validation','--no-validation-reason','fixture has no executable workload')
+      call(root,'changes','--review')
+      started,_=call(root,'web-publish-continuation-begin','--repository','owner/repo','--branch','main')
+      self.assertTrue(started['data']['active']); self.assertTrue(started['data']['revalidation_forbidden'])
+      blocked,p=call(root,'validate','--','pytest','-q',check=False)
+      self.assertNotEqual(p.returncode,0); self.assertIn('redundant validation is forbidden',blocked['error']['message'])
+      (root/'a.txt').write_text('changed')
+      allowed,_=call(root,'validate','--','pytest','-q')
+      self.assertTrue(allowed['data']['requires_host_visible_execution'])
+
   def test_connector_publish_commands_are_not_exposed(self):
     for command in (
       "publish-transfer-start", "publish-transfer-status", "publish-transfer-ack", "publish-transfer-tree-ack",

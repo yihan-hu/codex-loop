@@ -11,6 +11,7 @@ from .routing_state import permission_observation_status, route_show
 from .workspace import git_head, git_status_porcelain_z, run_git
 
 WEB_PUBLISH_CAPABILITIES = ("github_push", "github_actions", "google_drive_write")
+_PUBLISH_CONTINUATION_META = "web_publish_continuation"
 _BUNDLE_REF_RE = re.compile(r"^refs/heads/codex-loop-publish-[0-9a-f]{32}$")
 
 
@@ -79,6 +80,73 @@ def _review_fresh(store: Any) -> tuple[bool, dict[str, Any]]:
         "generation": generation,
         "required": True,
         "reviewed_generation": store.get_meta("changes_reviewed_generation", -1),
+    }
+
+
+def publish_continuation_state(store: Any) -> dict[str, Any]:
+    generation = store.generation()
+    raw = store.get_meta(_PUBLISH_CONTINUATION_META)
+    if not isinstance(raw, dict):
+        return {
+            "active": False,
+            "generation": generation,
+            "reason": "not_started",
+            "revalidation_forbidden": False,
+        }
+    recorded_generation = int(raw.get("generation", -1))
+    ready = bool(raw.get("ready", False))
+    active = ready and recorded_generation == generation
+    return {
+        **raw,
+        "active": active,
+        "generation": generation,
+        "recorded_generation": recorded_generation,
+        "reason": "fresh_publish_only_continuation" if active else "stale_or_not_ready",
+        "revalidation_forbidden": bool(active and raw.get("revalidation_forbidden", False)),
+    }
+
+
+def begin_web_publish_continuation(
+    root: Path, store: Any, *, repository: str, branch: str
+) -> dict[str, Any]:
+    """Freeze a publish-only continuation onto fresh content evidence.
+
+    A terse push/publish request after source work is delivery intent, not a semantic
+    objective steer. If the workspace is clean and validation/review are already fresh,
+    later validation planning is rejected until content changes.
+    """
+    root = root.resolve()
+    store.ensure_active()
+    sync_generation(root, store)
+    clean = _workspace_clean(root)
+    validation_ok, validation = _validation_fresh(store)
+    review_ok, review = _review_fresh(store)
+    generation = store.generation()
+    ready = bool(clean and validation_ok and review_ok)
+    state = {
+        "version": 1,
+        "kind": "publish_only",
+        "repository": str(repository).strip(),
+        "branch": str(branch).strip(),
+        "generation": generation,
+        "ready": ready,
+        "workspace_clean": clean,
+        "validation_reused": bool(validation_ok and clean),
+        "review_reused": bool(review_ok and clean),
+        "revalidation_forbidden": ready,
+        "semantic_plan_change": False,
+    }
+    store.set_meta(_PUBLISH_CONTINUATION_META, state)
+    return {
+        **state,
+        "active": ready,
+        "validation": validation,
+        "review": review,
+        "next": (
+            "observe the exact remote head/tree and scoped capability freshness, then run web-publish-plan; do not run validation again"
+            if ready
+            else "refresh only the stale publish gate(s), then begin the publish-only continuation again"
+        ),
     }
 
 
@@ -205,7 +273,7 @@ def web_publish_plan(
     remote_head: str,
     remote_tree: str,
     capability_scopes: dict[str, str],
-    verified_tree_fast_path: bool = False,
+    verified_tree_fast_path: bool = True,
 ) -> dict[str, Any]:
     root = root.resolve()
     store.ensure_active()
@@ -221,6 +289,7 @@ def web_publish_plan(
     head, tree = _head_tree(root)
     validation_ok, validation = _validation_fresh(store)
     review_ok, review = _review_fresh(store)
+    continuation = publish_continuation_state(store)
     cap_status: dict[str, Any] = {}
     fresh: list[str] = []
     all_fresh = True
@@ -274,7 +343,19 @@ def web_publish_plan(
         if reason not in refreshable_reasons
         and reason != "verified_tree_fast_path_not_requested"
     ]
-    fail_closed = bool(verified_tree_fast_path and reasons and (not already or not clean))
+    refresh_required = bool(
+        verified_tree_fast_path
+        and reasons
+        and not surprise_reasons
+        and clean
+        and not already
+    )
+    fail_closed = bool(
+        verified_tree_fast_path
+        and reasons
+        and not refresh_required
+        and (not already or not clean)
+    )
     design_repair_required = bool(fail_closed and surprise_reasons)
     bundle = _current_bundle_receipt(root, store, prerequisite_commit=desired_prerequisite)
     bundle_strategy = (
@@ -282,7 +363,9 @@ def web_publish_plan(
         "thin_from_remote_head" if desired_prerequisite else
         "full_verified_bundle"
     )
-    if fail_closed:
+    if refresh_required:
+        mode = "FAST_PUBLISH_REFRESH_REQUIRED"
+    elif fail_closed:
         mode = "FAIL_CLOSED"
     elif already:
         mode = "ALREADY_PUBLISHED"
@@ -312,8 +395,23 @@ def web_publish_plan(
         if mode == "FULL_VERIFIED_PUBLISH"
         else None
     )
+    stale_capabilities = [
+        capability
+        for capability, status in cap_status.items()
+        if not status.get("fresh")
+    ]
+    required_refresh_actions: list[str] = []
+    if "validation_not_fresh" in reasons:
+        required_refresh_actions.append("refresh_validation_only")
+    if "change_review_not_fresh" in reasons:
+        required_refresh_actions.append("refresh_change_review_only")
+    if "capability_observations_not_fresh" in reasons:
+        required_refresh_actions.extend(
+            f"refresh_capability:{capability}" for capability in stale_capabilities
+        )
+
     recovery_options: list[dict[str, Any]] = []
-    recommended_recovery = None
+    recommended_recovery = "retry_fast" if refresh_required else None
     if fail_closed:
         standard_ready_now = bool(clean and validation_ok and review_ok and all_fresh and remote_has_standard_workflow)
         recovery_options = [
@@ -323,7 +421,7 @@ def web_publish_plan(
                 "requires_explicit_user_selection": False,
                 "ready_now": not bool(surprise_reasons),
                 "requirements": ["refresh stale gates" if not surprise_reasons else "repair fast-path structural blocker before retry"],
-                "next": "re-plan with --verified-tree-fast-path",
+                "next": "re-run web-publish-plan; FAST_PUBLISH is the default",
             },
             {
                 "id": "standard_web",
@@ -332,7 +430,7 @@ def web_publish_plan(
                 "ready_now": standard_ready_now,
                 "requirements": (["remote audited .github/workflows/workspace-import.yml"] if not remote_has_standard_workflow else [])
                 + ([] if clean and validation_ok and review_ok and all_fresh else ["clean workspace and fresh validation/review/capability gates"]),
-                "next": "re-run web-publish-plan without --verified-tree-fast-path",
+                "next": "re-run web-publish-plan with --standard-web after explicit user selection",
                 "transport": "full_verified_git_bundle_via_google_drive",
             },
             {
@@ -353,19 +451,40 @@ def web_publish_plan(
             "stop before transport; present the modeled recovery options and require explicit user selection for any fallback; "
             f"recommended={recommended_recovery}"
         )
+    elif refresh_required:
+        next_action = (
+            "refresh only required_refresh_actions, then re-run the default FAST_PUBLISH planner; "
+            "do not run FULL_VERIFIED_PUBLISH, standard importer, production packaging, or already-fresh gates before retry"
+        )
     elif already:
         next_action = "skip transport; continue post-push reconciliation"
     elif mode == "FAST_PUBLISH":
         next_action = (
-            "build exactly one thin Git bundle from expected_base, stage it, and run audited Workspace Import"
+            "build exactly one thin Git bundle from expected_base, stage it, and run audited Workspace Import Fast"
             if desired_prerequisite and not bundle
-            else "stage the exact reusable Git bundle and run audited Workspace Import"
+            else "stage the exact reusable Git bundle and run audited Workspace Import Fast"
         )
     else:
         next_action = "build the explicitly selected standard verified Git bundle and run audited Workspace Import"
     return {
         "mode": mode,
+        "planner_default": "FAST_PUBLISH",
         "fast_path_ready": fast,
+        "fast_path_refresh_required": refresh_required,
+        "required_refresh_actions": required_refresh_actions,
+        "stale_capabilities": stale_capabilities,
+        "forbidden_before_fast_retry": (
+            [
+                "FULL_VERIFIED_PUBLISH",
+                "workspace-import.yml",
+                "production_skill_packaging",
+                "repeat_fresh_validation",
+                "repeat_fresh_change_review",
+                "repeat_fresh_permission_probe",
+            ]
+            if refresh_required
+            else []
+        ),
         "fail_closed": fail_closed,
         "design_repair_required": design_repair_required,
         "surprise_reasons": surprise_reasons,
@@ -384,6 +503,8 @@ def web_publish_plan(
         "validated_tree": tree if validation_ok and clean else None,
         "validation_reused": bool(validation_ok and clean),
         "review_reused": bool(review_ok and clean),
+        "publish_continuation": continuation,
+        "redundant_validation_forbidden": bool(continuation.get("revalidation_forbidden", False)),
         "workspace_clean": clean,
         "capability_observations": cap_status,
         "capability_observations_reused": sorted(fresh),

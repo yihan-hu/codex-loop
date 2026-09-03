@@ -75,7 +75,13 @@ from codex_loop_runtime.model_relay import (
     receive_file,
 )
 from codex_loop_runtime.protocol import emit_error, emit_ok
-from codex_loop_runtime.web_publish import build_web_publish_archive, build_web_publish_bundle, web_publish_plan
+from codex_loop_runtime.web_publish import (
+    begin_web_publish_continuation,
+    build_web_publish_archive,
+    build_web_publish_bundle,
+    publish_continuation_state,
+    web_publish_plan,
+)
 from codex_loop_runtime.source_acquisition import FALLBACK_METHODS, source_acquisition_plan
 from codex_loop_runtime.workspace_cache import (
     build_workspace_cache,
@@ -109,9 +115,10 @@ HOST_ADAPTER_COMMANDS = (
     ('permission-preflight-plan', 'plan only permission probes not covered by fresh scoped current-session observations'),
     ('permission-observation-record', 'record a scoped expiring host capability observation'),
     ('permission-observation-status', 'check freshness of a scoped current-session host capability observation'),
+    ('web-publish-continuation-begin', 'freeze a publish-only continuation onto fresh validation/review and forbid redundant revalidation'),
     ('web-publish-bundle', 'build and bind a verified exact-identity Web Git bundle'),
     ('web-publish-archive', 'compatibility alias for exact-identity Web Git bundle creation'),
-    ('web-publish-plan', 'plan verified Web publication with an optional validated-tree fast path'),
+    ('web-publish-plan', 'plan Web publication; FAST_PUBLISH is default and standard_web requires explicit selection'),
     ('interaction-route', 'resolve Cloud Browser vs local browser target without granting access'),
     ('persistence-export', 'export private cross-conversation recovery state'),
     ('persistence-validate', 'validate a recovery manifest'),
@@ -293,10 +300,17 @@ def _cmd_validate(argv: list[str]) -> int:
     cwd, root, store = _scope_from_argv(argv)
     store.ensure_active()
     command = _command_after_double_dash(argv)
+    sync_generation(root, store)
+    continuation = publish_continuation_state(store)
+    if continuation.get('active') and continuation.get('revalidation_forbidden'):
+        raise RuntimeError(
+            'redundant validation is forbidden during a fresh publish-only continuation; '
+            'reuse the current validation/review evidence and run web-publish-plan. '
+            'Content mutation automatically invalidates this continuation.'
+        )
     safety = assess_command(command)
     if safety.classification.value == 'safe_known':
         return _delegate(argv)
-    sync_generation(root, store)
     generation = store.generation()
     cwd_norm, rec, rows = _matching_plans(store, generation, command, cwd)
     if len(rows) > 1:
@@ -1026,6 +1040,18 @@ def _cmd_permission_observation_status(argv: list[str]) -> int:
     a=p.parse_args(argv[1:]); emit_ok(permission_observation_status(session_id=a.session_id,capability=a.capability,scope=a.scope)); return 0
 
 
+def _cmd_web_publish_continuation_begin(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py web-publish-continuation-begin')
+    p.add_argument('--cwd')
+    p.add_argument('--task-id')
+    p.add_argument('--repository', required=True)
+    p.add_argument('--branch', required=True)
+    a = p.parse_args(argv[1:])
+    _cwd_path, root, store = _scope_from_argv(argv)
+    emit_ok(begin_web_publish_continuation(root, store, repository=a.repository, branch=a.branch))
+    return 0
+
+
 def _cmd_web_publish_bundle(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py web-publish-bundle')
     p.add_argument('--cwd')
@@ -1044,8 +1070,43 @@ def _cmd_web_publish_archive(argv: list[str]) -> int:
 
 
 def _cmd_web_publish_plan(argv: list[str]) -> int:
-    p=argparse.ArgumentParser(prog='codex_loop.py web-publish-plan'); p.add_argument('--cwd'); p.add_argument('--task-id'); p.add_argument('--session-id',required=True); p.add_argument('--repository',required=True); p.add_argument('--branch',required=True); p.add_argument('--remote-head',required=True); p.add_argument('--remote-tree',required=True); p.add_argument('--capability-scope',action='append',default=[]); p.add_argument('--verified-tree-fast-path',action='store_true')
-    a=p.parse_args(argv[1:]); cwd,root,store=_scope_from_argv(argv); emit_ok(web_publish_plan(root,store,session_id=a.session_id,repository=a.repository,branch=a.branch,remote_head=a.remote_head,remote_tree=a.remote_tree,capability_scopes=_capability_scope_map(a.capability_scope),verified_tree_fast_path=a.verified_tree_fast_path)); return 0
+    p = argparse.ArgumentParser(prog='codex_loop.py web-publish-plan')
+    p.add_argument('--cwd')
+    p.add_argument('--task-id')
+    p.add_argument('--session-id', required=True)
+    p.add_argument('--repository', required=True)
+    p.add_argument('--branch', required=True)
+    p.add_argument('--remote-head', required=True)
+    p.add_argument('--remote-tree', required=True)
+    p.add_argument('--capability-scope', action='append', default=[])
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument(
+        '--verified-tree-fast-path',
+        dest='verified_tree_fast_path',
+        action='store_true',
+        help='compatibility alias; FAST_PUBLISH is already the default',
+    )
+    mode.add_argument(
+        '--standard-web',
+        dest='verified_tree_fast_path',
+        action='store_false',
+        help='explicitly select FULL_VERIFIED_PUBLISH instead of the default FAST_PUBLISH path',
+    )
+    p.set_defaults(verified_tree_fast_path=True)
+    a = p.parse_args(argv[1:])
+    cwd, root, store = _scope_from_argv(argv)
+    emit_ok(web_publish_plan(
+        root,
+        store,
+        session_id=a.session_id,
+        repository=a.repository,
+        branch=a.branch,
+        remote_head=a.remote_head,
+        remote_tree=a.remote_tree,
+        capability_scopes=_capability_scope_map(a.capability_scope),
+        verified_tree_fast_path=a.verified_tree_fast_path,
+    ))
+    return 0
 
 def _cmd_interaction_route(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py interaction-route')
@@ -1391,6 +1452,8 @@ def main() -> int:
             return _cmd_permission_observation_record(argv)
         if argv[0] == 'permission-observation-status':
             return _cmd_permission_observation_status(argv)
+        if argv[0] == 'web-publish-continuation-begin':
+            return _cmd_web_publish_continuation_begin(argv)
         if argv[0] == 'web-publish-bundle':
             return _cmd_web_publish_bundle(argv)
         if argv[0] == 'web-publish-archive':

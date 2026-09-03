@@ -356,6 +356,39 @@ python scripts/codex_loop.py external-resolve-failure --cwd REPO --task-id TASK 
   --action-id ID --evidence "later host-visible action recovered the failure"
 ```
 
+## Web FAST_PUBLISH entry contract
+
+For every Web-mode `push`/`publish` continuation, do not record a normal steer unless the user also changed the source objective. Freeze the current content evidence first:
+
+```bash
+python3 scripts/codex_loop.py web-publish-continuation-begin --cwd REPO \
+  --repository OWNER/REPO --branch main
+```
+
+When this returns `active=true` and `revalidation_forbidden=true`, current validation/review are reusable and any subsequent `validate` call fails closed until content mutation advances the generation. Then observe exact target remote head/tree and call `web-publish-plan` before permission smoke, bundle construction, Drive staging, production packaging, or an import workflow:
+
+```bash
+python3 scripts/codex_loop.py web-publish-plan --cwd REPO \
+  --session-id ROUTING_SESSION \
+  --repository OWNER/REPO --branch main \
+  --remote-head FULL_REMOTE_HEAD --remote-tree FULL_REMOTE_TREE \
+  --capability-scope github_push=repo:OWNER/REPO \
+  --capability-scope github_actions=actions:OWNER/REPO \
+  --capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging
+```
+
+FAST_PUBLISH is the command default. `--verified-tree-fast-path` remains a compatibility alias. The full standard Web importer is reachable only through explicit `--standard-web`, which callers may use only after the user explicitly selects that fallback.
+
+Planner outcomes are deterministic:
+
+- `FAST_PUBLISH`: reuse every fresh gate and build/reuse exactly the planned thin bundle. Use `.github/workflows/workspace-import-fast.yml`.
+- `FAST_PUBLISH_REFRESH_REQUIRED`: run only `required_refresh_actions`, never repeat already-fresh validation/review/capability probes, never package the production Skill, never run `.github/workflows/workspace-import.yml`, then call the default planner again.
+- `ALREADY_PUBLISHED`: skip transport and continue reconciliation.
+- `FAIL_CLOSED`: a structural fast-path invariant is broken; stop before transport and present the explicit recovery choices. Do not silently choose standard publication.
+- `FULL_VERIFIED_PUBLISH`: valid only when `--standard-web` was explicitly selected.
+
+For push-bound source changes, stage the final authorized content before the final validation/review. A subsequent commit that only records that reviewed index is content-equivalent and must not stale validation/review. A later combined test wrapper teardown stall does not justify repeating already-fresh scoped validation; preserve the authoritative scoped workload result according to `execution-supervision.md`.
+
 ## Post-push workspace Skill deployment handoff
 
 For a Web-mode task that edits the Skill already active/present in the current ChatGPT workspace, a verified source push is followed by a mandatory deployment handoff for the same published commit. Codex Loop tracks the lifecycle; `skill-creator`/the ChatGPT host owns the actual Skill installation/update surface. Ordinary Skills use the normal native update path. **Codex Loop self-update is different: the verified fresh-name Library bridge is the only automatic ChatGPT Web install strategy, and the standard same-name/native production update must not be attempted first.**
