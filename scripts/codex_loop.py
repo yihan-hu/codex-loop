@@ -570,7 +570,10 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
             )
         routing_snapshot = route_show(session_id=routing_session_id)
     planned_details = {
-        'handoff_mode': 'self_update_install_ready' if is_self_update else 'native_skill_update',
+        'handoff_mode': 'self_update_library_bridge_ready' if is_self_update else 'native_skill_update',
+        'install_strategy': 'verified_library_bridge' if is_self_update else 'native_skill_update',
+        'bridge_template': 'b5a748-library-save-success' if is_self_update else None,
+        'native_self_update_attempt_allowed': False if is_self_update else None,
         'terminal_owner': None,
         'install_turn_started': False if is_self_update else None,
         'reconcile_on_next_turn': False,
@@ -593,16 +596,19 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
     if action_state == 'terminal_success':
         native_update_state = 'NATIVE_UPDATE_CONFIRMED'
         native_surface_state = 'NATIVE_SURFACE_OBSERVED'
+        library_bridge_state = 'BRIDGE_PATH_CONFIRMED' if is_self_update else None
         ui_state = 'UI_SURFACED' if action_details.get('ui_surfaced') is True else 'UI_NOT_REQUIRED' if action_details.get('ui_surfaced') is False else 'UI_STATE_UNKNOWN'
         deployment_state = 'DEPLOYED'
     elif action_state in {'dispatched', 'outcome_unknown'}:
-        native_update_state = 'NATIVE_UPDATE_DISPATCHED'
+        native_update_state = 'NATIVE_SELF_UPDATE_BYPASSED' if is_self_update else 'NATIVE_UPDATE_DISPATCHED'
         native_surface_state = 'NATIVE_SURFACE_OBSERVED'
+        library_bridge_state = 'BRIDGE_SURFACE_OBSERVED' if is_self_update else None
         ui_state = 'UI_SURFACED' if action_details.get('ui_surfaced') is True else 'UI_NOT_REQUIRED' if action_details.get('ui_surfaced') is False else 'UI_STATE_UNKNOWN'
         deployment_state = 'DEPLOY_PENDING'
     else:
-        native_update_state = 'NATIVE_UPDATE_REQUIRED'
+        native_update_state = 'NATIVE_SELF_UPDATE_BYPASSED' if is_self_update else 'NATIVE_UPDATE_REQUIRED'
         native_surface_state = 'NATIVE_SURFACE_NOT_OBSERVED'
+        library_bridge_state = 'BRIDGE_REQUIRED' if is_self_update else None
         ui_state = 'UI_NOT_OBSERVED'
         deployment_state = 'DEPLOY_PENDING'
     install_ready = bool(is_self_update and action_state == 'planned' and not action_details.get('install_turn_started'))
@@ -613,14 +619,27 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'source_state': 'SOURCE_PUSHED',
         'native_update_state': native_update_state,
         'native_surface_state': native_surface_state,
+        'library_bridge_state': library_bridge_state,
         'ui_state': ui_state,
         'deployment_state': deployment_state,
         'install_state': 'INSTALL_READY' if install_ready else None,
         'target': 'current_chatgpt_workspace_skill',
-        'native_handoff_owner': 'skill-creator/host',
-        'required_action': 'begin_native_install_in_dedicated_turn' if install_ready else 'invoke_skill_creator_or_equivalent_native_skill_update_flow',
-        'host_managed_alternative': 'supported_host_managed_skill_update',
-        'handoff_mode': 'self_update_install_ready' if install_ready else 'native_skill_update',
+        'native_handoff_owner': 'skill-creator/host-library-save' if is_self_update else 'skill-creator/host',
+        'install_strategy': 'verified_library_bridge' if is_self_update else 'native_skill_update',
+        'bridge_template': 'b5a748-library-save-success' if is_self_update else None,
+        'bridge_generator': 'scripts/build_self_update_bridge.py' if is_self_update else None,
+        'native_self_update_attempt_allowed': False if is_self_update else None,
+        'required_action': (
+            'prepare_verified_library_bridge_then_begin_install_turn' if install_ready else
+            'reconcile_existing_verified_library_bridge_self_update' if is_self_update else
+            'invoke_skill_creator_or_equivalent_native_skill_update_flow'
+        ),
+        'host_managed_alternative': None if is_self_update else 'supported_host_managed_skill_update',
+        'handoff_mode': (
+            'self_update_library_bridge_ready' if install_ready else
+            'self_update_library_bridge_reconcile' if is_self_update else
+            'native_skill_update'
+        ),
         'terminal_owner': None,
         'codex_loop_resume_allowed': True,
         'same_turn_codex_loop_followup_forbidden': False,
@@ -667,8 +686,11 @@ def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
     routing_snapshot = route_show(session_id=routing_session_id)
     updated_details = dict(prior_details)
     updated_details.update({
-        'handoff_mode': 'terminal_self_update',
-        'terminal_owner': 'skill-creator/host',
+        'handoff_mode': 'terminal_self_update_library_bridge',
+        'install_strategy': 'verified_library_bridge',
+        'bridge_template': 'b5a748-library-save-success',
+        'native_self_update_attempt_allowed': False,
+        'terminal_owner': 'skill-creator/host-library-save',
         'install_turn_started': True,
         'reconcile_on_next_turn': True,
         'same_turn_codex_loop_resume_allowed': False,
@@ -692,7 +714,10 @@ def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
         'commit': commit,
         'identity': identity,
         'external_action_id': action['action_id'],
-        'terminal_owner': 'skill-creator/host',
+        'terminal_owner': 'skill-creator/host-library-save',
+        'install_strategy': 'verified_library_bridge',
+        'bridge_template': 'b5a748-library-save-success',
+        'native_self_update_attempt_allowed': False,
         'routing_session_id': routing_session_id,
         'routing_generation': routing_snapshot.get('generation'),
         'routing_host_surface': routing_snapshot.get('host_surface'),
@@ -705,9 +730,13 @@ def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
         'source_state': 'SOURCE_PUSHED',
         'deployment_state': 'DEPLOY_PENDING',
         'install_state': 'INSTALL_TURN_STARTED',
-        'handoff_mode': 'terminal_self_update',
-        'terminal_owner': 'skill-creator/host',
-        'required_action': 'invoke_skill_creator_as_final_current_turn_action',
+        'handoff_mode': 'terminal_self_update_library_bridge',
+        'install_strategy': 'verified_library_bridge',
+        'bridge_template': 'b5a748-library-save-success',
+        'bridge_generator': 'scripts/build_self_update_bridge.py',
+        'native_self_update_attempt_allowed': False,
+        'terminal_owner': 'skill-creator/host-library-save',
+        'required_action': 'save_prepared_fresh_library_bridge_as_final_current_turn_action',
         'codex_loop_resume_allowed': False,
         'same_turn_codex_loop_followup_forbidden': True,
         'reconcile_on_next_turn': True,
@@ -786,12 +815,14 @@ def _cmd_skill_deploy_resume(argv: list[str]) -> int:
         'skill_name': skill_name,
         'repository': repository,
         'commit': commit,
-        'handoff_mode': 'terminal_self_update',
+        'handoff_mode': 'terminal_self_update_library_bridge',
+        'install_strategy': 'verified_library_bridge',
+        'native_self_update_attempt_allowed': False,
         'terminal_barrier_state': 'RELEASED_ON_LATER_TURN',
         'later_host_turn_observed': True,
         'reconciliation_evidence': evidence,
         'deployment_state': 'DEPLOY_PENDING',
-        'next_action': 'reconcile observed native surface and installed revision; do not infer either',
+        'next_action': 'reconcile observed Library bridge surface and installed production revision; do not infer either',
         'external_action_id': action['action_id'],
         'routing_session_id': routing_session_id,
         'routing_session_reused': routing_session_reused,
@@ -815,7 +846,7 @@ def _cmd_skill_deploy_surface_record(argv: list[str]) -> int:
     action = _skill_deploy_action(store, identity)
     action_details = json.loads(action['details_json']) if action.get('details_json') else {}
     if skill_name == 'codex-loop' and action_details.get('install_turn_started') is not True:
-        raise ValueError('Codex Loop native surface may be recorded only after skill-deploy-install-begin starts the dedicated install turn')
+        raise ValueError('Codex Loop Library bridge surface may be recorded only after skill-deploy-install-begin starts the dedicated install turn')
     if action['state'] not in {'planned', 'dispatched'}:
         raise ValueError(f"Skill deployment action is already {action['state']}; native surface cannot be newly recorded")
     action_id = store.record_external(
@@ -835,8 +866,11 @@ def _cmd_skill_deploy_surface_record(argv: list[str]) -> int:
         'repository': repository,
         'commit': commit,
         'source_state': 'SOURCE_PUSHED',
-        'native_update_state': 'NATIVE_UPDATE_DISPATCHED',
+        'native_update_state': 'NATIVE_SELF_UPDATE_BYPASSED' if skill_name == 'codex-loop' else 'NATIVE_UPDATE_DISPATCHED',
         'native_surface_state': 'NATIVE_SURFACE_OBSERVED',
+        'library_bridge_state': 'BRIDGE_SURFACE_OBSERVED' if skill_name == 'codex-loop' else None,
+        'install_strategy': 'verified_library_bridge' if skill_name == 'codex-loop' else 'native_skill_update',
+        'native_self_update_attempt_allowed': False if skill_name == 'codex-loop' else None,
         'ui_state': 'UI_SURFACED' if args.surface_kind == 'skill_creator_install_ui' else 'UI_NOT_REQUIRED',
         'deployment_state': 'DEPLOY_PENDING',
         'surface_kind': args.surface_kind,
@@ -875,6 +909,9 @@ def _cmd_skill_deploy_complete(argv: list[str]) -> int:
         'source_state': 'SOURCE_PUSHED',
         'native_update_state': 'NATIVE_UPDATE_CONFIRMED',
         'native_surface_state': 'NATIVE_SURFACE_OBSERVED',
+        'library_bridge_state': 'BRIDGE_PATH_CONFIRMED' if skill_name == 'codex-loop' else None,
+        'install_strategy': 'verified_library_bridge' if skill_name == 'codex-loop' else 'native_skill_update',
+        'native_self_update_attempt_allowed': False if skill_name == 'codex-loop' else None,
         'deployment_state': 'DEPLOYED',
         'deployment_evidence': args.evidence.strip(),
         'external_action_id': action_id,

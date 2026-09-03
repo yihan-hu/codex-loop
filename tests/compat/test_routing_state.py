@@ -4,6 +4,7 @@ import subprocess
 import sys
 import unittest
 import uuid
+from unittest.mock import patch
 from pathlib import Path
 
 from scripts.codex_loop_runtime.routing_state import (
@@ -31,6 +32,15 @@ class RoutingStateTests(unittest.TestCase):
                 candidate.unlink()
             except FileNotFoundError:
                 pass
+
+    def test_generated_session_id_is_cli_safe_even_if_token_starts_with_dash(self):
+        with patch("scripts.codex_loop_runtime.routing_state.secrets.token_urlsafe", return_value="-forced-leading-session-id-value"):
+            state = route_init(host_surface="chatgpt_web")
+        try:
+            self.assertTrue(state["session_id"].startswith("r_"))
+            self.assertFalse(state["session_id"].startswith("-"))
+        finally:
+            self.cleanup(state)
 
     def test_new_chatgpt_web_session_is_file_backed_and_defaults_web(self):
         state = route_init(session_id=self.sid(), host_surface="chatgpt_web")

@@ -40,7 +40,7 @@ PERMISSION_PROBE_CAPABILITIES = frozenset({
 def _session_id(raw: str | None, *, generate: bool = False) -> str | None:
     value = raw or os.environ.get("CODEX_LOOP_SESSION_ID")
     if value is None and generate:
-        return secrets.token_urlsafe(24)
+        return "r_" + secrets.token_urlsafe(24)
     if value is None:
         return None
     value = str(value).strip()
