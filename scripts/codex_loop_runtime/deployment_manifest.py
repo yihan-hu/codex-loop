@@ -9,8 +9,12 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSION = 1
 BUNDLE_PROFILE = "chatgpt-runtime"
+CONSUMER_PROFILE = "consumer"
+MAINTAINER_PROFILE = "maintainer"
+DISTRIBUTION_PROFILES = (CONSUMER_PROFILE, MAINTAINER_PROFILE)
 DEPLOYMENT_MANIFEST_REL = Path("references/deployment-manifest.json")
 ROOT_FILES = ("ATTRIBUTION.md", "LICENSE", "NOTICE", "SKILL.md")
 RUNTIME_DIRS = ("agents", "assets", "references", "scripts")
@@ -18,6 +22,7 @@ IGNORED_PARTS = {"__pycache__"}
 IGNORED_SUFFIXES = {".pyc", ".pyo"}
 _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -73,7 +78,7 @@ def _assert_git_tracked_source_clean(source: Path) -> None:
         )
     if proc.stdout:
         raise ValueError(
-            "tracked source is dirty; commit or restore tracked changes before packaging"
+            "tracked source is dirty; commit or restore tracked changes before maintainer packaging"
         )
 
 
@@ -110,14 +115,7 @@ def _tracked_runtime_files(source: Path) -> list[Path] | None:
     return sorted(set(files), key=lambda p: p.relative_to(source).as_posix())
 
 
-def runtime_files(source: Path) -> list[Path]:
-    source = source.resolve()
-    generated = (source / DEPLOYMENT_MANIFEST_REL).resolve()
-    if generated.exists() or generated.is_symlink():
-        raise ValueError("references/deployment-manifest.json is build-generated and must not exist in source")
-    tracked = _tracked_runtime_files(source)
-    if tracked is not None:
-        return tracked
+def _filesystem_runtime_files(source: Path) -> list[Path]:
     files: list[Path] = []
     for name in ROOT_FILES:
         path = source / name
@@ -144,7 +142,19 @@ def runtime_files(source: Path) -> list[Path]:
     return sorted(set(files), key=lambda p: p.relative_to(source).as_posix())
 
 
-def build_runtime_file_manifest(source: Path) -> list[dict[str, Any]]:
+def runtime_files(source: Path, *, tracked_only: bool = True) -> list[Path]:
+    source = source.resolve()
+    generated = (source / DEPLOYMENT_MANIFEST_REL).resolve()
+    if generated.exists() or generated.is_symlink():
+        raise ValueError("references/deployment-manifest.json is build-generated and must not exist in source")
+    if tracked_only:
+        tracked = _tracked_runtime_files(source)
+        if tracked is not None:
+            return tracked
+    return _filesystem_runtime_files(source)
+
+
+def build_runtime_file_manifest(source: Path, *, tracked_only: bool = True) -> list[dict[str, Any]]:
     source = source.resolve()
     return [
         {
@@ -152,12 +162,12 @@ def build_runtime_file_manifest(source: Path) -> list[dict[str, Any]]:
             "size": path.stat().st_size,
             "sha256": _sha256_bytes(path.read_bytes()),
         }
-        for path in runtime_files(source)
+        for path in runtime_files(source, tracked_only=tracked_only)
     ]
 
 
-def runtime_manifest_sha256(source: Path) -> str:
-    return _sha256_bytes(_canonical_json_bytes(build_runtime_file_manifest(source)))
+def runtime_manifest_sha256(source: Path, *, tracked_only: bool = True) -> str:
+    return _sha256_bytes(_canonical_json_bytes(build_runtime_file_manifest(source, tracked_only=tracked_only)))
 
 
 def _git_object_sha(kind: bytes, payload: bytes) -> bytes:
@@ -212,37 +222,86 @@ def git_tree_sha(source: Path) -> str:
     return _tree_sha(source, root=source).hex()
 
 
+def _validate_bundle(bundle: Any) -> None:
+    if not isinstance(bundle, dict) or set(bundle) != {"profile", "file_count", "manifest_sha256"}:
+        raise ValueError("invalid deployment manifest bundle schema")
+    if bundle.get("profile") != BUNDLE_PROFILE:
+        raise ValueError("unsupported deployment bundle profile")
+    if not isinstance(bundle.get("file_count"), int) or int(bundle["file_count"]) < 1:
+        raise ValueError("invalid deployment bundle file_count")
+    if not _SHA256_RE.fullmatch(str(bundle.get("manifest_sha256") or "")):
+        raise ValueError("invalid deployment bundle manifest_sha256")
+
+
+def _validate_source(source: Any) -> None:
+    if not isinstance(source, dict) or set(source) != {"repository", "commit", "tree"}:
+        raise ValueError("invalid deployment manifest source schema")
+    if not _REPOSITORY_RE.fullmatch(str(source.get("repository") or "")):
+        raise ValueError("invalid deployment repository")
+    for key in ("commit", "tree"):
+        if not _FULL_SHA_RE.fullmatch(str(source.get(key) or "")):
+            raise ValueError(f"invalid deployment source {key}")
+
+
 def build_deployment_manifest(
     source: Path,
     *,
-    repository: str,
-    commit: str,
-    tree: str,
+    distribution_profile: str = CONSUMER_PROFILE,
+    repository: str | None = None,
+    commit: str | None = None,
+    tree: str | None = None,
     skill_name: str = "codex-loop",
 ) -> dict[str, Any]:
-    repository = str(repository).strip()
-    commit = str(commit).strip().lower()
-    tree = str(tree).strip().lower()
-    if not _REPOSITORY_RE.fullmatch(repository):
-        raise ValueError("repository must be exact OWNER/REPO")
-    if not _FULL_SHA_RE.fullmatch(commit):
-        raise ValueError("commit must be a full 40-hex Git commit SHA")
-    if not _FULL_SHA_RE.fullmatch(tree):
-        raise ValueError("tree must be a full 40-hex Git tree SHA")
+    source = source.resolve()
+    distribution_profile = str(distribution_profile).strip().lower()
+    if distribution_profile not in DISTRIBUTION_PROFILES:
+        raise ValueError(f"unsupported distribution profile: {distribution_profile}")
     if skill_name != "codex-loop":
         raise ValueError("unexpected Skill name")
+
+    if distribution_profile == CONSUMER_PROFILE:
+        if any(value not in (None, "") for value in (repository, commit, tree)):
+            raise ValueError("consumer packages must not carry repository, commit, or tree binding")
+        file_manifest = build_runtime_file_manifest(source, tracked_only=False)
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "skill_name": skill_name,
+            "distribution": {
+                "profile": CONSUMER_PROFILE,
+                "repository_binding": "none",
+            },
+            "bundle": {
+                "profile": BUNDLE_PROFILE,
+                "file_count": len(file_manifest),
+                "manifest_sha256": _sha256_bytes(_canonical_json_bytes(file_manifest)),
+            },
+        }
+
+    repository = str(repository or "").strip()
+    commit = str(commit or "").strip().lower()
+    tree = str(tree or "").strip().lower()
+    if not _REPOSITORY_RE.fullmatch(repository):
+        raise ValueError("maintainer repository must be exact OWNER/REPO")
+    if not _FULL_SHA_RE.fullmatch(commit):
+        raise ValueError("maintainer commit must be a full 40-hex Git commit SHA")
+    if not _FULL_SHA_RE.fullmatch(tree):
+        raise ValueError("maintainer tree must be a full 40-hex Git tree SHA")
     if _git_repo_root(source) is not None:
         _assert_git_tracked_source_clean(source)
         actual_commit = _git_text(source, "rev-parse", "HEAD")
         if actual_commit != commit:
             raise ValueError(f"source commit mismatch: expected {commit}, observed {actual_commit}")
-    file_manifest = build_runtime_file_manifest(source)
+    file_manifest = build_runtime_file_manifest(source, tracked_only=True)
     actual_tree = git_tree_sha(source)
     if actual_tree != tree:
         raise ValueError(f"source tree mismatch: expected {tree}, observed {actual_tree}")
     return {
         "schema_version": SCHEMA_VERSION,
         "skill_name": skill_name,
+        "distribution": {
+            "profile": MAINTAINER_PROFILE,
+            "repository_binding": "provenance_only",
+        },
         "source": {
             "repository": repository,
             "commit": commit,
@@ -262,27 +321,40 @@ def deployment_manifest_bytes(manifest: dict[str, Any]) -> bytes:
 
 
 def validate_deployment_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(manifest, dict) or set(manifest) != {"schema_version", "skill_name", "source", "bundle"}:
+    if not isinstance(manifest, dict):
         raise ValueError("invalid deployment manifest top-level schema")
-    if manifest.get("schema_version") != SCHEMA_VERSION or manifest.get("skill_name") != "codex-loop":
+    if manifest.get("skill_name") != "codex-loop":
         raise ValueError("unsupported deployment manifest identity")
-    source = manifest.get("source")
-    bundle = manifest.get("bundle")
-    if not isinstance(source, dict) or set(source) != {"repository", "commit", "tree"}:
-        raise ValueError("invalid deployment manifest source schema")
-    if not isinstance(bundle, dict) or set(bundle) != {"profile", "file_count", "manifest_sha256"}:
-        raise ValueError("invalid deployment manifest bundle schema")
-    if not _REPOSITORY_RE.fullmatch(str(source.get("repository") or "")):
-        raise ValueError("invalid deployment repository")
-    for key in ("commit", "tree"):
-        if not _FULL_SHA_RE.fullmatch(str(source.get(key) or "")):
-            raise ValueError(f"invalid deployment source {key}")
-    if bundle.get("profile") != BUNDLE_PROFILE:
-        raise ValueError("unsupported deployment bundle profile")
-    if not isinstance(bundle.get("file_count"), int) or int(bundle["file_count"]) < 1:
-        raise ValueError("invalid deployment bundle file_count")
-    if not re.fullmatch(r"^[0-9a-f]{64}$", str(bundle.get("manifest_sha256") or "")):
-        raise ValueError("invalid deployment bundle manifest_sha256")
+
+    version = manifest.get("schema_version")
+    if version == LEGACY_SCHEMA_VERSION:
+        if set(manifest) != {"schema_version", "skill_name", "source", "bundle"}:
+            raise ValueError("invalid legacy deployment manifest top-level schema")
+        _validate_source(manifest.get("source"))
+        _validate_bundle(manifest.get("bundle"))
+        return manifest
+
+    if version != SCHEMA_VERSION:
+        raise ValueError("unsupported deployment manifest identity")
+    distribution = manifest.get("distribution")
+    if not isinstance(distribution, dict) or set(distribution) != {"profile", "repository_binding"}:
+        raise ValueError("invalid deployment distribution schema")
+    profile = distribution.get("profile")
+    binding = distribution.get("repository_binding")
+    if profile == CONSUMER_PROFILE:
+        if set(manifest) != {"schema_version", "skill_name", "distribution", "bundle"}:
+            raise ValueError("consumer deployment manifest must not carry source repository identity")
+        if binding != "none":
+            raise ValueError("consumer deployment repository binding must be none")
+    elif profile == MAINTAINER_PROFILE:
+        if set(manifest) != {"schema_version", "skill_name", "distribution", "source", "bundle"}:
+            raise ValueError("invalid maintainer deployment manifest top-level schema")
+        if binding != "provenance_only":
+            raise ValueError("maintainer repository binding must be provenance_only")
+        _validate_source(manifest.get("source"))
+    else:
+        raise ValueError("unsupported deployment distribution profile")
+    _validate_bundle(manifest.get("bundle"))
     return manifest
 
 
@@ -304,10 +376,17 @@ def verify_installed_skill(skill_root: Path) -> dict[str, Any]:
         raise ValueError("installed Skill runtime file count does not match deployment provenance")
     if observed_sha != manifest["bundle"]["manifest_sha256"]:
         raise ValueError("installed Skill runtime manifest hash does not match deployment provenance")
+
+    if manifest["schema_version"] == LEGACY_SCHEMA_VERSION:
+        distribution = {"profile": MAINTAINER_PROFILE, "repository_binding": "legacy_provenance_only"}
+    else:
+        distribution = manifest["distribution"]
     return {
         "valid": True,
-        "source": manifest["source"],
+        "distribution": distribution,
+        "source": manifest.get("source"),
         "bundle": manifest["bundle"],
+        "repository_binding_required": False,
         "deployment_manifest": str(path),
     }
 

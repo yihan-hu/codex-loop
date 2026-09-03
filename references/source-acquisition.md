@@ -82,12 +82,13 @@ Use an installed Skill as a one-time bootstrap source only when the user explici
 When the explicit exception is invoked:
 
 1. Keep the installed directory read-only and copy it into a fresh development workspace before mutation.
-2. Run deployment-provenance verification when `references/deployment-manifest.json` exists.
-3. If the user expects the current/latest target-branch revision, require a fresh GitHub remote observation and exact installed commit/tree equality before calling it current.
-4. If the installed manifest binds a different exact revision and the user explicitly accepts that installed revision as the development starting point, record `freshness=historical_explicitly_accepted`; never call it latest.
-5. If exact provenance is unavailable but the user still explicitly selects the installed copy, label it `provenance=unverified_user_selected`; require later source/remote reconciliation before publishing to an existing canonical repository.
-6. Record source kind `installed_skill_exception`, exact repository/revision when known, provenance/freshness status, and hashed current-turn authorization evidence in private runtime state only.
-7. After copying, bind only the fresh workspace and never return to the installed directory as competing source authority.
+2. Run deployment-manifest verification when `references/deployment-manifest.json` exists.
+3. A schema-v2 `consumer` manifest proves runtime-byte integrity only and intentionally contains no repository identity. Never infer a maintainer repository or any other canonical repository from it. If repository identity is needed, obtain it from the current task/user or another authoritative current source.
+4. If an explicit `maintainer` or legacy provenance manifest binds the installed package to a repository/commit/tree, treat that identity as provenance only. If the user expects the current/latest target-branch revision, require a fresh GitHub remote observation and exact installed commit/tree equality before calling it current. Provenance never authorizes or binds the user's connector/repository.
+5. If the installed manifest binds a different exact revision and the user explicitly accepts that installed revision as the development starting point, record `freshness=historical_explicitly_accepted`; never call it latest.
+6. If exact repository provenance is unavailable but the user still explicitly selects the installed copy, label it `provenance=unverified_user_selected`; require later source/remote reconciliation before publishing to an existing canonical repository.
+7. Record source kind `installed_skill_exception`, exact repository/revision when known, provenance/freshness status, and hashed current-turn authorization evidence in private runtime state only.
+8. After copying, bind only the fresh workspace and never return to the installed directory as competing source authority.
 
 This exception does not bypass Local-mode or filesystem authorization. If the installed Skill is on an RDC-backed host, Local mode and current-task filesystem authorization must already permit the read-only copy operation.
 

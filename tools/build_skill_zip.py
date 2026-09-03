@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a deterministic, provenance-bound Codex Loop Skill archive."""
+"""Build a deterministic Codex Loop Skill archive for consumers or maintainers."""
 
 from __future__ import annotations
 
@@ -17,7 +17,9 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from codex_loop_runtime.deployment_manifest import (
+    CONSUMER_PROFILE,
     DEPLOYMENT_MANIFEST_REL,
+    DISTRIBUTION_PROFILES,
     IGNORED_PARTS,
     IGNORED_SUFFIXES,
     ROOT_FILES,
@@ -38,8 +40,8 @@ def _skill_name(skill_md: Path) -> str:
     return match.group(1)
 
 
-def _runtime_files(source: Path) -> list[Path]:
-    return runtime_files(source)
+def _runtime_files(source: Path, *, tracked_only: bool) -> list[Path]:
+    return runtime_files(source, tracked_only=tracked_only)
 
 
 def _validate_chatgpt_metadata(source: Path) -> None:
@@ -71,19 +73,26 @@ def build_skill_zip(
     source: Path,
     output: Path,
     *,
-    repository: str,
-    commit: str,
-    tree: str,
+    distribution_profile: str = CONSUMER_PROFILE,
+    repository: str | None = None,
+    commit: str | None = None,
+    tree: str | None = None,
 ) -> dict[str, object]:
     source = source.resolve()
     output = output.resolve()
+    distribution_profile = str(distribution_profile).strip().lower()
+    if distribution_profile not in DISTRIBUTION_PROFILES:
+        raise ValueError(f"unsupported distribution profile: {distribution_profile}")
     name = _skill_name(source / "SKILL.md")
     if name != "codex-loop":
         raise ValueError(f"unexpected Skill name: {name}")
     _validate_chatgpt_metadata(source)
-    files = _runtime_files(source)
+
+    tracked_only = distribution_profile != CONSUMER_PROFILE
+    files = _runtime_files(source, tracked_only=tracked_only)
     manifest = build_deployment_manifest(
         source,
+        distribution_profile=distribution_profile,
         repository=repository,
         commit=commit,
         tree=tree,
@@ -97,9 +106,19 @@ def build_skill_zip(
         with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
             for path in files:
                 rel = PurePosixPath(name) / PurePosixPath(path.relative_to(source).as_posix())
-                archive.writestr(_zip_info(rel.as_posix()), path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+                archive.writestr(
+                    _zip_info(rel.as_posix()),
+                    path.read_bytes(),
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=9,
+                )
             generated_rel = PurePosixPath(name) / PurePosixPath(DEPLOYMENT_MANIFEST_REL.as_posix())
-            archive.writestr(_zip_info(generated_rel.as_posix()), manifest_payload, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+            archive.writestr(
+                _zip_info(generated_rel.as_posix()),
+                manifest_payload,
+                compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=9,
+            )
         os.replace(tmp, output)
     finally:
         if tmp.exists():
@@ -112,22 +131,31 @@ def build_skill_zip(
         "file_count": len(files) + 1,
         "runtime_file_count": len(files),
         "skill_name": name,
-        "source": manifest["source"],
+        "distribution": manifest["distribution"],
+        "source": manifest.get("source"),
         "bundle_manifest_sha256": manifest["bundle"]["manifest_sha256"],
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", default=".", help="repository root (default: current directory)")
+    parser.add_argument("--source", default=".", help="Skill/repository root (default: current directory)")
     parser.add_argument("--output", required=True, help="output ZIP path")
-    parser.add_argument("--source-repository", required=True, help="exact GitHub OWNER/REPO")
-    parser.add_argument("--source-commit", required=True, help="verified full 40-hex source commit")
-    parser.add_argument("--source-tree", required=True, help="verified full 40-hex source tree")
+    parser.add_argument(
+        "--distribution-profile",
+        choices=DISTRIBUTION_PROFILES,
+        default=CONSUMER_PROFILE,
+        help="consumer (default, no repository binding) or maintainer (provenance-bound)",
+    )
+    parser.add_argument("--source-repository", help="maintainer-only exact GitHub OWNER/REPO")
+    parser.add_argument("--source-commit", help="maintainer-only verified full 40-hex source commit")
+    parser.add_argument("--source-tree", help="maintainer-only verified full 40-hex source tree")
     args = parser.parse_args(argv)
     try:
         result = build_skill_zip(
-            Path(args.source), Path(args.output),
+            Path(args.source),
+            Path(args.output),
+            distribution_profile=args.distribution_profile,
             repository=args.source_repository,
             commit=args.source_commit,
             tree=args.source_tree,
@@ -136,9 +164,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"built {result['output']}")
+    if result["source"] is None:
+        identity = "repository_binding=none"
+    else:
+        source_info = result["source"]
+        identity = (
+            f"source={source_info['repository']}@{source_info['commit']} "
+            f"tree={source_info['tree']} repository_binding=provenance_only"
+        )
     print(
         f"skill={result['skill_name']} files={result['file_count']} sha256={result['sha256']} "
-        f"source={result['source']['repository']}@{result['source']['commit']} tree={result['source']['tree']}"
+        f"distribution={result['distribution']['profile']} {identity}"
     )
     return 0
 

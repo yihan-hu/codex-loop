@@ -1,6 +1,6 @@
 # Verified RDC native Git path
 
-Use this only after the current conversation has entered Local mode and resolved an RDC-authorized `LOCAL_ROOT`. It is the publishing path for a persistent local Git workflow on RDC-backed macOS or Windows hosts. The end-to-end reference verification was performed on macOS with `yihan-hu/codex-loop`: a non-force native Git push succeeded from the canonical repository, then native Git readback returned the exact local commit and tree. Windows uses the same native-Git identity contract on a best-effort/beta basis; Windows-specific shell/runtime gaps stay host-visible or fail only the affected operation.
+Use this only after the current conversation has entered Local mode and resolved an RDC-authorized `LOCAL_ROOT`. It is the publishing path for a persistent local Git workflow on RDC-backed macOS or Windows hosts. The end-to-end reference verification was performed on macOS against the canonical maintainer repository: a non-force native Git push succeeded from the canonical repository, then native Git readback returned the exact local commit and tree. Windows uses the same native-Git identity contract on a best-effort/beta basis; Windows-specific shell/runtime gaps stay host-visible or fail only the affected operation.
 
 ## Persistent source and authentication
 

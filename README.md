@@ -6,9 +6,21 @@ It uses broad invocation with adaptive direct-vs-durable lifecycle assessment. T
 
 ## Runtime control plane v2
 
-Codex Loop separates repeatable control-plane mechanics from host/model reasoning. The current runtime adds four coordinated surfaces: **Execution Outcome Separation** (`workload != process != cleanup`), a unified **Private Host Profile** with Cloud-Browser-first interaction preference, deterministic **Durable Resume** that reconciles current reality instead of reviving stale PASS evidence, and provenance-bound Skill packages that identify their exact Git source revision. These are thin ChatGPT-host adaptations; existing upstream host gaps remain explicitly labeled rather than being promoted to false parity.
+Codex Loop separates repeatable control-plane mechanics from host/model reasoning. The current runtime adds coordinated surfaces for **Execution Outcome Separation** (`workload != process != cleanup`), a unified **Private Host Profile** with Cloud-Browser-first interaction preference, deterministic **Durable Resume**, and split Skill distribution profiles: repository-neutral consumer packages plus explicit maintainer provenance packages. These are thin ChatGPT-host adaptations; existing upstream host gaps remain explicitly labeled rather than being promoted to false parity.
 
 Key references: `references/execution-supervision.md`, `references/host-profile.md`, `references/persistence-resume.md`, and `references/deployment-provenance.md`.
+
+## Consumer quick start
+
+For normal use in ChatGPT, install Codex Loop and start using it. **You do not need GitHub, Google Drive, RDC, a local checkout, or access to `yihan-hu/codex-loop`.** The maintainer repository is not a consumer repository binding.
+
+Add integrations only when the task needs them:
+
+- GitHub: repository reads/source acquisition/Actions/publication.
+- Google Drive: only for the verified Web -> GitHub publication bridge. First-time Web publishing also needs a dedicated `ChatGPT-GitHub-Staging` folder set to anyone-with-link viewer/reader plus compatible GitHub Actions write policy.
+- Remote Desktop Commander: only for local files, native Git, local Chrome, or macOS GUI interaction.
+
+See `references/consumer-onboarding.md` for the staged setup checklist and exact permission boundaries. Codex Loop should disclose only the dependencies required by the current task and can preflight those capabilities before substantive work.
 
 ## What it can do
 
@@ -396,7 +408,7 @@ Source publication, workspace synchronization, Skill packaging, and ChatGPT inst
 ```text
 SOURCE_PUSHED      GitHub matches the exact audited source commit/tree
 WORKSPACE_SYNCED   that exact commit has been verified in the ChatGPT workspace
-SKILL_PACKAGED     a validated skill.zip exists for the intended commit
+SKILL_PACKAGED     a validated skill.zip exists; consumer packages are repository-neutral
 DEPLOY_PENDING     the intended Skill revision still needs an observed current/installed-Skill update
 DEPLOYED           an explicit supported install/update action or user confirmation proves installation
 ```
@@ -406,6 +418,8 @@ When packaging Codex Loop as a ChatGPT Skill, build the runtime-only archive rat
 ```bash
 python3 tools/build_skill_zip.py --source . --output /tmp/skill.zip
 ```
+
+The default build is a **consumer** package: its build-generated manifest uses `repository_binding=none` and contains no `source.repository`, commit, or tree fields. `yihan-hu/codex-loop` therefore remains maintainer/release context, not an installation-time repository requirement. Use `--distribution-profile maintainer --source-repository ... --source-commit ... --source-tree ...` only for an explicit provenance artifact.
 
 The builder emits exactly one top-level `codex-loop/` directory and includes only runtime Skill files (`SKILL.md`, `agents/`, `assets/`, `references/`, `scripts/`, plus license/attribution files). It excludes `.github/`, `tests/`, `README.md`, repository tooling, `__pycache__`, and compiled Python caches. This separation matters because a repository-valid ZIP is not necessarily a ChatGPT-installable Skill package. The repository source itself is not proof of installation.
 
