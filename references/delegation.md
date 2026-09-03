@@ -39,6 +39,14 @@ Project only the isolated objective plus explicitly selected files, observed fac
 
 The worker contract is: read-only; prior parent reasoning is untrusted unless projected; independently re-observe repository/tool evidence; do not continue the parent task; return structured findings only; never claim physical independence that the host did not provide.
 
+## Empirical contamination testing
+
+When evaluating logical isolation itself, use `references/logical-isolation-contamination-benchmark.md`. Treat the benchmark as system-behavior evidence for anti-anchoring under the tested host/model/workflow condition, not as capability proof. A favorable result cannot turn fresh-model, independent-model, physical-context, security, privacy, or sandbox capabilities on. Preserve the ordinary degradation warnings.
+
+Keep domain case studies bounded: Codex Loop may store summary counts, adjudication direction, limitations, and transfer-relevant observations, but raw domain learning material and human-source evidence remain in the owning domain system. If a held-out target was already visible in the same host/model context, do not relabel a later logical-isolation pass as true-blind.
+
+The first recorded development audit is `references/logical-isolation-contamination-audit-20260903.md`. Later audits should use the reusable protocol rather than silently changing the scoring contract.
+
 ## Result contract
 
 `isolate-finish` reads JSON from stdin. Persist only the bounded fields `summary`, `findings`, `recommended_action`, `files_inspected`, and `limitations`. Findings contain `claim`, evidence strings, and `confidence` (`low|medium|high|unknown`). Reject unsupported transcript/reasoning fields. Persisted text uses existing secret scrubbing. The complete scrubbed result must remain at or below 64 KiB.

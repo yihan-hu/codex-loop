@@ -190,6 +190,8 @@ Logical isolation is behavioral, not physical: prior parent reasoning is treated
 
 The MVP supports one active read-only isolation per task with `isolate-enter`, `isolate-status`, `isolate-finish`, and `isolate-abort`. If nested/parallel/background delegation is requested but unavailable, flatten or serialize it at the host orchestration layer and record the appropriate warning rather than inventing nested local model runtimes.
 
+For empirical evaluation of logical isolation itself, read `references/logical-isolation-contamination-benchmark.md` and the bounded audit `references/logical-isolation-contamination-audit-20260903.md`. Treat audit results as system-behavior evidence that may calibrate anti-anchoring risk, never as permission to upgrade executor capability claims or remove degradation warnings.
+
 ## Task profiles
 
 Use the narrowest matching profile at bootstrap:
