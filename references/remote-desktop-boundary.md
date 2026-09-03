@@ -2,7 +2,7 @@
 
 RDC is a host execution/interaction transport and does not select repository development mode. Apply the repository boundary below when `workspace_mode=local`; apply the interaction-only boundary when RDC is used for `local_chrome` or `local_mac_gui` while the repository may remain in Web mode. See `interaction-routing.md`.
 
-Before **any repository-affecting RDC action**, require an initialized conversation routing session and run `route-check --action rdc_repository` with the current conversation's workspace-grant state. While `workspace_mode=web`, that check must fail closed regardless of RDC connectivity, a known Mac checkout, an installed local Skill, or prior local use. Do not probe the local repository first and resolve routing afterward.
+Before **any repository-affecting RDC action**, require an initialized conversation routing session and run `route-check --action rdc_repository` with the current conversation's workspace-grant state. While `workspace_mode=web`, that check must fail closed regardless of RDC connectivity, a known local checkout, an installed local Skill, or prior local use. Do not probe the local repository first and resolve routing afterward.
 
 Before interaction-only RDC/browser use, require the routing session to select the intended `interaction_target` and run `route-check --action browser_interaction` with current-task computer-use authorization. Capability availability may confirm that the selected route can execute; it must never select or mutate the route.
 
@@ -47,6 +47,7 @@ If the alias is known but not granted, ask for current-conversation path permiss
 ## Local repository tool behavior
 
 - Treat Local mode and root authorization as routing/access state, not source-write consent. Before the first edit/create/delete/overwrite/reformat of local source in each task, require explicit current-task local-source-mutation authorization. Do not infer it from earlier tasks, RDC availability, prior successful writes, a read-only inspection request, synchronization intent, or generic `push` wording.
+- RDC-backed repository work may target macOS or Windows. Do not reject `rdc_repository` solely because the host is Windows. Keep Windows-only gaps (managed sessions, POSIX shell semantics, atomic guarded replacement) host-visible or fail-precise for the affected operation as described in `local-mode-setup.md`.
 - A publish-only request may use native Git to publish already-existing audited local content when otherwise authorized, but it must not silently change source files to make the push succeed. If source integration or conflict resolution would be required, stop and request explicit local mutation authorization for that task.
 - Run repository-affecting RDC terminal commands with a working directory inside an Effective Local Root and the task's bound canonical working tree when source state matters. Reject commands whose explicit repository/file path arguments, redirections, archive targets, Git worktrees, package outputs, or subprocess paths escape the allowlist.
 - Restrict file search roots to Effective Local Roots. Never start whole-disk, home-directory, or unrelated-parent searches to discover a repository.

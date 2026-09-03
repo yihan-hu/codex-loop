@@ -34,7 +34,7 @@
 
 Missing config uses these built-in defaults. A preference never asserts capability or permission: `preferred_target=cloud_browser` does not prove Cloud Browser exists, and a workspace alias never means the path is granted or bound. `KNOWN != GRANTED != BOUND` remains authoritative.
 
-Conversation routing is deliberately **not** stored here. `workspace_mode`, `interaction_target`, `deployment_target`, and their selection evidence belong to the private conversation-scoped routing file created by `route-init` under the system temp directory. New conversations therefore cannot inherit yesterday's Mac/Web/deployment routing merely because Host Profile persists. Host Profile may provide a browser preference or workspace locator, but `route-check` remains authoritative for the current conversation and current action.
+Conversation routing is deliberately **not** stored here. `workspace_mode`, `interaction_target`, `deployment_target`, and their selection evidence belong to the private conversation-scoped routing file created by `route-init` under the system temp directory. New conversations therefore cannot inherit yesterday's Local/Web/deployment routing merely because Host Profile persists. Host Profile may provide a browser preference or workspace locator, but `route-check` remains authoritative for the current conversation and current action.
 
 ## CLI
 

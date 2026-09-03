@@ -18,10 +18,11 @@ def init_repo(root, *, with_fast_workflow=True):
     subprocess.run(["git", "config", "user.email", "t@e"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
     (root / "tracked.txt").write_text("x\n")
+    workflow_dir = root / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True, exist_ok=True)
+    (workflow_dir / "workspace-import.yml").write_text("name: Standard Import\n")
     if with_fast_workflow:
-        workflow = root / ".github" / "workflows" / "workspace-import-fast.yml"
-        workflow.parent.mkdir(parents=True, exist_ok=True)
-        workflow.write_text("name: Fast Import\n")
+        (workflow_dir / "workspace-import-fast.yml").write_text("name: Fast Import\n")
     subprocess.run(["git", "add", "."], cwd=root, check=True)
     subprocess.run(["git", "commit", "-qm", "init"], cwd=root, check=True)
     return git(root, "rev-parse", "HEAD"), git(root, "rev-parse", "HEAD^{tree}")
@@ -82,11 +83,14 @@ class FastPublishTests(unittest.TestCase):
                 self.assertEqual(plan["mode"], "FAIL_CLOSED")
                 self.assertTrue(plan["fail_closed"])
                 self.assertTrue(plan["design_repair_required"])
-                self.assertFalse(plan["fallback_allowed"])
+                self.assertTrue(plan["fallback_allowed"])
+                self.assertTrue(plan["fallback_requires_explicit_user_selection"])
+                self.assertEqual(plan["recommended_recovery"], "standard_web")
+                self.assertEqual({x["id"] for x in plan["fallback_options"]}, {"retry_fast", "standard_web", "local_handoff"})
                 self.assertIn("workspace_not_clean", plan["surprise_reasons"])
                 self.assertIsNone(plan["workflow_path"])
                 self.assertIsNone(plan["request_directory"])
-                self.assertIn("repair the design/control-plane contract", plan["next"])
+                self.assertIn("present the modeled recovery options", plan["next"])
             finally:
                 self.cleanup(route)
 
@@ -104,11 +108,12 @@ class FastPublishTests(unittest.TestCase):
                 self.assertEqual(plan["mode"], "FAIL_CLOSED")
                 self.assertTrue(plan["fail_closed"])
                 self.assertFalse(plan["design_repair_required"])
-                self.assertFalse(plan["fallback_allowed"])
+                self.assertTrue(plan["fallback_allowed"])
+                self.assertEqual(plan["recommended_recovery"], "retry_fast")
                 self.assertEqual(plan["surprise_reasons"], [])
                 self.assertIn("capability_observations_not_fresh", plan["fallback_reasons"])
                 self.assertIsNone(plan["workflow_path"])
-                self.assertIn("refresh stale gates only", plan["next"])
+                self.assertIn("recommended=retry_fast", plan["next"])
             finally:
                 self.cleanup(route)
 
@@ -229,7 +234,7 @@ class FastPublishTests(unittest.TestCase):
                 self.assertIsNone(plan["workflow_path"])
                 self.assertIsNone(plan["request_directory"])
                 self.assertIsNone(plan["receipt_mode"])
-                self.assertIn("repair the design/control-plane contract", plan["next"])
+                self.assertIn("present the modeled recovery options", plan["next"])
             finally:
                 self.cleanup(route)
 

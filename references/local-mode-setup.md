@@ -12,6 +12,21 @@ BOUND    one durable task's canonical Git working tree
 
 A registered path is KNOWN, not GRANTED. See `workspace-registry.md` for the registry/session capability contract.
 
+## Host platform contract
+
+Local repository routing is platform-neutral once the user explicitly selects Local mode. An RDC-backed **macOS or Windows** repository host is valid; do not reject Local mode solely because RDC reports Windows. macOS remains the end-to-end verified reference host. Windows is a best-effort/beta host until equivalent smoke coverage is completed.
+
+On Windows:
+
+- prefer host-visible PowerShell (or `cmd.exe` only when necessary) for shell execution and native Git for repository transport;
+- keep managed interactive/background sessions host-visible because the bundled process-group/interrupt service is intentionally not enabled on Windows;
+- when the guarded writer reports that atomic compare-exchange is unavailable for an existing file, use the host-visible RDC edit/write path for that mutation, then re-observe the exact file hash and refresh Codex Loop change state; do not weaken or emulate the atomic CAS primitive inside the runtime;
+- skip POSIX-only shell/permission semantics when they are not meaningful on Windows, and report a precise per-operation degradation instead of disabling the whole Local workspace;
+- require native Git to be installed and usable on the RDC host before Git-dependent Local work. If a runtime-owned Git probe cannot resolve Git but host-visible native Git works, keep the Git command host-visible and record the observation rather than rewriting source or switching publication transports.
+
+Windows support here is deliberately permissive at the routing layer and conservative at individual primitives: a small platform bug may block one operation, but it is not evidence that the user must abandon Local mode or move source through model text.
+
+
 ## Primary Local Root and Effective Local Roots
 
 `LOCAL_ROOT` remains the logical name for the **primary** local development root selected for Local mode. It is not a hard-coded author path and not necessarily a persistent operating-system environment variable.
@@ -103,7 +118,7 @@ A new conversation starts in Web mode. Selecting Local mode activates the resolv
 
 Development-location resolution must happen before any **repository-affecting** RDC/local-filesystem discovery or repository operation. Interaction-only RDC use is routed separately by `references/interaction-routing.md` and may occur while `workspace_mode=web`; it must not inspect a local checkout or influence the Web source baseline.
 
-If the current ChatGPT/Web workspace lacks an obvious write or publication bridge, that absence does not authorize Local mode. Stay in Web mode and surface the missing capability instead of probing the Mac.
+If the current ChatGPT/Web workspace lacks an obvious write or publication bridge, that absence does not authorize Local mode. Stay in Web mode and surface the missing capability instead of probing the local host.
 
 The development-location choice is conversation-scoped, but each durable runtime task still binds independently to one canonical Git working tree within one Effective Local Root. Sibling repositories and worktrees do not become interchangeable source baselines.
 

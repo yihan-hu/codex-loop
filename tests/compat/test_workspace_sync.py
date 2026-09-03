@@ -68,12 +68,12 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("Fail-closed Web rule", skill)
         self.assertIn("RDC availability", skill)
         self.assertIn("absence of an obvious Web-mode mutation/publish bridge", skill)
-        self.assertIn("Web-push then Mac-sync sequencing", skill)
+        self.assertIn("Web-push then local-sync sequencing", skill)
         self.assertIn("downstream destination of the exact pushed commit", skill)
 
         self.assertIn("Development mode is a pre-tool gate", deployment)
         self.assertIn("Web mode fails closed", deployment)
-        self.assertIn("do not inspect the Mac before publication", deployment)
+        self.assertIn("do not inspect the local host before publication", deployment)
         self.assertIn("Development-location resolution must happen before any **repository-affecting** RDC/local-filesystem discovery", local_setup)
         self.assertIn("pre-tool routing gate", readme)
         self.assertIn("Web edit/validate/review -> verified Web publish", readme)
@@ -90,6 +90,15 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("`LOCAL_ROOT`", local_setup)
         self.assertIn("Otherwise ask once for the exact absolute root", local_setup)
         self.assertIn("references/local-mode-setup.md", skill)
+        self.assertIn("Windows Local mode is supported on a best-effort/beta basis", skill)
+        self.assertIn("C:\\Users\\Alice\\PiWork", readme)
+        self.assertIn("Host platform contract", local_setup)
+        self.assertIn("do not reject Local mode solely because RDC reports Windows", local_setup)
+        self.assertIn("references/web-to-local-handoff.md", skill)
+        self.assertIn("never an automatic downgrade", skill)
+        handoff = (ROOT / "references" / "web-to-local-handoff.md").read_text()
+        self.assertIn('route-transition --workspace-mode local --selection-evidence', handoff)
+        self.assertIn("Never ask the model to recreate files", handoff)
 
     def test_public_docs_do_not_hardcode_author_local_root(self):
         docs = [ROOT / "SKILL.md", ROOT / "README.md", *sorted((ROOT / "references").glob("*.md"))]

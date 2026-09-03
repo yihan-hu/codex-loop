@@ -254,7 +254,9 @@ def web_publish_plan(
     already = remote_head_normalized == head.lower() and remote_tree_normalized == tree.lower()
     remote_is_local_ancestor = _is_local_ancestor(root, remote_head_normalized, head)
     fast_workflow_path = ".github/workflows/workspace-import-fast.yml"
+    standard_workflow_path = ".github/workflows/workspace-import.yml"
     remote_has_fast_workflow = _commit_has_path(root, remote_head_normalized, fast_workflow_path)
+    remote_has_standard_workflow = _commit_has_path(root, remote_head_normalized, standard_workflow_path)
     desired_prerequisite = None if already else (remote_head_normalized if remote_is_local_ancestor else None)
     if not already and not remote_is_local_ancestor:
         reasons.append("remote_head_not_local_ancestor")
@@ -310,14 +312,47 @@ def web_publish_plan(
         if mode == "FULL_VERIFIED_PUBLISH"
         else None
     )
-    if fail_closed and design_repair_required:
+    recovery_options: list[dict[str, Any]] = []
+    recommended_recovery = None
+    if fail_closed:
+        standard_ready_now = bool(clean and validation_ok and review_ok and all_fresh and remote_has_standard_workflow)
+        recovery_options = [
+            {
+                "id": "retry_fast",
+                "keeps_workspace_mode": "web",
+                "requires_explicit_user_selection": False,
+                "ready_now": not bool(surprise_reasons),
+                "requirements": ["refresh stale gates" if not surprise_reasons else "repair fast-path structural blocker before retry"],
+                "next": "re-plan with --verified-tree-fast-path",
+            },
+            {
+                "id": "standard_web",
+                "keeps_workspace_mode": "web",
+                "requires_explicit_user_selection": True,
+                "ready_now": standard_ready_now,
+                "requirements": (["remote audited .github/workflows/workspace-import.yml"] if not remote_has_standard_workflow else [])
+                + ([] if clean and validation_ok and review_ok and all_fresh else ["clean workspace and fresh validation/review/capability gates"]),
+                "next": "re-run web-publish-plan without --verified-tree-fast-path",
+                "transport": "full_verified_git_bundle_via_google_drive",
+            },
+            {
+                "id": "local_handoff",
+                "keeps_workspace_mode": "local_after_explicit_transition",
+                "requires_explicit_user_selection": True,
+                "ready_now": False,
+                "requirements": ["explicit Local selection", "RDC-authorized LOCAL_ROOT", "verified binary Git-bundle handoff"],
+                "next": "follow references/web-to-local-handoff.md, then publish with native Git",
+                "transport": "verified_binary_git_bundle; never model source regeneration",
+            },
+        ]
+        if not surprise_reasons:
+            recommended_recovery = "retry_fast"
+        else:
+            recommended_recovery = "standard_web"
         next_action = (
-            "stop before transport; repair the design/control-plane contract for: "
-            + ", ".join(surprise_reasons)
-            + "; add regression evidence, validate/review, then re-plan the same direct publish path"
+            "stop before transport; present the modeled recovery options and require explicit user selection for any fallback; "
+            f"recommended={recommended_recovery}"
         )
-    elif fail_closed:
-        next_action = "stop before transport; refresh stale gates only, then re-plan the same direct publish path"
     elif already:
         next_action = "skip transport; continue post-push reconciliation"
     elif mode == "FAST_PUBLISH":
@@ -334,7 +369,10 @@ def web_publish_plan(
         "fail_closed": fail_closed,
         "design_repair_required": design_repair_required,
         "surprise_reasons": surprise_reasons,
-        "fallback_allowed": False,
+        "fallback_allowed": bool(fail_closed),
+        "fallback_requires_explicit_user_selection": bool(fail_closed),
+        "fallback_options": recovery_options,
+        "recommended_recovery": recommended_recovery,
         "standard_publish_explicitly_selected": not bool(verified_tree_fast_path),
         "fallback_reasons": reasons,
         "blocking_reasons": reasons,
@@ -355,6 +393,7 @@ def web_publish_plan(
         "bundle_build_prerequisite_commit": desired_prerequisite if transport_ready else None,
         "remote_head_is_local_ancestor": remote_is_local_ancestor,
         "remote_has_fast_import_workflow": remote_has_fast_workflow,
+        "remote_has_standard_import_workflow": remote_has_standard_workflow,
         "already_published_exactly": already,
         "fast_path_budget": {
             "permission_smoke_probes": 0 if fast else None,

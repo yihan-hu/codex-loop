@@ -107,7 +107,7 @@ python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action 
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action github_publish
 ```
 
-Supported actions are `repository_observe`, `repository_mutate`, `rdc_repository`, `browser_interaction`, `skill_install`, `chatgpt_skill_install`, `local_skill_install`, and `github_publish`. In a ChatGPT Web routing session, generic `skill_install` resolves to `chatgpt_web_skill` when no explicit deployment target exists. It never selects local Codex from RDC availability, a remembered Mac checkout, or prior context. If `host_surface=unknown`, generic install remains unresolved and fails closed. Local repository mutation, computer use, workspace access, and local installation still require their separate current-task/current-conversation authorization inputs.
+Supported actions are `repository_observe`, `repository_mutate`, `rdc_repository`, `browser_interaction`, `skill_install`, `chatgpt_skill_install`, `local_skill_install`, and `github_publish`. In a ChatGPT Web routing session, generic `skill_install` resolves to `chatgpt_web_skill` when no explicit deployment target exists. It never selects local Codex from RDC availability, a remembered local checkout, or prior context. If `host_surface=unknown`, generic install remains unresolved and fails closed. Local repository mutation, computer use, workspace access, and local installation still require their separate current-task/current-conversation authorization inputs.
 
 ## Post-task-review permission smoke planning
 

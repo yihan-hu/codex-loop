@@ -1,6 +1,6 @@
 # Verified RDC native Git path
 
-Use this only after the current conversation has entered Local mode and resolved an RDC-authorized `LOCAL_ROOT`. It is the proven publishing path for a persistent local Git workflow. This architecture was verified end to end with `yihan-hu/codex-loop`: a non-force native Git push succeeded from the canonical repository, then native Git readback returned the exact local commit and tree.
+Use this only after the current conversation has entered Local mode and resolved an RDC-authorized `LOCAL_ROOT`. It is the publishing path for a persistent local Git workflow on RDC-backed macOS or Windows hosts. The end-to-end reference verification was performed on macOS with `yihan-hu/codex-loop`: a non-force native Git push succeeded from the canonical repository, then native Git readback returned the exact local commit and tree. Windows uses the same native-Git identity contract on a best-effort/beta basis; Windows-specific shell/runtime gaps stay host-visible or fail only the affected operation.
 
 ## Persistent source and authentication
 
@@ -11,7 +11,7 @@ Use this only after the current conversation has entered Local mode and resolved
 - Authenticate interactively with `gh auth login --web --git-protocol https`; the user completes the browser/device approval and never sends credentials through chat.
 - Bind the GitHub credential helper repo-locally when needed. Do not modify global Git config merely to publish one repository.
 
-A repo-local helper may follow this pattern after substituting the real root in the host shell:
+A repo-local helper may follow this POSIX/macOS pattern after substituting the real root in the host shell. On Windows, prefer the host's normal Git Credential Manager / `gh auth login --web --git-protocol https` flow from PowerShell instead of translating this shell snippet literally:
 
 ```bash
 LOCAL_ROOT=/Users/alice/PiWork
@@ -38,7 +38,7 @@ A transport command returning zero is not enough by itself; commit/tree readback
 
 If native Git fails because of authentication, network, permissions, branch protection, or divergence, stop and report that blocker. Do not switch to connector source upload, object API writes, force push, or another unverified transport.
 
-A one-time user-authorized bootstrap transfer may be used only to seed a persistent canonical repository when the required source exists solely on another surface and no real binary bridge is available. Verify the transferred artifact/delta hash and the resulting full Git tree before committing. That exception is not part of the normal publish path and never becomes standing authorization for model-carried chunks, Base64, heredocs, or repeated remote writes.
+A one-time user-authorized bootstrap/handoff transfer may be used to seed or update the persistent canonical repository when the audited source exists on another surface. Prefer a real binary bridge: for Web -> Local recovery, build the exact verified Git bundle in Web mode, transfer that binary through the approved Drive/direct bridge, verify size + SHA-256 + `git bundle verify`, fetch the declared ref, and require local commit/tree == audited Web commit/tree before native Git publication. Do not regenerate, retype, or reconstruct repository source through model text. `references/web-to-local-handoff.md` defines this recovery path. A model-carried verified relay remains an explicit last-resort transport only when the user separately authorizes it.
 
 Within a conversation that has explicitly entered Local mode, perform subsequent repository tasks through the persistent workspace under `LOCAL_ROOT` without requiring the user to repeat the mode selection. A new conversation starts in Web mode again; the existence of a local checkout never creates a permanent cross-conversation preference.
 
