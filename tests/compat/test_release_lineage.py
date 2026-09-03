@@ -106,6 +106,37 @@ class ReleaseLineageTests(unittest.TestCase):
             self.assertFalse(status["matches"])
             self.assertIn("canonical root changed", status["reasons"])
 
+    def test_binding_status_detects_origin_repoint_in_same_repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            init_repo(root)
+            git(root, "remote", "add", "origin", "https://github.com/owner/repo.git")
+            binding = capture_workspace_binding(root)
+            git(root, "remote", "set-url", "origin", "https://github.com/other/repo.git")
+            status = workspace_binding_status(root, binding)
+            self.assertTrue(status["bound"])
+            self.assertFalse(status["matches"])
+            self.assertIn("Git origin identity changed", status["reasons"])
+            git(root, "remote", "remove", "origin")
+            removed = workspace_binding_status(root, binding)
+            self.assertFalse(removed["matches"])
+            self.assertIn("Git origin identity changed", removed["reasons"])
+
+    def test_binding_status_detects_disconnected_history_in_same_repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            init_repo(root)
+            binding = capture_workspace_binding(root)
+            git(root, "checkout", "-q", "--orphan", "disconnected")
+            git(root, "rm", "-q", "-rf", ".")
+            (root / "replacement.txt").write_text("replacement\n", encoding="utf-8")
+            git(root, "add", "replacement.txt")
+            git(root, "commit", "-qm", "disconnected root")
+            status = workspace_binding_status(root, binding)
+            self.assertTrue(status["bound"])
+            self.assertFalse(status["matches"])
+            self.assertIn("Git history no longer descends from bound base commit", status["reasons"])
+
     def test_release_plan_requires_committed_tracked_source_and_excludes_untracked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -32,12 +32,29 @@ observe exact repository + target branch/commit
   -> verify the Git bundle SHA-256
   -> git bundle verify
   -> materialize a fresh real Git repository from the bundle
+  -> set the canonical GitHub origin and intended target branch
+  -> run source-acquisition-verify against exact repository/commit/tree/branch
   -> require restored HEAD == exact target commit
   -> require restored HEAD^{tree} == exact target tree
-  -> bind subsequent development to that workspace
+  -> require complete non-shallow Git history and matching canonical origin
+  -> only then bootstrap/bind subsequent development to that workspace
 ```
 
 The standard workflow packages a Git bundle, not `git archive`. It uses full checkout history, creates a temporary export ref pointing at the exact workflow `HEAD`, logs the bundle's SHA-256/size plus exact commit/tree, uploads a `<repo-name>-source` artifact, and supports both branch pushes and `workflow_dispatch`. The temporary export ref is transport metadata only; after restore, set the intended branch/HEAD and verify exact commit/tree before binding the workspace.
+
+Before durable bootstrap or any source mutation, run the deterministic verifier from the fresh restored repository:
+
+```bash
+python3 scripts/codex_loop.py source-acquisition-verify \
+  --cwd /FRESH/WEB/REPO \
+  --repository OWNER/REPO \
+  --expected-commit FULL_COMMIT \
+  --expected-tree FULL_TREE \
+  --branch TARGET_BRANCH \
+  --method github_git_bundle
+```
+
+For a receipt-bound publication artifact use `--method receipt_bound_git_bundle`. `PASS` proves the restored working tree is a real non-shallow Git repository whose HEAD/tree, canonical GitHub origin, and intended branch match the acquisition contract. `BLOCKED` means the workspace must not be bootstrapped or rebound as canonical source. A source-only snapshot initialized as a new root commit is therefore rejected before development begins.
 
 Do not substitute any of the following as the ordinary Web acquisition path:
 

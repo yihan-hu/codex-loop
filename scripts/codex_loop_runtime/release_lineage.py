@@ -144,6 +144,34 @@ def workspace_binding_status(root: Path, binding: dict[str, Any] | None) -> dict
         reasons.append("Git repository status changed")
     if binding.get("repository_id") != current.get("repository_id"):
         reasons.append("Git repository identity changed")
+
+    binding_origin = binding.get("origin_hint")
+    current_origin = current.get("origin_hint")
+    if binding_origin and binding_origin != current_origin:
+        reasons.append("Git origin identity changed")
+
+    if (
+        bool(binding.get("is_git"))
+        and bool(current.get("is_git"))
+        and binding.get("repository_id") == current.get("repository_id")
+    ):
+        base_commit = str(binding.get("base_commit") or "").strip()
+        base_tree = str(binding.get("base_tree") or "").strip()
+        current_head = str(current.get("base_commit") or "").strip()
+        if base_commit:
+            exists = run_git(root, ["cat-file", "-e", f"{base_commit}^{{commit}}"])
+            if exists.returncode != 0:
+                reasons.append("bound base commit is no longer present in canonical Git history")
+            elif current_head:
+                ancestor = run_git(root, ["merge-base", "--is-ancestor", base_commit, current_head])
+                if ancestor.returncode != 0:
+                    reasons.append("Git history no longer descends from bound base commit")
+                elif base_tree:
+                    observed_tree = _git_text(root, ["rev-parse", f"{base_commit}^{{tree}}"], required=False)
+                    if observed_tree != base_tree:
+                        reasons.append("bound base tree no longer matches bound base commit")
+            else:
+                reasons.append("canonical Git HEAD disappeared after binding")
     return {
         "bound": True,
         "matches": not reasons,

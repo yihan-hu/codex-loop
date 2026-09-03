@@ -4,6 +4,7 @@ import unittest
 import uuid
 from pathlib import Path
 
+from scripts.codex_loop_runtime.release_lineage import capture_workspace_binding
 from scripts.codex_loop_runtime.routing_state import route_init, record_permission_observation
 from scripts.codex_loop_runtime.state import StateStore
 from scripts.codex_loop_runtime.web_publish import (
@@ -36,6 +37,7 @@ def init_repo(root, *, with_fast_workflow=True):
 def ready_store(root):
     store = StateStore(root.parent / (root.name + "-state.sqlite3"))
     store.configure_task(root.name, "publish", ["publish"], requires_validation=False, no_validation_reason="test fixture uses no executable workload")
+    store.set_meta("workspace_binding", capture_workspace_binding(root))
     store.set_meta("changes_reviewed_generation", 0)
     return store
 
@@ -59,6 +61,30 @@ class FastPublishTests(unittest.TestCase):
     def caps(self, sid):
         for capability, scope in scopes().items():
             record_permission_observation(session_id=sid, capability=capability, scope=scope, evidence="live probe")
+
+    def test_web_publish_rejects_disconnected_bound_history_before_transport(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            base, base_tree = init_repo(root)
+            store = ready_store(root)
+            route = self.route()
+            try:
+                subprocess.run(["git", "checkout", "-q", "--orphan", "disconnected"], cwd=root, check=True)
+                subprocess.run(["git", "rm", "-q", "-rf", "."], cwd=root, check=True)
+                (root / "tracked.txt").write_text("replacement\n")
+                workflow_dir = root / ".github" / "workflows"
+                workflow_dir.mkdir(parents=True, exist_ok=True)
+                (workflow_dir / "workspace-import.yml").write_text("name: Standard Import\n")
+                (workflow_dir / "workspace-import-fast.yml").write_text("name: Fast Import\n")
+                subprocess.run(["git", "add", "."], cwd=root, check=True)
+                subprocess.run(["git", "commit", "-qm", "disconnected root"], cwd=root, check=True)
+                with self.assertRaisesRegex(RuntimeError, "history no longer descends from bound base commit"):
+                    web_publish_plan(
+                        root, store, session_id=route["session_id"], repository="owner/repo",
+                        branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(),
+                    )
+            finally:
+                self.cleanup(route)
 
     def test_fast_publish_reuses_fresh_observations(self):
         with tempfile.TemporaryDirectory() as t:

@@ -12,6 +12,20 @@ python3 scripts/codex_loop.py source-acquisition-plan --receipt-bound-bundle-ava
 python3 scripts/codex_loop.py source-acquisition-plan
 ```
 
+After restoring a direct Git bundle into a fresh repository and setting its canonical GitHub origin/target branch, verify exact Git identity **before bootstrap or mutation**:
+
+```bash
+python3 scripts/codex_loop.py source-acquisition-verify \
+  --cwd /FRESH/WEB/REPO \
+  --repository OWNER/REPO \
+  --expected-commit FULL_COMMIT \
+  --expected-tree FULL_TREE \
+  --branch TARGET_BRANCH \
+  --method github_git_bundle
+```
+
+The verifier reads the actual Git repository; it requires exact HEAD/tree, matching canonical origin/branch, complete non-shallow history, and presence of the expected commit object. A source-only snapshot or disconnected root returns `WORKSPACE_GIT_IDENTITY_MISMATCH` and must never be bootstrapped as canonical source.
+
 The third command returns `BLOCKED`. Only after explicit current-task user authorization may a named fallback be planned:
 
 ```bash

@@ -1,10 +1,15 @@
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.codex_loop_runtime.source_acquisition import restored_identity_result, source_acquisition_plan
+from scripts.codex_loop_runtime.source_acquisition import (
+    restored_identity_result,
+    source_acquisition_plan,
+    verify_restored_git_workspace,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "scripts" / "codex_loop.py"
@@ -44,6 +49,49 @@ class SourceAcquisitionFallbackTests(unittest.TestCase):
         self.assertEqual(plan["authorization_scope"], "current_task_only")
         self.assertTrue(plan["requires_exact_final_commit_tree"])
 
+    def test_exact_git_workspace_verifier_proves_commit_tree_origin_branch_and_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "t@e"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
+            (root / "tracked.txt").write_text("exact\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "exact"], cwd=root, check=True)
+            subprocess.run(["git", "remote", "add", "origin", "https://github.com/owner/repo.git"], cwd=root, check=True)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True).strip()
+            result = verify_restored_git_workspace(
+                root, repository="owner/repo", expected_commit=commit, expected_tree=tree,
+                branch="main", method="github_git_bundle",
+            )
+            self.assertEqual(result["status"], "PASS")
+            self.assertTrue(result["exact"])
+            self.assertTrue(result["history_complete"])
+            self.assertEqual(result["origin_hint"], "github.com/owner/repo")
+            self.assertEqual(result["workspace_binding"]["base_commit"], commit)
+
+    def test_git_workspace_verifier_blocks_source_only_or_wrong_lineage_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "t@e"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
+            (root / "tracked.txt").write_text("snapshot\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "snapshot root"], cwd=root, check=True)
+            subprocess.run(["git", "remote", "add", "origin", "https://github.com/owner/repo.git"], cwd=root, check=True)
+            actual_tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True).strip()
+            result = verify_restored_git_workspace(
+                root, repository="owner/repo", expected_commit="a" * 40, expected_tree=actual_tree,
+                branch="main", method="receipt_bound_git_bundle",
+            )
+            self.assertEqual(result["status"], "BLOCKED")
+            self.assertEqual(result["classification"], "WORKSPACE_GIT_IDENTITY_MISMATCH")
+            self.assertFalse(result["fallback_allowed"])
+            self.assertIn("Git HEAD does not equal expected source commit", result["reasons"])
+            self.assertIn("stop before bootstrap or mutation", result["next"])
+
     def test_identity_mismatch_never_auto_falls_back(self):
         result = restored_identity_result(
             expected_commit="a" * 40, expected_tree="b" * 40,
@@ -67,6 +115,25 @@ class SourceAcquisitionFallbackTests(unittest.TestCase):
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
         )
         self.assertEqual(json.loads(allowed.stdout)["data"]["status"], "FALLBACK_AUTHORIZED")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "t@e"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
+            (root / "tracked.txt").write_text("exact\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "exact"], cwd=root, check=True)
+            subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/repo.git"], cwd=root, check=True)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True).strip()
+            verified = subprocess.run(
+                [sys.executable, str(CLI), "source-acquisition-verify",
+                 "--cwd", str(root), "--repository", "owner/repo",
+                 "--expected-commit", commit, "--expected-tree", tree, "--branch", "main"],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            )
+            self.assertEqual(json.loads(verified.stdout)["data"]["status"], "PASS")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .change_tracker import sync_generation
+from .release_lineage import require_workspace_binding
 from .routing_state import permission_observation_status, route_show
 from .workspace import git_head, git_status_porcelain_z, run_git
 
@@ -185,6 +186,7 @@ def build_web_publish_bundle(
     output = output.resolve()
     store.ensure_active()
     sync_generation(root, store)
+    require_workspace_binding(root, store)
     if not _workspace_clean(root):
         raise RuntimeError("publish-ready Git bundle requires a clean workspace")
     validation_ok, validation = _validation_fresh(store)
@@ -278,6 +280,7 @@ def web_publish_plan(
     root = root.resolve()
     store.ensure_active()
     sync_generation(root, store)
+    require_workspace_binding(root, store)
     route = route_show(session_id=session_id)
     if route.get("workspace_mode") != "web":
         raise RuntimeError("Web publish planner requires workspace_mode=web")

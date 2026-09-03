@@ -82,7 +82,11 @@ from codex_loop_runtime.web_publish import (
     publish_continuation_state,
     web_publish_plan,
 )
-from codex_loop_runtime.source_acquisition import FALLBACK_METHODS, source_acquisition_plan
+from codex_loop_runtime.source_acquisition import (
+    FALLBACK_METHODS,
+    source_acquisition_plan,
+    verify_restored_git_workspace,
+)
 from codex_loop_runtime.workspace_cache import (
     build_workspace_cache,
     restore_workspace_cache,
@@ -115,6 +119,7 @@ HOST_ADAPTER_COMMANDS = (
     ('permission-preflight-plan', 'plan only permission probes not covered by fresh scoped current-session observations'),
     ('permission-observation-record', 'record a scoped expiring host capability observation'),
     ('permission-observation-status', 'check freshness of a scoped current-session host capability observation'),
+    ('source-acquisition-verify', 'verify an exact Git-native Web restore before durable bootstrap'),
     ('web-publish-continuation-begin', 'freeze a publish-only continuation onto fresh validation/review and forbid redundant revalidation'),
     ('web-publish-bundle', 'build and bind a verified exact-identity Web Git bundle'),
     ('web-publish-archive', 'compatibility alias for exact-identity Web Git bundle creation'),
@@ -1021,6 +1026,26 @@ def _capability_scope_map(values: list[str] | None) -> dict[str,str]:
     return out
 
 
+def _cmd_source_acquisition_verify(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py source-acquisition-verify')
+    p.add_argument('--cwd', required=True)
+    p.add_argument('--repository', required=True)
+    p.add_argument('--expected-commit', required=True)
+    p.add_argument('--expected-tree', required=True)
+    p.add_argument('--branch')
+    p.add_argument('--method', default='github_git_bundle', choices=sorted({"github_git_bundle", "receipt_bound_git_bundle"} | FALLBACK_METHODS))
+    args = p.parse_args(argv[1:])
+    emit_ok(verify_restored_git_workspace(
+        Path(args.cwd).resolve(),
+        repository=args.repository,
+        expected_commit=args.expected_commit,
+        expected_tree=args.expected_tree,
+        branch=args.branch,
+        method=args.method,
+    ))
+    return 0
+
+
 def _cmd_permission_preflight_plan(argv: list[str]) -> int:
     p=argparse.ArgumentParser(prog='codex_loop.py permission-preflight-plan')
     p.add_argument('--session-id'); p.add_argument('--capability',action='append',required=True,choices=sorted(PERMISSION_PROBE_CAPABILITIES))
@@ -1462,6 +1487,8 @@ def main() -> int:
             return _cmd_web_publish_plan(argv)
         if argv[0] == 'source-acquisition-plan':
             return _cmd_source_acquisition_plan(argv)
+        if argv[0] == 'source-acquisition-verify':
+            return _cmd_source_acquisition_verify(argv)
         if argv[0] == 'interaction-route':
             return _cmd_interaction_route(argv)
         if argv[0] == 'validate':
