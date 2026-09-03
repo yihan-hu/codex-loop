@@ -145,6 +145,7 @@ After explicit user authorization:
 
 ```bash
 python3 scripts/codex_loop.py workspace-grant epiagent \
+  --current-user-authorization-observed \
   --authorization-evidence "user explicitly granted EpiAgent path access in this conversation"
 ```
 

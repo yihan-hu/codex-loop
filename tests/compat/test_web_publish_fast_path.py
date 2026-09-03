@@ -128,7 +128,8 @@ class FastPublishTests(unittest.TestCase):
                 store = ready_store(root)
                 standard = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=head, remote_tree=tree, capability_scopes=scopes(), verified_tree_fast_path=False)
                 self.assertEqual(standard["mode"], "FULL_VERIFIED_PUBLISH")
-                self.assertTrue(standard["fallback_allowed"])
+                self.assertFalse(standard["fallback_allowed"])
+                self.assertTrue(standard["standard_publish_explicitly_selected"])
                 self.assertEqual(standard["workflow_path"], ".github/workflows/workspace-import.yml")
             finally:
                 self.cleanup(route)
@@ -198,10 +199,10 @@ class FastPublishTests(unittest.TestCase):
                 self.assertEqual(plan["fast_path_budget"]["full_bundle_attempts"], 0)
                 self.assertEqual(plan["fast_path_budget"]["production_packaging_steps"], 0)
                 self.assertEqual(plan["fast_path_budget"]["bundle_build_attempts"], 1)
-                self.assertEqual(plan["fast_path_budget"]["workflow_artifact_uploads"], 0)
+                self.assertEqual(plan["fast_path_budget"]["workflow_artifact_uploads"], 1)
                 self.assertEqual(plan["workflow_path"], ".github/workflows/workspace-import-fast.yml")
                 self.assertEqual(plan["request_directory"], ".github/fast-import-requests")
-                self.assertEqual(plan["receipt_mode"], "structured_log")
+                self.assertEqual(plan["receipt_mode"], "structured_log_with_published_source_artifact")
             finally:
                 self.cleanup(route)
 

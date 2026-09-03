@@ -29,6 +29,22 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(view["mode"], "durable")
         self.assertEqual(view["activation_reasons"], ["durable_evidence"])
 
+    def test_binding_user_explicit_alone_escalates_to_durable(self):
+        view = assess_runtime_need({}, binding_lifecycle_requirement="user_explicit")
+        self.assertEqual(view["mode"], "durable")
+        self.assertEqual(view["capability_activation_reasons"], [])
+        self.assertEqual(view["binding_lifecycle_requirement"], "user_explicit")
+        self.assertIn("binding_lifecycle_requirement:user_explicit", view["activation_reasons"])
+
+    def test_binding_composed_skill_alone_escalates_to_durable(self):
+        view = assess_runtime_need({}, binding_lifecycle_requirement="composed_skill")
+        self.assertEqual(view["mode"], "durable")
+        self.assertEqual(view["binding_lifecycle_requirement"], "composed_skill")
+
+    def test_invalid_binding_requirement_fails_closed(self):
+        with self.assertRaises(ValueError):
+            assess_runtime_need({}, binding_lifecycle_requirement="model_guess")
+
     def test_unknown_signal_fails_closed(self):
         with self.assertRaises(ValueError):
             assess_runtime_need({"complexity_level": True})
@@ -94,6 +110,17 @@ class LifecycleTests(unittest.TestCase):
         data = json.loads(proc.stdout)["data"]
         self.assertEqual(data["mode"], "durable")
         self.assertEqual(data["activation_reasons"], ["multiple_dependent_steps"])
+
+    def test_lifecycle_assess_cli_binding_requirement_is_durable_without_capability_signal(self):
+        cli = Path(__file__).resolve().parents[2] / "scripts" / "codex_loop.py"
+        proc = subprocess.run(
+            [sys.executable, str(cli), "lifecycle-assess", "--binding-lifecycle-requirement", "composed_skill"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True,
+        )
+        data = json.loads(proc.stdout)["data"]
+        self.assertEqual(data["mode"], "durable")
+        self.assertEqual(data["binding_lifecycle_requirement"], "composed_skill")
+        self.assertEqual(data["capability_activation_reasons"], [])
 
     def test_lifecycle_assess_cli_is_pre_runtime_and_task_independent(self):
         cli = Path(__file__).resolve().parents[2] / "scripts" / "codex_loop.py"

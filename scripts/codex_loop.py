@@ -45,7 +45,7 @@ from codex_loop_runtime.routing_state import (
     route_show,
     route_transition,
 )
-from codex_loop_runtime.lifecycle import DURABLE_SIGNAL_KEYS, assess_runtime_need
+from codex_loop_runtime.lifecycle import BINDING_LIFECYCLE_REQUIREMENTS, DURABLE_SIGNAL_KEYS, assess_runtime_need
 from codex_loop_runtime.host_config import (
     PROGRESS_MODES,
     effective_progress_config,
@@ -76,6 +76,7 @@ from codex_loop_runtime.model_relay import (
 )
 from codex_loop_runtime.protocol import emit_error, emit_ok
 from codex_loop_runtime.web_publish import build_web_publish_archive, build_web_publish_bundle, web_publish_plan
+from codex_loop_runtime.source_acquisition import FALLBACK_METHODS, source_acquisition_plan
 from codex_loop_runtime.workspace_cache import (
     build_workspace_cache,
     restore_workspace_cache,
@@ -197,9 +198,10 @@ def _cmd_lifecycle_assess(argv: list[str]) -> int:
     p = argparse.ArgumentParser(add_help=False)
     for key in DURABLE_SIGNAL_KEYS:
         p.add_argument("--" + key.replace("_", "-"), action="store_true")
+    p.add_argument("--binding-lifecycle-requirement", choices=sorted(BINDING_LIFECYCLE_REQUIREMENTS))
     args = p.parse_args(argv[1:])
     signals = {key: bool(getattr(args, key)) for key in DURABLE_SIGNAL_KEYS}
-    result = assess_runtime_need(signals)
+    result = assess_runtime_need(signals, binding_lifecycle_requirement=args.binding_lifecycle_requirement)
     result["progress"] = progress_policy(str(result["mode"]))
     emit_ok(result)
     return 0
@@ -904,6 +906,7 @@ def _cmd_route_transition(argv: list[str]) -> int:
     p.add_argument('--interaction-target', choices=sorted(ROUTING_INTERACTION_TARGETS))
     p.add_argument('--deployment-target', choices=sorted(DEPLOYMENT_TARGETS | {'none'}))
     p.add_argument('--selection-evidence')
+    p.add_argument('--current-user-selection-observed', action='store_true')
     args = p.parse_args(argv[1:])
     if args.workspace_mode is None and args.interaction_target is None and args.deployment_target is None:
         raise ValueError('route-transition requires at least one routing field')
@@ -913,6 +916,7 @@ def _cmd_route_transition(argv: list[str]) -> int:
         interaction_target=args.interaction_target,
         deployment_target=args.deployment_target,
         selection_evidence=args.selection_evidence,
+        current_user_selection_observed=args.current_user_selection_observed,
     ))
     return 0
 
@@ -922,17 +926,35 @@ def _cmd_route_check(argv: list[str]) -> int:
     p.add_argument('--session-id')
     p.add_argument('--action', required=True, choices=sorted(ROUTE_ACTIONS))
     p.add_argument('--workspace-granted', action='store_true')
-    p.add_argument('--local-source-mutation-authorized', action='store_true')
-    p.add_argument('--local-computer-authorized', action='store_true')
-    p.add_argument('--local-install-authorized', action='store_true')
+    p.add_argument('--current-user-local-source-mutation-authorized', action='store_true')
+    p.add_argument('--current-user-local-computer-authorized', action='store_true')
+    p.add_argument('--current-user-local-install-authorized', action='store_true')
     args = p.parse_args(argv[1:])
     emit_ok(route_check(
         action=args.action,
         session_id=args.session_id,
         workspace_granted=args.workspace_granted,
-        local_source_mutation_authorized=args.local_source_mutation_authorized,
-        local_computer_authorized=args.local_computer_authorized,
-        local_install_authorized=args.local_install_authorized,
+        local_source_mutation_authorized=args.current_user_local_source_mutation_authorized,
+        local_computer_authorized=args.current_user_local_computer_authorized,
+        local_install_authorized=args.current_user_local_install_authorized,
+    ))
+    return 0
+
+
+def _cmd_source_acquisition_plan(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py source-acquisition-plan')
+    p.add_argument('--exact-commit-bundle-available', action='store_true')
+    p.add_argument('--receipt-bound-bundle-available', action='store_true')
+    p.add_argument('--fallback-method', choices=sorted(FALLBACK_METHODS))
+    p.add_argument('--current-user-fallback-authorization-observed', action='store_true')
+    p.add_argument('--authorization-evidence')
+    args = p.parse_args(argv[1:])
+    emit_ok(source_acquisition_plan(
+        exact_commit_bundle_available=args.exact_commit_bundle_available,
+        receipt_bound_bundle_available=args.receipt_bound_bundle_available,
+        fallback_method=args.fallback_method,
+        current_user_fallback_authorization_observed=args.current_user_fallback_authorization_observed,
+        authorization_evidence=args.authorization_evidence,
     ))
     return 0
 
@@ -994,14 +1016,14 @@ def _cmd_interaction_route(argv: list[str]) -> int:
     p.add_argument('--explicit-target', choices=['cloud_browser', 'local_chrome'])
     p.add_argument('--task-requires-local-session', action='store_true')
     p.add_argument('--available-target', action='append', default=[])
-    p.add_argument('--local-computer-authorized', action='store_true')
+    p.add_argument('--current-user-local-computer-authorized', action='store_true')
     args = p.parse_args(argv[1:])
     emit_ok(resolve_interaction_target(
         requires_web_interaction=args.requires_web_interaction,
         explicit_target=args.explicit_target,
         task_requires_local_session=args.task_requires_local_session,
         available_targets=args.available_target,
-        local_computer_authorized=args.local_computer_authorized,
+        local_computer_authorized=args.current_user_local_computer_authorized,
     ))
     return 0
 
@@ -1241,11 +1263,13 @@ def _cmd_workspace_grant(argv: list[str]) -> int:
     p.add_argument('name')
     p.add_argument('--session-id')
     p.add_argument('--authorization-evidence', required=True)
+    p.add_argument('--current-user-authorization-observed', action='store_true')
     args = p.parse_args(argv[1:])
     emit_ok(grant_workspace(
         args.name,
         args.authorization_evidence,
         session_id=args.session_id,
+        current_user_authorization_observed=args.current_user_authorization_observed,
     ))
     return 0
 
@@ -1336,6 +1360,8 @@ def main() -> int:
             return _cmd_web_publish_archive(argv)
         if argv[0] == 'web-publish-plan':
             return _cmd_web_publish_plan(argv)
+        if argv[0] == 'source-acquisition-plan':
+            return _cmd_source_acquisition_plan(argv)
         if argv[0] == 'interaction-route':
             return _cmd_interaction_route(argv)
         if argv[0] == 'validate':

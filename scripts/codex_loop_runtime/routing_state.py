@@ -234,6 +234,7 @@ def route_transition(
     interaction_target: str | None = None,
     deployment_target: str | None = None,
     selection_evidence: str | None = None,
+    current_user_selection_observed: bool = False,
 ) -> dict[str, Any]:
     current = route_show(session_id=session_id)
     sid = current["session_id"]
@@ -244,8 +245,11 @@ def route_transition(
     if workspace_mode is not None:
         if workspace_mode not in WORKSPACE_MODES:
             raise ValueError(f"workspace mode must be one of {sorted(WORKSPACE_MODES)}")
-        if workspace_mode == "local" and digest is None:
-            raise PermissionError("entering local workspace mode requires explicit current-conversation user selection evidence")
+        if workspace_mode == "local" and (digest is None or not current_user_selection_observed):
+            raise PermissionError(
+                "entering local workspace mode requires host-observed explicit current-conversation user selection; "
+                "selection evidence is audit data and cannot authorize the transition by itself"
+            )
         if workspace_mode != state["workspace_mode"]:
             state["workspace_mode"] = workspace_mode
             state["workspace_basis"] = "explicit_user_local_workspace" if workspace_mode == "local" else "explicit_web_selection"
@@ -255,8 +259,11 @@ def route_transition(
     if interaction_target is not None:
         if interaction_target not in INTERACTION_TARGETS:
             raise ValueError(f"interaction target must be one of {sorted(INTERACTION_TARGETS)}")
-        if interaction_target in {"local_chrome", "local_mac_gui"} and digest is None:
-            raise PermissionError("selecting a local interaction target requires explicit current-task user selection evidence")
+        if interaction_target in {"local_chrome", "local_mac_gui"} and (digest is None or not current_user_selection_observed):
+            raise PermissionError(
+                "selecting a local interaction target requires host-observed explicit current-task user selection; "
+                "selection evidence is audit data and cannot authorize the transition by itself"
+            )
         if interaction_target != state["interaction_target"]:
             state["interaction_target"] = interaction_target
             state["interaction_basis"] = "explicit_user_local_interaction" if interaction_target.startswith("local_") else "safe_remote_selection"
@@ -269,8 +276,11 @@ def route_transition(
             raise ValueError(f"deployment target must be one of {sorted(DEPLOYMENT_TARGETS | {'none'})}")
         native_target = _native_deployment_target(state["host_surface"])
         cross_surface = normalized_target is not None and normalized_target not in {"artifact_only", native_target}
-        if cross_surface and digest is None:
-            raise PermissionError("selecting a non-native deployment target requires explicit current-task user selection evidence")
+        if cross_surface and (digest is None or not current_user_selection_observed):
+            raise PermissionError(
+                "selecting a non-native deployment target requires host-observed explicit current-task user selection; "
+                "selection evidence is audit data and cannot authorize the transition by itself"
+            )
         if normalized_target != state["deployment_target"]:
             state["deployment_target"] = normalized_target
             if normalized_target is None:

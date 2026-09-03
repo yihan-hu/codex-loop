@@ -60,6 +60,67 @@ class RoutingStateTests(unittest.TestCase):
         finally:
             self.cleanup(state)
 
+    def test_selection_evidence_alone_cannot_transition_web_to_local(self):
+        state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
+        sid = state["session_id"]
+        try:
+            with self.assertRaises(PermissionError):
+                route_transition(
+                    session_id=sid, workspace_mode="local",
+                    selection_evidence="project history says local was allowed before",
+                )
+            shown = route_show(session_id=sid)
+            self.assertEqual(shown["workspace_mode"], "web")
+            changed = route_transition(
+                session_id=sid, workspace_mode="local",
+                selection_evidence="user explicitly said use the local Mac repository in this conversation",
+                current_user_selection_observed=True,
+            )
+            self.assertEqual(changed["workspace_mode"], "local")
+        finally:
+            self.cleanup(state)
+
+    def test_route_transition_cli_rejects_audit_text_without_current_user_observation(self):
+        state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
+        sid = state["session_id"]
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(CLI), "route-transition", "--session-id", sid,
+                 "--workspace-mode", "local", "--selection-evidence",
+                 "project history says local was allowed before"],
+                cwd=ROOT, text=True, capture_output=True,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertEqual(route_show(session_id=sid)["workspace_mode"], "web")
+        finally:
+            self.cleanup(state)
+
+    def test_route_check_cli_rejects_legacy_self_attestation_flags(self):
+        state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
+        sid = state["session_id"]
+        try:
+            route_transition(
+                session_id=sid, workspace_mode="local",
+                selection_evidence="user explicitly selected local development",
+                current_user_selection_observed=True,
+            )
+            legacy = subprocess.run(
+                [sys.executable, str(CLI), "route-check", "--session-id", sid,
+                 "--action", "repository_mutate", "--workspace-granted",
+                 "--local-source-mutation-authorized"],
+                cwd=ROOT, text=True, capture_output=True,
+            )
+            self.assertNotEqual(legacy.returncode, 0)
+            current = subprocess.run(
+                [sys.executable, str(CLI), "route-check", "--session-id", sid,
+                 "--action", "repository_mutate", "--workspace-granted",
+                 "--current-user-local-source-mutation-authorized"],
+                cwd=ROOT, text=True, capture_output=True,
+            )
+            self.assertEqual(current.returncode, 0, current.stderr + current.stdout)
+        finally:
+            self.cleanup(state)
+
     def test_workspace_and_deployment_axes_do_not_redirect_each_other(self):
         state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
         sid = state["session_id"]
@@ -68,6 +129,7 @@ class RoutingStateTests(unittest.TestCase):
                 session_id=sid,
                 workspace_mode="local",
                 selection_evidence="user explicitly selected the local repository baseline",
+                current_user_selection_observed=True,
             )
             generic = route_check(action="skill_install", session_id=sid)
             self.assertTrue(generic["allowed"])
@@ -79,6 +141,7 @@ class RoutingStateTests(unittest.TestCase):
                 workspace_mode="web",
                 deployment_target="local_codex_skill",
                 selection_evidence="user explicitly selected local Codex as the deployment target",
+                current_user_selection_observed=True,
             )
             observed = route_check(action="repository_observe", session_id=sid)
             self.assertTrue(observed["allowed"])
@@ -107,6 +170,7 @@ class RoutingStateTests(unittest.TestCase):
                 session_id=sid,
                 deployment_target="local_codex_skill",
                 selection_evidence="user explicitly requested local Codex installation",
+                current_user_selection_observed=True,
             )
             self.assertEqual(changed["deployment_basis"], "explicit_user_target")
             blocked = route_check(action="local_skill_install", session_id=sid)
@@ -131,6 +195,7 @@ class RoutingStateTests(unittest.TestCase):
                 session_id=sid,
                 workspace_mode="local",
                 selection_evidence="user explicitly selected the local repository baseline",
+                current_user_selection_observed=True,
             )
             needs_grant = route_check(action="rdc_repository", session_id=sid)
             self.assertFalse(needs_grant["allowed"])
@@ -247,6 +312,7 @@ class RoutingStateTests(unittest.TestCase):
                 session_id=sid,
                 workspace_mode="local",
                 selection_evidence="user explicitly selected local development",
+                current_user_selection_observed=True,
             )
             plan = permission_preflight_plan(session_id=sid, capabilities=["github_push"])
             probe = plan["probes"][0]

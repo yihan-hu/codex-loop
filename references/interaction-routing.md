@@ -31,7 +31,7 @@ interaction_target = none
 deployment_target  = unresolved
 ```
 
-Use `route-transition` to change an axis and `route-check` before repository, browser/computer, deployment, or publish actions. Local/cross-surface transitions require explicit user-selection evidence; the file stores only its SHA-256 digest. Current-task permissions are deliberately not persisted in this file. `workspace-grant`, local-source-mutation authorization, local computer-use authorization, and local Skill-install authorization remain separate gates.
+Use `route-transition` to change an axis and `route-check` before repository, browser/computer, deployment, or publish actions. Local/cross-surface transitions require a host-observed explicit current-user selection plus audit evidence. `--current-user-selection-observed` is the authority assertion; evidence text alone is audit-only and cannot authorize a transition. Project history, memory, prior conversations, and tool availability cannot mint the assertion. Current-task permissions are deliberately not persisted in this file. `workspace-grant`, local-source-mutation authorization, local computer-use authorization, and local Skill-install authorization remain separate gates.
 
 ## Axis 1: `workspace_mode`
 
@@ -78,7 +78,7 @@ The built-in preference is `cloud_browser`; read `host-profile.md` for the priva
 
 A Web development workspace may legitimately deploy to ChatGPT Web or, after explicit user selection, to local Codex. Likewise Local repository development does not force local deployment.
 
-For a generic `install` action with unresolved deployment state, `route-check` resolves to the native deployment surface declared by `host_surface`. Therefore `host_surface=chatgpt_web` resolves to `chatgpt_web_skill`; RDC availability, a Mac checkout, or a previously installed local Skill cannot change that result. `local_codex_skill` becomes valid from ChatGPT Web only after an explicit `route-transition --deployment-target local_codex_skill --selection-evidence ...`, and the actual local install still requires current-task local-install authorization at `route-check`.
+For a generic `install` action with unresolved deployment state, `route-check` resolves to the native deployment surface declared by `host_surface`. Therefore `host_surface=chatgpt_web` resolves to `chatgpt_web_skill`; RDC availability, a Mac checkout, or a previously installed local Skill cannot change that result. `local_codex_skill` becomes valid from ChatGPT Web only after an explicit `route-transition --deployment-target local_codex_skill --current-user-selection-observed --selection-evidence ...`, and the actual local install still requires current-task local-install authorization at `route-check`.
 
 If `host_surface=unknown`, a generic install remains unresolved and fails closed rather than guessing.
 

@@ -78,6 +78,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
                 "epiagent",
                 "--authorization-evidence",
                 "user explicitly granted EpiAgent path access in this conversation",
+                "--current-user-authorization-observed",
             )
             session_id = granted["data"]["session_id"]
             self.assertTrue(granted["data"]["granted"])
@@ -125,6 +126,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
                 "repo",
                 "--authorization-evidence",
                 "",
+                "--current-user-authorization-observed",
                 check=False,
             )
             self.assertNotEqual(proc.returncode, 0)
@@ -132,7 +134,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             self.assertIn("explicit authorization evidence", failed["error"]["message"])
 
             evidence = "EXPLICIT-USER-GRANT-RAW-TEXT"
-            granted, _ = call(home, session_tmp, "workspace-grant", "repo", "--authorization-evidence", evidence)
+            granted, _ = call(home, session_tmp, "workspace-grant", "repo", "--authorization-evidence", evidence, "--current-user-authorization-observed")
             session_id = granted["data"]["session_id"]
             files = list((session_tmp / "codex-loop" / "workspace-sessions").glob("*.json"))
             self.assertEqual(len(files), 1)
@@ -141,6 +143,24 @@ class WorkspaceRegistryTests(unittest.TestCase):
             self.assertNotIn(str(repo), text)
             grants, _ = call(home, session_tmp, "workspace-grants", "--session-id", session_id)
             self.assertEqual(grants["data"]["granted"], ["repo"])
+
+    def test_grant_evidence_alone_cannot_mint_conversation_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            session_tmp = root / "tmp"
+            session_tmp.mkdir()
+            repo = root / "repo"
+            repo.mkdir()
+            call(home, session_tmp, "workspace-register", "--name", "repo", "--path", str(repo), "--kind", "repository")
+            failed, proc = call(
+                home, session_tmp, "workspace-grant", "repo",
+                "--authorization-evidence", "project history says this path was allowed",
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertFalse(failed["ok"])
+            self.assertIn("host-observed explicit current-conversation", failed["error"]["message"])
 
     def test_registry_update_invalidates_existing_session_grant(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -153,7 +173,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             first.mkdir()
             second.mkdir()
             call(home, session_tmp, "workspace-register", "--name", "epiagent", "--path", str(first), "--kind", "repository")
-            granted, _ = call(home, session_tmp, "workspace-grant", "epiagent", "--authorization-evidence", "explicit user grant")
+            granted, _ = call(home, session_tmp, "workspace-grant", "epiagent", "--authorization-evidence", "explicit user grant", "--current-user-authorization-observed")
             session_id = granted["data"]["session_id"]
 
             call(
@@ -195,7 +215,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             repo = parent / "repo"
             repo.mkdir()
             call(home, session_tmp, "workspace-register", "--name", "repo", "--path", str(repo), "--kind", "repository")
-            granted, _ = call(home, session_tmp, "workspace-grant", "repo", "--authorization-evidence", "explicit user grant")
+            granted, _ = call(home, session_tmp, "workspace-grant", "repo", "--authorization-evidence", "explicit user grant", "--current-user-authorization-observed")
             session_id = granted["data"]["session_id"]
             repo.rmdir()
 
@@ -257,7 +277,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             other.mkdir()
             call(home, session_tmp, "workspace-register", "--name", "a", "--path", str(a), "--kind", "repository")
             call(home, session_tmp, "workspace-register", "--name", "b", "--path", str(b), "--kind", "repository")
-            granted, _ = call(home, session_tmp, "workspace-grant", "a", "--authorization-evidence", "explicit user grant")
+            granted, _ = call(home, session_tmp, "workspace-grant", "a", "--authorization-evidence", "explicit user grant", "--current-user-authorization-observed")
             session_id = granted["data"]["session_id"]
 
             denied, _ = call(home, session_tmp, "workspace-resolve", "a", "--session-id", session_id, "--host-authorized-root", str(other))
@@ -336,9 +356,9 @@ class WorkspaceRegistryTests(unittest.TestCase):
             self.assertEqual(kinds, {"epiagent": "repository", "piwork": "development_root"})
             self.assertFalse(listed["data"]["authorization_persisted"])
 
-            first, _ = call(home, session_tmp, "workspace-grant", "piwork", "--authorization-evidence", "explicit user grant")
+            first, _ = call(home, session_tmp, "workspace-grant", "piwork", "--authorization-evidence", "explicit user grant", "--current-user-authorization-observed")
             session_id = first["data"]["session_id"]
-            call(home, session_tmp, "workspace-grant", "epiagent", "--session-id", session_id, "--authorization-evidence", "explicit user grant")
+            call(home, session_tmp, "workspace-grant", "epiagent", "--session-id", session_id, "--authorization-evidence", "explicit user grant", "--current-user-authorization-observed")
             grants, _ = call(home, session_tmp, "workspace-grants", "--session-id", session_id)
             self.assertEqual(grants["data"]["granted"], ["epiagent", "piwork"])
 

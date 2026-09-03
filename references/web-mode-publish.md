@@ -119,7 +119,7 @@ git push \
 ```
 
 11. immediately read back the target ref and require it equals `source_commit`;
-12. emit a receipt binding transfer ID, trigger SHA, bundle hash/size/ref, published commit/tree, and receipt-bound source bundle artifact.
+12. build a **self-contained** published-revision Git bundle from complete history, prove it by cloning into a fresh empty repository and requiring exact published commit/tree, upload that one acquisition artifact, then emit a receipt binding transfer ID, trigger SHA, transport bundle hash/size/ref, published commit/tree, published-source artifact ID/name/hash/size, and `fresh_restore=PASS`.
 
 This is not general force-push authorization. The only permitted non-fast-forward movement is deletion of the workflow's **own single request trigger commit**, guarded by exact lease identity. Any extra branch movement, mismatched parent, multi-file trigger delta, ancestry failure, or lease failure stops publication.
 
@@ -129,7 +129,7 @@ Before reporting `SOURCE_PUSHED`:
 
 1. require the exact selected import workflow run to complete successfully;
 2. inspect its job steps/logs for bundle download/hash/verify, source commit/tree verification, ancestry check, bounded lease push, and remote readback;
-3. for `FAST_PUBLISH`, require the one-line `CODEX_LOOP_FAST_IMPORT_RECEIPT=<json>` log receipt from `.github/workflows/workspace-import-fast.yml`; do **not** upload or download receipt/source artifacts for the iterative fast path;
+3. for `FAST_PUBLISH`, require the one-line `CODEX_LOOP_FAST_IMPORT_RECEIPT=<json>` log receipt from `.github/workflows/workspace-import-fast.yml`; that receipt must bind the uploaded `published-source-<run_id>` acquisition artifact by artifact ID/name plus raw bundle SHA-256/size and `fresh_restore=PASS`; do not download it during the current publish unless reconciliation requires it;
 4. for `FULL_VERIFIED_PUBLISH`, download and verify the ordinary receipt artifact from `.github/workflows/workspace-import.yml`;
 5. require receipt `published_commit == audited source_commit`;
 6. require receipt `published_tree == audited source_tree`;
@@ -141,6 +141,8 @@ Tree-only equivalence is insufficient. A newly generated importer commit is a co
 ## FAST_PUBLISH
 
 `web-publish-plan --verified-tree-fast-path` is the deterministic performance gate for repeated small Web publication cycles. It may reuse fresh validation/review/capability evidence and a still-valid exact bundle receipt when no workspace mutation occurred. It never weakens identity checks. A remote short-circuit is allowed only when **both** remote commit and remote tree already equal audited source commit/tree.
+
+Every successful FAST_PUBLISH must also close the **published-revision acquisition closure**: the same run uploads one self-contained `published-source-<run_id>` bundle after proving a fresh empty repository restores the exact published commit/tree. This artifact is for a later Web conversation; it is not the transport used for the current push and does not preserve the prior workspace.
 
 For an unpublished audited HEAD whose observed remote head is a locally provable ancestor, the plan must return `bundle_strategy=thin_from_remote_head` and `bundle_build_prerequisite_commit=<remote_head>`. Build exactly that one thin bundle. **Do not attempt a full-history bundle first.** A full bundle belongs only to an explicitly selected standard `FULL_VERIFIED_PUBLISH` operation. When `--verified-tree-fast-path` is requested, failure to prove the thin direct path is fail-closed state, not permission to downgrade into the standard path. A reusable bundle receipt is valid for FAST_PUBLISH only when its prerequisite exactly matches the plan; do not reuse a larger full bundle when the plan requires a thin one.
 

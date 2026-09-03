@@ -2,6 +2,27 @@
 
 Use `python scripts/codex_loop.py ...`. Commands emit JSON. Runtime state is task-scoped under a private temp directory; it never writes `.codex-loop` state into the repository. `bootstrap` binds the created task as the workspace's active task, so ordinary task-scoped commands may omit `--task-id`. Pass an explicit `--task-id` when deliberately addressing a non-active task or when low-level audit/debugging requires it. If no active task exists, task-scoped commands fail closed.
 
+### Source acquisition fallback gate
+
+Direct exact artifacts are preferred and fallback is disabled by default:
+
+```bash
+python3 scripts/codex_loop.py source-acquisition-plan --exact-commit-bundle-available
+python3 scripts/codex_loop.py source-acquisition-plan --receipt-bound-bundle-available
+python3 scripts/codex_loop.py source-acquisition-plan
+```
+
+The third command returns `BLOCKED`. Only after explicit current-task user authorization may a named fallback be planned:
+
+```bash
+python3 scripts/codex_loop.py source-acquisition-plan \
+  --fallback-method verified_incremental_replay \
+  --current-user-fallback-authorization-observed \
+  --authorization-evidence "user explicitly authorized this fallback for the current task"
+```
+
+A fallback authorization is current-task-only and cannot be persisted. Any final commit/tree mismatch remains `WORKSPACE_GIT_IDENTITY_MISMATCH` and stops.
+
 ## Persistent workspace registry and conversation grants
 
 Workspace registry commands are host-local and not task-scoped. They never bootstrap a repository task and never imply Local mode.
@@ -20,6 +41,7 @@ After the host/model observes explicit user authorization in the current convers
 
 ```bash
 python3 scripts/codex_loop.py workspace-grant epiagent \
+  --current-user-authorization-observed \
   --authorization-evidence "user explicitly granted EpiAgent path access in this conversation"
 ```
 
@@ -60,26 +82,28 @@ Change routing only through deterministic transitions:
 ```bash
 python3 scripts/codex_loop.py route-transition --session-id ROUTING_SESSION \
   --workspace-mode local \
+  --current-user-selection-observed \
   --selection-evidence "user explicitly selected the local repository baseline"
 
 python3 scripts/codex_loop.py route-transition --session-id ROUTING_SESSION \
   --deployment-target local_codex_skill \
+  --current-user-selection-observed \
   --selection-evidence "user explicitly requested local Codex installation"
 
 python3 scripts/codex_loop.py route-transition --session-id ROUTING_SESSION \
   --deployment-target none
 ```
 
-Entering Local workspace mode, selecting a local interaction target, or selecting a non-native deployment target requires explicit user-selection evidence. The file stores only a SHA-256 digest of that evidence. It does not persist current-task authorization.
+Entering Local workspace mode, selecting a local interaction target, or selecting a non-native deployment target requires a host-observed explicit current-user selection plus audit evidence. `--current-user-selection-observed` may be asserted only for the current user turn/task; the evidence string is audit-only and is stored only as SHA-256. Project history, memory, prior conversations, or model-authored prose cannot authorize the transition. The routing file does not persist current-task authorization.
 
 Before the host dispatches a routing-sensitive action, check it:
 
 ```bash
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action repository_observe
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action rdc_repository --workspace-granted
-python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action browser_interaction --local-computer-authorized
+python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action browser_interaction --current-user-local-computer-authorized
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action skill_install
-python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action local_skill_install --local-install-authorized
+python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action local_skill_install --current-user-local-install-authorized
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action github_publish
 ```
 

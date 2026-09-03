@@ -286,11 +286,22 @@ def _load_session(session_id: str | None) -> dict[str, Any]:
     return _validate_session(payload)
 
 
-def grant_workspace(name: str, authorization_evidence: str, *, session_id: str | None = None) -> dict[str, Any]:
+def grant_workspace(
+    name: str,
+    authorization_evidence: str,
+    *,
+    session_id: str | None = None,
+    current_user_authorization_observed: bool = False,
+) -> dict[str, Any]:
     alias = normalize_alias(name)
     evidence = str(authorization_evidence).strip()
+    if not current_user_authorization_observed:
+        raise PermissionError(
+            "workspace-grant requires a host-observed explicit current-conversation user authorization; "
+            "authorization evidence is audit data and cannot grant access by itself"
+        )
     if not evidence:
-        raise ValueError("workspace-grant requires host-observed explicit authorization evidence")
+        raise ValueError("workspace-grant requires explicit authorization evidence after the host observation")
     registry = load_registry()
     entry = registry["workspaces"].get(alias)
     if entry is None:
@@ -312,6 +323,7 @@ def grant_workspace(name: str, authorization_evidence: str, *, session_id: str |
         "granted": True,
         "session_id": resolved_session,
         "authorization_evidence_recorded": True,
+        "authorization_source": "host_observed_current_user_turn",
         "path": entry["path"],
         "kind": entry["kind"],
     }

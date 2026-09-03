@@ -304,7 +304,7 @@ def web_publish_plan(
         else None
     )
     receipt_mode = (
-        "structured_log"
+        "structured_log_with_published_source_artifact"
         if mode == "FAST_PUBLISH"
         else "artifact"
         if mode == "FULL_VERIFIED_PUBLISH"
@@ -334,8 +334,10 @@ def web_publish_plan(
         "fail_closed": fail_closed,
         "design_repair_required": design_repair_required,
         "surprise_reasons": surprise_reasons,
-        "fallback_allowed": not bool(verified_tree_fast_path),
+        "fallback_allowed": False,
+        "standard_publish_explicitly_selected": not bool(verified_tree_fast_path),
         "fallback_reasons": reasons,
+        "blocking_reasons": reasons,
         "repository": repository,
         "branch": branch,
         "expected_base": remote_head_normalized,
@@ -361,7 +363,7 @@ def web_publish_plan(
             "full_bundle_attempts": 0 if fast and desired_prerequisite else None,
             "production_packaging_steps": 0 if fast else None,
             "bundle_build_attempts": 0 if bundle else (1 if fast else None),
-            "workflow_artifact_uploads": 0 if fast else None,
+            "workflow_artifact_uploads": 1 if fast else None,
         },
         "workflow_path": workflow_path,
         "request_directory": request_directory,
