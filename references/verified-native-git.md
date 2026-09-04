@@ -27,7 +27,7 @@ The example root is illustrative only; use the root resolved for the current con
 
 1. Validate and review the intended final content in the canonical worktree.
 2. Commit the source and record the local commit/tree identity. If the commit only records already-reviewed content, do not rerun validation/review solely because the commit SHA changed unless the runtime freshness gate requires it.
-3. Run `git fetch origin main` and observe the current remote commit/tree. For source-only push requests, use `publish-plan --source-only`; do not package a Skill or create a release receipt first. If lineage diverged, integrate it locally and revalidate; never force around it.
+3. Run `git fetch origin main` and observe the current remote commit/tree. For source-only push requests, call the stable `publish-enter --controller-abi 1 --workspace-granted` entrypoint; it selects the Local native-Git planner. Do not package a Skill or create a release receipt first. If lineage diverged, integrate it locally and revalidate; never force around it.
 4. Push with native Git from the canonical worktree, for example `GIT_TERMINAL_PROMPT=0 git push --porcelain origin main:main`, with a `GH_CONFIG_DIR` derived from `LOCAL_ROOT` when that helper layout is used.
 5. Run native `git fetch origin main` after the push.
 6. Require both `git rev-parse HEAD == git rev-parse origin/main` and `git rev-parse HEAD^{tree} == git rev-parse origin/main^{tree}` before recording success.
@@ -38,7 +38,7 @@ A transport command returning zero is not enough by itself; commit/tree readback
 
 If native Git fails because of authentication, network, permissions, branch protection, or divergence, stop and report that blocker. Do not switch to connector source upload, object API writes, force push, or another unverified transport.
 
-A one-time user-authorized bootstrap/handoff transfer may be used to seed or update the persistent canonical repository when the audited source exists on another surface. Prefer a real binary bridge: for Web -> Local recovery, build the exact verified Git bundle in Web mode, transfer that binary through the approved Drive/direct bridge, verify size + SHA-256 + `git bundle verify`, fetch the declared ref, and require local commit/tree == audited Web commit/tree before native Git publication. Do not regenerate, retype, or reconstruct repository source through model text. `references/web-to-local-handoff.md` defines this recovery path. A model-carried verified relay remains an explicit last-resort transport only when the user separately authorizes it.
+A one-time user-authorized bootstrap/handoff transfer may be used to seed or update the persistent canonical repository when the audited source exists on another surface. For Web -> Local/Mac transfer there is one fixed path: exact verified self-contained Git bundle -> Google Drive binary staging -> RDC download to the explicitly authorized local path -> local size/SHA-256 + `git bundle verify`. Require local commit/tree == audited Web commit/tree before native Git publication. Do not substitute a direct bridge, GitHub artifact/archive, model relay, or source reconstruction. `references/web-to-local-handoff.md` defines this path.
 
 Within a conversation that has explicitly entered Local mode, perform subsequent repository tasks through the persistent workspace under `LOCAL_ROOT` without requiring the user to repeat the mode selection. A new conversation starts in Web mode again; the existence of a local checkout never creates a permanent cross-conversation preference.
 

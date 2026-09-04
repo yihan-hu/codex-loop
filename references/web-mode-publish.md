@@ -1,14 +1,14 @@
 # Verified Web-mode GitHub publication with exact Git identity
 
-Use this contract when the current conversation remains in Web mode and the user asks to push/publish repository changes to GitHub. This path preserves the audited Git commit object itself: successful publication requires **remote commit == audited source commit** and **remote tree == audited source tree**.
+Use this low-level workspace-owned contract after the stable route-aware `publish-enter` ABI selects Web publication. This path preserves the audited Git commit object itself: successful publication requires **remote commit == audited source commit** and **remote tree == audited source tree**. Normal model control must enter through `references/publication-router.md`; call `web-publish-*` directly only when debugging the router/protocol implementation.
 
-This path is Web mode only. Do not switch to RDC + native Git merely to gain transport; Local mode has its own native-Git contract.
+This path is Web mode only. Do not switch to RDC + native Git merely to gain transport; Local mode has its own native-Git contract behind the same stable publication router.
 
 ## Publication intent translation
 
 Treat `git push`, “push this branch”, “publish this commit”, “send these changes to GitHub”, and equivalent wording as **publication intent**, not as a requirement to execute native network `git push`. In Web mode, automatically satisfy that intent through this verified bundle/staging/import path. The absence of native `git push` in the Web container is not itself a blocker.
 
-Report a publication blocker only when this canonical Web publication path itself cannot satisfy its preconditions, permissions, integrity checks, or exact remote identity requirements. Do not switch transports merely because the user used Git terminology.
+Report a publication blocker only when this canonical Web publication path itself cannot satisfy its preconditions, permissions, integrity checks, or exact remote identity requirements. Do not switch transports merely because the user used Git terminology. **GitHub not already containing the audited source commit object is not a blocker**: the verified Git bundle is specifically how that exact commit object is introduced to the importer. Do not query object presence as a transport-selection gate.
 
 ## Trust and data-plane boundary
 
@@ -41,21 +41,21 @@ Before staging:
 6. Fresh scoped permission observations exist for `github_push` and `google_drive_write`. The publication transport does not call a host Actions write API; Actions readiness is verified after the request push by observing the matching import run and its receipt/log evidence.
 7. `.github/workflows/workspace-import.yml` matches the audited exact-identity importer contract below.
 
-Run:
+Normal model/controller entry:
 
 ```bash
-python3 scripts/codex_loop.py web-publish-bundle --cwd REPO --output /PRIVATE/TEMP/source.bundle
-python3 scripts/codex_loop.py web-publish-plan --cwd REPO \
+python3 scripts/codex_loop.py publish-enter --cwd REPO \
   --session-id SESSION \
   --repository OWNER/REPO \
   --branch TARGET \
   --remote-head FULL_REMOTE_HEAD \
   --remote-tree FULL_REMOTE_TREE \
+  --controller-abi 1 \
   --capability-scope github_push=repo:OWNER/REPO \
   --capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging
 ```
 
-`web-publish-archive` remains only a compatibility alias for bundle creation; it no longer creates a tar source archive. New integrations should use `web-publish-bundle`.
+The router begins/reuses the publish-only continuation and calls this Web planner. Low-level debugging may still use `web-publish-plan` / `web-publish-bundle`. `web-publish-archive` remains only a compatibility alias for bundle creation; it no longer creates a tar source archive.
 
 `github_actions` is intentionally absent from this host-permission gate. The importer is triggered by the GitHub request commit itself, not by an Actions dispatch/rerun API call. After that trigger, treat the matching workflow run as the live Actions/runtime proof; a missing or failed run is a publication failure to reconcile, not a reason to fabricate an earlier source-mutating permission probe.
 
@@ -157,16 +157,11 @@ Tree-only equivalence is insufficient. A newly generated importer commit is a co
 
 ### Mandatory push-entry rule
 
-For every Web-mode `push`/`publish` continuation, treat the request as delivery intent rather than a semantic `steer` unless source requirements also changed. Before any new validation or permission smoke, call:
+For every Web-mode `push`/`publish` continuation, treat the request as delivery intent rather than a semantic `steer` unless source requirements also changed. **Normal model/controller control calls only `publish-enter --controller-abi <explicit ABI>` before any new validation, permission smoke, bundle construction, Drive staging, production packaging, or import trigger.** The router then performs the low-level continuation/planner sequence inside the current workspace runtime.
 
-```bash
-python3 scripts/codex_loop.py web-publish-continuation-begin --cwd REPO \
-  --repository OWNER/REPO --branch main
-```
+Internally, the router calls `web-publish-continuation-begin` and then `web-publish-plan`. If continuation returns `active=true` / `revalidation_forbidden=true`, the current clean generation already has reusable validation/review evidence and the router must not plan redundant validation. The Web planner remains the deterministic performance gate and defaults to FAST_PUBLISH; `--verified-tree-fast-path` is only a compatibility alias and standard publication remains explicit-only through `--standard-web`. Fresh validation/review/capability observations and a matching bundle receipt are reused when valid. A remote short-circuit is allowed only when **both** remote commit and remote tree already equal audited source commit/tree.
 
-If it returns `active=true` and `revalidation_forbidden=true`, the current clean generation already has reusable validation/review evidence. Do not call `validate` again; the runtime rejects redundant validation until content mutation changes the generation. Next observe exact remote head/tree and call `web-publish-plan` **before** bundle construction, Drive staging, production packaging, or an import workflow. The planner is the authority for whether external gates must be refreshed. If validation/review/capability observations are already fresh, the budget for those gates is zero and they must not be repeated. If only some capability observations are stale, refresh only the named `stale_capabilities`. `.github/workflows/workspace-import.yml` is never selected by omission; it requires an explicit user-selected `--standard-web` plan.
-
-`web-publish-plan` is the deterministic performance gate for repeated small Web publication cycles and defaults to FAST_PUBLISH. `--verified-tree-fast-path` remains a compatibility alias; standard publication requires explicit `--standard-web`. It may reuse fresh validation/review/capability evidence and a still-valid exact bundle receipt when no workspace mutation occurred. It never weakens identity checks. A remote short-circuit is allowed only when **both** remote commit and remote tree already equal audited source commit/tree.
+Do not reinterpret this internal sequence as a second model-facing publication entry. Direct `web-publish-continuation-begin` / `web-publish-plan` calls are reserved for router/protocol debugging.
 
 Every successful FAST_PUBLISH must also close the **published-revision acquisition closure**: the same run uploads one self-contained `published-source-<run_id>` bundle after proving a fresh empty repository restores the exact published commit/tree. This artifact is for a later Web conversation; it is not the transport used for the current push and does not preserve the prior workspace.
 

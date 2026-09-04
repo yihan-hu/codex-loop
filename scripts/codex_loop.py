@@ -80,8 +80,10 @@ from codex_loop_runtime.web_publish import (
     build_web_publish_archive,
     build_web_publish_bundle,
     publish_continuation_state,
+    web_local_sync_plan,
     web_publish_plan,
 )
+from codex_loop_runtime.publication_router import publication_enter
 from codex_loop_runtime.source_acquisition import (
     FALLBACK_METHODS,
     source_acquisition_plan,
@@ -123,7 +125,9 @@ HOST_ADAPTER_COMMANDS = (
     ('web-publish-continuation-begin', 'freeze a publish-only continuation onto fresh validation/review and forbid redundant revalidation'),
     ('web-publish-bundle', 'build and bind a verified exact-identity Web Git bundle'),
     ('web-publish-archive', 'compatibility alias for exact-identity Web Git bundle creation'),
-    ('web-publish-plan', 'plan Web publication; FAST_PUBLISH is default and standard_web requires explicit selection'),
+    ('publish-enter', 'stable route-aware publication ABI; the only model-facing publication entrypoint'),
+    ('web-publish-plan', 'low-level Web publication planner used by publish-enter'),
+    ('web-local-sync-plan', 'plan the fixed Web -> local Drive staging + RDC download path'),
     ('interaction-route', 'resolve Cloud Browser vs local browser target without granting access'),
     ('persistence-export', 'export private cross-conversation recovery state'),
     ('persistence-validate', 'validate a recovery manifest'),
@@ -1094,6 +1098,64 @@ def _cmd_web_publish_archive(argv: list[str]) -> int:
     a=p.parse_args(argv[1:]); cwd,root,store=_scope_from_argv(argv); emit_ok(build_web_publish_archive(root,store,output=Path(a.output),top_level=a.top_level,prerequisite_commit=a.prerequisite_commit)); return 0
 
 
+def _cmd_publish_enter(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py publish-enter')
+    p.add_argument('--cwd')
+    p.add_argument('--task-id')
+    p.add_argument('--session-id', required=True)
+    p.add_argument('--repository', required=True)
+    p.add_argument('--branch', required=True)
+    p.add_argument('--remote-head', required=True)
+    p.add_argument('--remote-tree', required=True)
+    p.add_argument('--capability-scope', action='append', default=[])
+    p.add_argument('--controller-abi', type=int, required=True)
+    p.add_argument('--standard-web', action='store_true')
+    p.add_argument('--workspace-granted', action='store_true')
+    p.add_argument('--release-id')
+    p.add_argument('--remote', default='origin')
+    p.add_argument('--release-publish', dest='source_only', action='store_false')
+    p.set_defaults(source_only=True)
+    a = p.parse_args(argv[1:])
+    _cwd_path, root, store = _scope_from_argv(argv)
+    emit_ok(publication_enter(
+        root,
+        store,
+        session_id=a.session_id,
+        repository=a.repository,
+        branch=a.branch,
+        remote_head=a.remote_head,
+        remote_tree=a.remote_tree,
+        capability_scopes=_capability_scope_map(a.capability_scope),
+        controller_abi=a.controller_abi,
+        standard_web=a.standard_web,
+        workspace_granted=a.workspace_granted,
+        source_only=a.source_only,
+        release_id=a.release_id,
+        remote=a.remote,
+    ))
+    return 0
+
+
+def _cmd_web_local_sync_plan(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py web-local-sync-plan')
+    p.add_argument('--cwd')
+    p.add_argument('--task-id')
+    p.add_argument('--session-id', required=True)
+    p.add_argument('--destination-path', required=True)
+    p.add_argument('--workspace-granted', action='store_true')
+    p.add_argument('--local-computer-authorized', action='store_true')
+    a = p.parse_args(argv[1:])
+    _cwd_path, root, store = _scope_from_argv(argv)
+    emit_ok(web_local_sync_plan(
+        root,
+        store,
+        session_id=a.session_id,
+        destination_path=a.destination_path,
+        workspace_granted=a.workspace_granted,
+        local_computer_authorized=a.local_computer_authorized,
+    ))
+    return 0
+
 def _cmd_web_publish_plan(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py web-publish-plan')
     p.add_argument('--cwd')
@@ -1483,8 +1545,12 @@ def main() -> int:
             return _cmd_web_publish_bundle(argv)
         if argv[0] == 'web-publish-archive':
             return _cmd_web_publish_archive(argv)
+        if argv[0] == 'publish-enter':
+            return _cmd_publish_enter(argv)
         if argv[0] == 'web-publish-plan':
             return _cmd_web_publish_plan(argv)
+        if argv[0] == 'web-local-sync-plan':
+            return _cmd_web_local_sync_plan(argv)
         if argv[0] == 'source-acquisition-plan':
             return _cmd_source_acquisition_plan(argv)
         if argv[0] == 'source-acquisition-verify':

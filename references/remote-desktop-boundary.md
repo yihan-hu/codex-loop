@@ -94,3 +94,7 @@ The placeholders are documentation only. Before tool execution, use the exact re
 ## Fail-closed rule
 
 If the conversation routing session is missing/invalid, the relevant `route-check` denies the action, `workspace_mode` is still `web` for a repository-affecting RDC request, the primary root is unresolved, a registered workspace is not granted, RDC rejects the resolved path, a symlink changes the real boundary, or an operation would touch an unauthorized path, stop that operation. Do not infer consent or routing state from device connectivity, filesystem visibility, a prior conversation, successful tool access, registry knowledge, an installed local Skill, or the ability to execute a command.
+
+## Downstream Web -> local transfer exception
+
+`rdc_transfer` is not `rdc_repository`. When a Web-authoritative repository is being saved/synchronized to a local host through the fixed Drive -> RDC binary path, `route-check --action rdc_transfer` may allow only the explicitly authorized destination path while `workspace_mode=web`. This permits downloading/verifying the exact bundle as a downstream artifact; it does not permit inspecting the local checkout, importing refs, editing source, or treating the local repository as authoritative. Any repository import/mutation still requires explicit Local-mode selection or the separately authorized local-source-mutation step defined by `web-to-local-handoff.md`.

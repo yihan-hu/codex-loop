@@ -115,13 +115,14 @@ Before the host dispatches a routing-sensitive action, check it:
 ```bash
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action repository_observe
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action rdc_repository --workspace-granted
+python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action rdc_transfer --workspace-granted --local-computer-authorized
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action browser_interaction --current-user-local-computer-authorized
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action skill_install
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action local_skill_install --current-user-local-install-authorized
 python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action github_publish
 ```
 
-Supported actions are `repository_observe`, `repository_mutate`, `rdc_repository`, `browser_interaction`, `skill_install`, `chatgpt_skill_install`, `local_skill_install`, and `github_publish`. In a ChatGPT Web routing session, generic `skill_install` resolves to `chatgpt_web_skill` when no explicit deployment target exists. It never selects local Codex from RDC availability, a remembered local checkout, or prior context. If `host_surface=unknown`, generic install remains unresolved and fails closed. Local repository mutation, computer use, workspace access, and local installation still require their separate current-task/current-conversation authorization inputs.
+Supported actions are `repository_observe`, `repository_mutate`, `rdc_repository`, `rdc_transfer`, `browser_interaction`, `skill_install`, `chatgpt_skill_install`, `local_skill_install`, and `github_publish`. `rdc_transfer` is a downstream binary-destination gate that can be authorized while `workspace_mode=web`; it never authorizes local repository observation/mutation or changes workspace authority. In a ChatGPT Web routing session, generic `skill_install` resolves to `chatgpt_web_skill` when no explicit deployment target exists. It never selects local Codex from RDC availability, a remembered local checkout, or prior context. If `host_surface=unknown`, generic install remains unresolved and fails closed. Local repository mutation, computer use, workspace access, and local installation still require their separate current-task/current-conversation authorization inputs.
 
 ## Post-task-review permission smoke planning
 
@@ -368,42 +369,47 @@ python scripts/codex_loop.py external-resolve-failure --cwd REPO --task-id TASK 
   --action-id ID --evidence "later host-visible action recovered the failure"
 ```
 
-## Web FAST_PUBLISH entry contract
+## Stable publication entry contract
 
-For every Web-mode `push`/`publish` continuation, do not record a normal steer unless the user also changed the source objective. Freeze the current content evidence first:
-
-```bash
-python3 scripts/codex_loop.py web-publish-continuation-begin --cwd REPO \
-  --repository OWNER/REPO --branch main
-```
-
-When this returns `active=true` and `revalidation_forbidden=true`, current validation/review are reusable and any subsequent `validate` call fails closed until content mutation advances the generation. Then observe exact target remote head/tree and call `web-publish-plan` before permission smoke, bundle construction, Drive staging, production packaging, or an import workflow:
+Every repository `push` / `publish` continuation enters through one workspace-native ABI, regardless of Web or Local mode:
 
 ```bash
-python3 scripts/codex_loop.py web-publish-plan --cwd REPO \
+python3 scripts/codex_loop.py publish-enter --cwd REPO \
   --session-id ROUTING_SESSION \
   --repository OWNER/REPO --branch main \
   --remote-head FULL_REMOTE_HEAD --remote-tree FULL_REMOTE_TREE \
+  --controller-abi 1 \
   --capability-scope github_push=repo:OWNER/REPO \
   --capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging
 ```
 
-FAST_PUBLISH is the command default. Before transport, the planner also inspects `.github/workflows/**` against the exact remote base. A reviewed workflow delta returns `FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED`: update only the listed workflow control-plane files through the GitHub Connector, reacquire the resulting exact remote revision through `Workspace Download` (or another approved exact path), reapply the remaining non-workflow delta in that fresh Web workspace, and prove the complete tree matches the previously audited source tree before rerunning FAST. This prevents a GitHub Actions App token with only `contents: write` from failing late when the source commit itself changes a workflow file.
+`publish-enter` is the only model-facing publication entrypoint and requires an explicit controller ABI. It reads deterministic routing state and delegates to the current workspace's Web or Local planner. Its ABI v1 envelope keeps publication-protocol evolution inside the workspace: before transport, the installed/controller Skill reads the returned `workspace_protocol_reference` from the current workspace; that reference outranks transport prose bundled in the installed Skill or remembered from an older revision. The controller treats `planner_result` as opaque, follows only `next_action` / modeled actions, and never derives an alternate transport. A missing workspace router or `PUBLICATION_ROUTER_ABI_UNSUPPORTED` is a compatibility blocker; do not search for another primitive, inspect GitHub source-object presence, switch Local mode, or reconstruct source through a different data plane. See `publication-router.md`.
 
-FAST_PUBLISH is the command default. `--verified-tree-fast-path` remains a compatibility alias. The full standard Web importer is reachable only through explicit `--standard-web`, which callers may use only after the user explicitly selects that fallback.
+### Web route
 
-The FAST/standard importer is push-triggered, so `github_actions` is not part of this publication host-permission gate. After creating the request commit, require the matching import workflow run and receipt/log evidence before remote commit/tree readback can establish `SOURCE_PUSHED`. Do not blindly retry a request whose Actions outcome is missing or ambiguous.
+In Web mode the router automatically begins/reuses the publish-only continuation before calling the Web planner. If the current clean generation already has fresh validation/review, redundant validation remains forbidden. FAST_PUBLISH is the default; standard Web publication is explicit-only. The planner still returns the deterministic outcomes `FAST_PUBLISH`, `FAST_PUBLISH_REFRESH_REQUIRED`, `FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED`, `ALREADY_PUBLISHED`, `FAIL_CLOSED`, or explicitly selected `FULL_VERIFIED_PUBLISH`.
 
+The Web exact-identity protocol intentionally does **not** require GitHub to already contain the audited source commit object. `remote_source_object_presence_required=false`: the verified Git bundle carries that exact commit object into the importer. Object absence must never be used as a transport-selection gate. Success still requires exact remote commit and tree equality.
 
-Planner outcomes are deterministic:
+Low-level `web-publish-continuation-begin`, `web-publish-plan`, and `web-publish-bundle` remain available for router/protocol debugging, but normal model control does not call them directly.
 
-- `FAST_PUBLISH`: reuse every fresh gate and build/reuse exactly the planned thin bundle. Use `.github/workflows/workspace-import-fast.yml`.
-- `FAST_PUBLISH_REFRESH_REQUIRED`: run only `required_refresh_actions`, never repeat already-fresh validation/review/capability probes, never package the production Skill, never run `.github/workflows/workspace-import.yml`, then call the default planner again.
-- `ALREADY_PUBLISHED`: skip transport and continue reconciliation.
-- `FAIL_CLOSED`: a structural fast-path invariant is broken; stop before transport and present the explicit recovery choices. Do not silently choose standard publication.
-- `FULL_VERIFIED_PUBLISH`: valid only when `--standard-web` was explicitly selected.
+### Web -> local/Mac downstream synchronization
 
-For push-bound source changes, stage the final authorized content before the final validation/review. A subsequent commit that only records that reviewed index is content-equivalent and must not stale validation/review. A later combined test wrapper teardown stall does not justify repeating already-fresh scoped validation; preserve the authoritative scoped workload result according to `execution-supervision.md`.
+A user request to save/synchronize the current Web repository to a local host does not change workspace authority. Plan it with:
+
+```bash
+python3 scripts/codex_loop.py web-local-sync-plan --cwd REPO \
+  --session-id ROUTING_SESSION \
+  --destination-path /AUTHORIZED/LOCAL/PATH \
+  --workspace-granted \
+  --local-computer-authorized
+```
+
+The only automatic data plane is exact self-contained Git bundle -> Google Drive binary staging via `file_uri` -> RDC download to the authorized local path -> local size/SHA-256 + `git bundle verify` -> exact Drive cleanup. The `rdc_transfer` action is downstream-only and may be authorized while `workspace_mode=web`; it never grants `rdc_repository` or Local source mutation. GitHub Actions artifacts, repository archives, connector source relay, direct unmodeled bridges, model relay, and source regeneration are forbidden automatic fallbacks.
+
+### Local route
+
+In Local mode the same `publish-enter` ABI delegates to the native-Git planner. Pass `--workspace-granted`; ordinary source-only publication is the default, while release publication is explicit. The returned planner permits only native Git through the authorized canonical local worktree. Failure remains fail-closed with no transport switch.
 
 ## Post-push workspace Skill deployment handoff
 
@@ -542,19 +548,9 @@ python scripts/codex_loop.py release-record --cwd REPO --artifact-name skill.zip
 
 `release-plan` fails when tracked/staged source is uncommitted. Untracked paths are reported but excluded because export comes from `git archive` of the exact commit. A release receipt is bound to task generation plus source commit/tree and becomes stale after later observed workspace mutation.
 
-Only when the current conversation is in Local mode, use native Git through Remote Desktop Commander on the persistent canonical repo under `LOCAL_ROOT` for repository publishing. A generic `push` in a conversation that is still in web mode does not silently select local mode. Observe the destination branch with native Git, then plan against that state:
+Only when the current conversation is in Local mode does the stable `publish-enter` router select native Git through Remote Desktop Commander on the persistent canonical repo under `LOCAL_ROOT`. A generic `push` in Web mode never selects Local mode. Observe the destination branch with native Git, then call `publish-enter --controller-abi 1 --workspace-granted`; the returned Local planner reuses validation/review/release gates and permits only `git`. If the observed remote head is not an ancestor of the audited local target, integrate the remote change in the same canonical worktree and rerun the gates. Do not force-update around this condition.
 
-```bash
-python scripts/codex_loop.py publish-plan --cwd REPO \
-  --repository OWNER/REPO --branch main \
-  --remote-head REMOTE_COMMIT --remote-tree REMOTE_TREE
-```
-
-`publish-plan` reuses validation/review/release gates and returns only the `git` transport. If the observed remote head is not an ancestor of the audited release commit, integrate the remote change in the same canonical worktree and re-run the gates. Do not force-update around this condition.
-
-Before pushing, record dispatch with `publish-dispatch --transport git`, then execute the returned `git push --porcelain ...` through Remote Desktop Commander from the canonical worktree. Repository source bytes must stay in Git's data plane; do not move them through GitHub object/contents APIs, connector payloads, model-carried text/base64, copied source trees, or release archives. If native Git fails or is unavailable, stop and report the exact blocker rather than switching transports.
-
-After push, read back the remote ref and tree with native Git and call `publish-record --transport git`. Terminal success requires the exact audited local commit and tree. For an ambiguous outcome, inspect the real remote state before any retry.
+Before pushing, record the planned native-Git external action as required, execute only the returned `git push --porcelain ...` through Remote Desktop Commander, then read back the remote ref/tree. Repository source bytes stay in Git's data plane. If native Git fails or is unavailable, stop and report the exact blocker rather than switching transports.
 
 ## Explicitly authorized guarded model relay
 

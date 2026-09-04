@@ -121,5 +121,6 @@ Treat generic GUI automation as visible local computer use, not as Browser Contr
 ## Repository isolation
 
 An interaction-only RDC call must not inspect or mutate a local repository merely because the local host is reachable. Repository operations continue to route exclusively by `workspace_mode`, and `route-check --action rdc_repository` fails closed while that state remains `web`.
+The separate `rdc_transfer` action is the narrow exception for a user-authorized downstream binary download (for example Web -> Mac synchronization through Drive). It may be allowed while `workspace_mode=web`, but it preserves Web authority and grants no repository observation/mutation rights.
 
 Conversely, Local-mode repository development does not force `interaction_target=local_chrome`; the task may still use no browser or a cloud browser. Neither repository mode nor interaction target implies a Skill deployment destination; `deployment_target` remains an independent axis.

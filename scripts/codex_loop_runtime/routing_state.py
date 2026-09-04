@@ -19,6 +19,7 @@ ROUTE_ACTIONS = frozenset({
     "repository_observe",
     "repository_mutate",
     "rdc_repository",
+    "rdc_transfer",
     "browser_interaction",
     "skill_install",
     "chatgpt_skill_install",
@@ -333,6 +334,23 @@ def route_check(
         "generation": state["generation"],
         "requirements": [],
     }
+
+    if action == "rdc_transfer":
+        missing: list[str] = []
+        if not workspace_granted:
+            missing.append("current_conversation_workspace_grant")
+        if not local_computer_authorized:
+            missing.append("current_task_local_computer_use_authorization")
+        result.update({
+            "effective_workspace": state["workspace_mode"],
+            "transfer_role": "downstream_binary_destination_only",
+            "workspace_authority_unchanged": True,
+        })
+        if missing:
+            result["requirements"] = missing
+            return result
+        result["allowed"] = True
+        return result
 
     if action in {"repository_observe", "repository_mutate", "rdc_repository", "github_publish"}:
         if action == "rdc_repository" and state["workspace_mode"] != "local":

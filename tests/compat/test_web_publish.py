@@ -18,7 +18,9 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("remote commit == audited source commit", web_publish)
         self.assertIn("remote tree == audited source tree", web_publish)
         self.assertIn("force-with-lease", web_publish)
-        self.assertIn("web-publish-plan", web_publish)
+        self.assertIn("publish-enter", web_publish)
+        self.assertIn("references/publication-router.md", skill)
+        self.assertIn("GitHub does **not** need to contain the audited source commit object", skill)
 
     def test_web_publish_models_workflow_control_plane_refresh_before_import(self):
         web_publish = (ROOT / "references" / "web-mode-publish.md").read_text()
@@ -26,7 +28,7 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED", web_publish)
         self.assertIn("GitHub Connector", web_publish)
         self.assertIn("Workspace Download", web_publish)
-        self.assertIn("workflow-file permission", skill)
+        self.assertIn("FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED", skill)
 
     def test_local_mode_remains_native_git_only(self):
         skill = (ROOT / "SKILL.md").read_text()

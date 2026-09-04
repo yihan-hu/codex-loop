@@ -38,15 +38,16 @@ When the canonical workspace is accessed through Remote Desktop Commander, apply
 
 ## Source-only push fast path
 
-In explicit local mode, when the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then plan with:
+In explicit local mode, when the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then call the stable route-aware publication entry:
 
 ```bash
-python3 scripts/codex_loop.py publish-plan --cwd REPO \
+python3 scripts/codex_loop.py publish-enter --cwd REPO \
+  --session-id ROUTING_SESSION --controller-abi 1 --workspace-granted \
   --repository OWNER/REPO --branch main \
-  --remote-head REMOTE_COMMIT --remote-tree REMOTE_TREE --source-only
+  --remote-head REMOTE_COMMIT --remote-tree REMOTE_TREE
 ```
 
-`--source-only` publishes the current clean committed HEAD/tree directly after the normal validation/review and workspace-binding gates. It does not require `release-plan`, `skill.zip`, or `release-record`. Keep packaging/deployment as a later independent stage if the user asks for it.
+For Local mode the router delegates to the source-only native-Git planner by default. It does not require `release-plan`, `skill.zip`, or `release-record`. Keep packaging/deployment as a later independent stage if the user asks for it.
 
 Freshness is content-addressed. A commit that merely records the already-reviewed Git index while preserving index/worktree/untracked/monitored-ignored content does not invalidate validation or review. A checkout/reset/content change still changes the content fingerprint and stales that evidence.
 
@@ -74,15 +75,7 @@ The receipt is bound to task generation, source commit, source tree, artifact na
 
 For Local mode, Codex Loop uses one verified publish transport only: native Git executed through Remote Desktop Commander on the persistent canonical repository under `LOCAL_ROOT`. GitHub connector/object-API source upload is not a supported fallback. Read `verified-native-git.md` for the end-to-end verified host authentication, native push, and commit/tree readback sequence.
 
-First use native Git in the canonical worktree to fetch/observe the destination branch, then call:
-
-```bash
-python scripts/codex_loop.py publish-plan --cwd REPO \
-  --repository OWNER/REPO --branch main \
-  --remote-head REMOTE_COMMIT --remote-tree REMOTE_TREE
-```
-
-The planner reuses the existing audit gates: current-generation validation must pass when required and the final change generation must be reviewed. The observed remote head must be an ancestor of the audited release commit. If not, integrate the remote change in the same canonical worktree and re-run validation/review/release planning. Never force-push around this condition.
+First use native Git in the canonical worktree to fetch/observe the destination branch, then call `publish-enter --controller-abi 1 --workspace-granted`. The stable router selects the Local native-Git planner from routing state. That planner reuses the existing audit gates: current-generation validation must pass when required and the final change generation must be reviewed. The observed remote head must be an ancestor of the audited target commit. If not, integrate the remote change in the same canonical worktree and re-run the gates. Never force-push around this condition.
 
 A ready plan returns exactly one transport, `git`, with an exact host-visible push command. Before mutation:
 

@@ -68,8 +68,10 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("Fail-closed Web rule", skill)
         self.assertIn("RDC availability", skill)
         self.assertIn("absence of an obvious Web-mode mutation/publish bridge", skill)
-        self.assertIn("Web-push then local-sync sequencing", skill)
-        self.assertIn("downstream destination of the exact pushed commit", skill)
+        self.assertIn("Web -> local/Mac synchronization is a downstream transfer", skill)
+        self.assertIn("web-local-sync-plan", skill)
+        self.assertIn("Google Drive", skill)
+        self.assertIn("RDC download", skill)
 
         self.assertIn("Development mode is a pre-tool gate", deployment)
         self.assertIn("Web mode fails closed", deployment)
@@ -95,10 +97,13 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("Host platform contract", local_setup)
         self.assertIn("do not reject Local mode solely because RDC reports Windows", local_setup)
         self.assertIn("references/web-to-local-handoff.md", skill)
-        self.assertIn("never an automatic downgrade", skill)
+        self.assertIn("rdc_transfer", skill)
         handoff = (ROOT / "references" / "web-to-local-handoff.md").read_text()
         self.assertIn('route-transition --workspace-mode local --selection-evidence', handoff)
-        self.assertIn("Never ask the model to recreate files", handoff)
+        self.assertIn("exact self-contained verified Git bundle", handoff)
+        self.assertIn("Google Drive binary staging", handoff)
+        self.assertIn("RDC downloads the exact binary", handoff)
+        self.assertIn("Do not choose among transports", handoff)
 
     def test_public_docs_do_not_hardcode_author_local_root(self):
         docs = [ROOT / "SKILL.md", ROOT / "README.md", *sorted((ROOT / "references").glob("*.md"))]

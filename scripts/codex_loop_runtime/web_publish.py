@@ -8,7 +8,7 @@ from typing import Any
 
 from .change_tracker import sync_generation
 from .release_lineage import require_workspace_binding
-from .routing_state import permission_observation_status, route_show
+from .routing_state import permission_observation_status, route_check, route_show
 from .workspace import git_head, git_status_porcelain_z, run_git
 
 WEB_PUBLISH_CAPABILITIES = ("github_push", "google_drive_write")
@@ -619,7 +619,111 @@ def web_publish_plan(
         "request_directory": request_directory,
         "receipt_mode": receipt_mode,
         "post_push_success_requirement": "read back target branch and require remote commit == audited source commit and remote tree == audited source tree",
+        "remote_source_object_presence_required": False,
+        "remote_source_object_absence_is_blocker": False,
+        "source_object_introduction": "the verified Git bundle carries the audited source commit object into the importer; GitHub need not already contain that object",
         "transport": "google_drive_git_bundle_to_audited_workspace_import",
         "trigger_rewrite_policy": "the import workflow may use force-with-lease only to replace its own single request trigger commit with the audited source commit",
         "next": next_action,
+    }
+
+
+def web_local_sync_plan(
+    root: Path,
+    store: Any,
+    *,
+    session_id: str,
+    destination_path: str,
+    workspace_granted: bool = False,
+    local_computer_authorized: bool = False,
+) -> dict[str, Any]:
+    """Plan the only supported Web -> local/Mac binary synchronization path.
+
+    This is a downstream transfer while Web remains authoritative. It deliberately does
+    not route through GitHub artifacts and does not transition workspace_mode to local.
+    """
+    root = root.resolve()
+    store.ensure_active()
+    sync_generation(root, store)
+    require_workspace_binding(root, store)
+    route = route_show(session_id=session_id)
+    if route.get("workspace_mode") != "web":
+        return {
+            "mode": "WEB_LOCAL_SYNC_BLOCKED",
+            "code": "WEB_LOCAL_SYNC_REQUIRES_WEB_MODE",
+            "workspace_mode": route.get("workspace_mode"),
+            "workspace_authority_unchanged": True,
+            "next": "use the ordinary Local repository contract; do not reinterpret a Local task as Web-to-Local synchronization",
+        }
+
+    destination = str(destination_path).strip()
+    if not destination:
+        raise ValueError("destination_path is required")
+
+    clean = _workspace_clean(root)
+    validation_ok, validation = _validation_fresh(store)
+    review_ok, review = _review_fresh(store)
+    head, tree = _head_tree(root)
+    reasons: list[str] = []
+    if not clean:
+        reasons.append("workspace_not_clean")
+    if not validation_ok:
+        reasons.append("validation_not_fresh")
+    if not review_ok:
+        reasons.append("change_review_not_fresh")
+
+    transfer_gate = route_check(
+        action="rdc_transfer",
+        session_id=session_id,
+        workspace_granted=workspace_granted,
+        local_computer_authorized=local_computer_authorized,
+    )
+    if not transfer_gate.get("allowed"):
+        reasons.extend(str(item) for item in transfer_gate.get("requirements") or [])
+
+    bundle = _current_bundle_receipt(root, store, prerequisite_commit=None)
+    ready = not reasons
+    return {
+        "mode": "WEB_LOCAL_SYNC_READY" if ready else "WEB_LOCAL_SYNC_BLOCKED",
+        "code": "WEB_LOCAL_SYNC_PLAN_READY" if ready else "WEB_LOCAL_SYNC_REQUIREMENTS_UNMET",
+        "workspace_mode": "web",
+        "workspace_authority_unchanged": True,
+        "source_commit": head,
+        "source_tree": tree,
+        "workspace_clean": clean,
+        "validation": validation,
+        "review": review,
+        "destination_path": destination,
+        "requirements": reasons,
+        "bundle": bundle,
+        "bundle_action": ("reuse" if bundle else "build_self_contained") if ready else None,
+        "bundle_build_prerequisite_commit": None,
+        "transport": {
+            "id": "google_drive_then_rdc_download",
+            "ordered_steps": [
+                "build_or_reuse_exact_self_contained_git_bundle",
+                "upload_binary_bundle_to_dedicated_google_drive_staging_via_file_uri",
+                "verify_drive_object_id_size_and_sha256",
+                "expose_only_the_minimum_temporary_download_access_needed_by_the_authorized_host",
+                "rdc_download_exact_binary_to_authorized_destination_path",
+                "verify_local_size_sha256_and_git_bundle_verify",
+                "delete_exact_drive_staging_object_after_verified_local_consumption",
+            ],
+            "fixed": True,
+        },
+        "rdc_route": transfer_gate,
+        "forbidden_fallbacks": [
+            "github_actions_artifact",
+            "github_repository_archive",
+            "github_contents_or_object_source_relay",
+            "direct_unmodeled_binary_bridge",
+            "model_carried_base64_or_chunk_relay",
+            "source_regeneration_or_retyping",
+        ],
+        "next": (
+            "execute the fixed Drive -> RDC binary transfer exactly as planned; keep workspace_mode=web after the copy. "
+            "Only a separate explicit user request to continue development from the local repository may trigger a later route-transition to Local mode."
+            if ready
+            else "satisfy only the listed transfer/audit requirements, then rerun web-local-sync-plan; do not choose another transfer path"
+        ),
     }
