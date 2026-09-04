@@ -80,7 +80,9 @@ Exercise an **Actions write-scoped** host operation only against a workflow/job 
 For the Codex Loop repository, `Workspace Download` is an acceptable permission probe because it has `contents: read` and only packages the current source. `Workspace Import` is **not** a permission probe because it has `contents: write` and can publish source changes.
 Record the resulting `github_actions` observation at repository scope (`actions:OWNER/REPO`), not at workflow-name scope. The safe `Workspace Download` job is the probe mechanism; the observed Actions write capability is repository-scoped, so later publication must not miss the observation merely because the production workflow is `Workspace Import`.
 
-If the host exposes no safe Actions write-scope operation and no audited no-source-write workflow exists, classify the capability as `GITHUB_ACTIONS_PERMISSION_NOT_PROVEN` before substantive work. Do not invent a source mutation to force an approval prompt.
+Require this `github_actions` host-permission probe only when the planned host path will actually call an Actions write API such as workflow dispatch or rerun. Do **not** require it merely because a push-triggered workflow will execute. Web publication uses a repository push to trigger `Workspace Import` / `Workspace Import Fast`; its host permission preflight therefore requires `github_push` and `google_drive_write`, while Actions readiness is proven after the request push by observing the matching workflow run, its verified receipt/log evidence, and the exact remote commit/tree readback.
+
+If the host path really does require an Actions write API and no safe representative probe exists, classify the capability as `GITHUB_ACTIONS_PERMISSION_NOT_PROVEN` before that Actions-API operation. Do not invent a source mutation to force an approval prompt. For push-triggered publication, if no matching workflow run appears after the request commit, classify the trigger/runtime dependency as unproven and reconcile the request/branch state before any retry.
 
 ### Google Drive read
 
@@ -118,7 +120,7 @@ For `local_chrome`, keep `browser_host_health` separate from `browser_session_he
 ## Common capability sets
 
 - Web repository edit only: routing session resolves `workspace_mode=web`; current writable Web workspace; no GitHub/Drive probe unless the reviewed workflow includes publication or another external action.
-- Web-mode GitHub publication: `github_push` + `github_actions` + `google_drive_write`, because the verified Web publication path depends on GitHub repository access, an Actions write-scoped operation, and Drive staging create/delete access.
+- Web-mode GitHub publication: `github_push` + `google_drive_write`. The import workflow is push-triggered, so publication does not call a host Actions write API. Prove Actions execution after the request push by binding the matching workflow run/receipt to that trigger. Request `github_actions` separately only when the host will actually dispatch or rerun a workflow.
 - ChatGPT Web Skill install/update without source publication: native Skill surface capability only; do not probe Drive/GitHub merely because they are connected.
 - Local native-Git publication: `github_push`; use native `git push --dry-run` from the canonical authorized worktree before substantial work when publication is already part of the reviewed objective.
 - Optional cross-conversation persistence: `google_drive_read` and/or `google_drive_write` only when persistence is enabled or recoverability is an acceptance requirement. Persistence is off by default.

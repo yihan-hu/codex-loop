@@ -11,7 +11,7 @@ from .release_lineage import require_workspace_binding
 from .routing_state import permission_observation_status, route_show
 from .workspace import git_head, git_status_porcelain_z, run_git
 
-WEB_PUBLISH_CAPABILITIES = ("github_push", "github_actions", "google_drive_write")
+WEB_PUBLISH_CAPABILITIES = ("github_push", "google_drive_write")
 _PUBLISH_CONTINUATION_META = "web_publish_continuation"
 _BUNDLE_REF_RE = re.compile(r"^refs/heads/codex-loop-publish-[0-9a-f]{32}$")
 
@@ -511,6 +511,16 @@ def web_publish_plan(
         "workspace_clean": clean,
         "capability_observations": cap_status,
         "capability_observations_reused": sorted(fresh),
+        "host_permission_capabilities_required": list(WEB_PUBLISH_CAPABILITIES),
+        "github_actions_runtime_proof": {
+            "required": not already,
+            "mode": "matching_push_triggered_import_run",
+            "rule": (
+                "GitHub Actions is not a host write-permission preflight for Web publication because the importer is "
+                "triggered by the request push. After the request commit, require the matching import workflow run, "
+                "its verified receipt/log evidence, and exact remote commit/tree readback before SOURCE_PUSHED."
+            ),
+        },
         "bundle": bundle,
         "bundle_action": ("reuse" if bundle else "build") if transport_ready else None,
         "bundle_strategy": bundle_strategy if transport_ready else None,

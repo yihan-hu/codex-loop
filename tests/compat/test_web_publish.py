@@ -59,6 +59,16 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("workspace-import-receipt-${{ github.run_id }}", workflow)
         self.assertNotIn("git commit -m 'Import verified ChatGPT workspace source'", workflow)
 
+    def test_standard_import_workflow_emits_self_contained_receipt_bound_source_artifact(self):
+        workflow = (ROOT / ".github" / "workflows" / "workspace-import.yml").read_text()
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn("Build and fresh-restore published acquisition bundle", workflow)
+        self.assertIn("git bundle create /tmp/published-source.bundle", workflow)
+        self.assertIn("git clone -q /tmp/published-source.bundle", workflow)
+        self.assertIn("fresh_restore=PASS", workflow)
+        self.assertIn("published_source_artifact_id", workflow)
+        self.assertIn('fresh_restore:"PASS"', workflow)
+
     def test_fast_import_workflow_emits_self_contained_receipt_bound_source_artifact(self):
         workflow = (ROOT / ".github" / "workflows" / "workspace-import-fast.yml").read_text()
         self.assertIn(".github/fast-import-requests/*.json", workflow)

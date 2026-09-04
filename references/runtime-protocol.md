@@ -131,7 +131,6 @@ After the task/workflow has been reviewed and routing is resolved, but before su
 python3 scripts/codex_loop.py permission-preflight-plan \
   --session-id ROUTING_SESSION \
   --capability github_push \
-  --capability github_actions \
   --capability google_drive_write
 ```
 
@@ -142,8 +141,7 @@ This command **does not execute connectors, request OAuth scopes, store approval
 The standard probe semantics are:
 
 - `github_push`: Local mode uses host-visible native `git push --dry-run` against the intended remote/ref. Web mode combines live push-capable repository permission readback with one Git-database create-blob/write-object call containing fixed empty content; the blob must remain unreferenced and no tree/commit/ref may be created. A permission readback alone does not prove the host write-approval boundary was exercised. If the host exposes no isolated unreferenced object-write primitive, report the safe probe unavailable rather than create a source/ref mutation.
-- `github_actions`: invoke a write-scoped Actions operation only on an audited workflow/job that cannot mutate source or refs. In this repository, `Workspace Download` is acceptable; `Workspace Import` is forbidden as a smoke probe.
-  Record/reuse this capability at repository scope (`actions:OWNER/REPO`). Workflow names describe the safe probe versus production action; they are not separate permission-observation scopes.
+- `github_actions`: request this probe only when the host will actually call an Actions write API (for example dispatch/rerun). Invoke that operation only on an audited workflow/job that cannot mutate source or refs. In this repository, `Workspace Download` is acceptable; `Workspace Import` is forbidden as a smoke probe. Record/reuse this capability at repository scope (`actions:OWNER/REPO`). A push-triggered importer does not require this host-permission probe; its Actions runtime is proved after the request push.
 - `google_drive_read`: live list/search/metadata access in the intended Drive scope.
 - `google_drive_write`: create one uniquely named non-sensitive sentinel owned by the preflight, read back its exact ID/metadata, then delete that exact sentinel.
 
@@ -387,11 +385,13 @@ python3 scripts/codex_loop.py web-publish-plan --cwd REPO \
   --repository OWNER/REPO --branch main \
   --remote-head FULL_REMOTE_HEAD --remote-tree FULL_REMOTE_TREE \
   --capability-scope github_push=repo:OWNER/REPO \
-  --capability-scope github_actions=actions:OWNER/REPO \
   --capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging
 ```
 
 FAST_PUBLISH is the command default. `--verified-tree-fast-path` remains a compatibility alias. The full standard Web importer is reachable only through explicit `--standard-web`, which callers may use only after the user explicitly selects that fallback.
+
+The FAST/standard importer is push-triggered, so `github_actions` is not part of this publication host-permission gate. After creating the request commit, require the matching import workflow run and receipt/log evidence before remote commit/tree readback can establish `SOURCE_PUSHED`. Do not blindly retry a request whose Actions outcome is missing or ambiguous.
+
 
 Planner outcomes are deterministic:
 

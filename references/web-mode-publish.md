@@ -38,7 +38,7 @@ Before staging:
 3. Current-generation executable validation is fresh when required.
 4. Current-generation final change review is fresh.
 5. Exact target branch remote HEAD/tree is observed.
-6. Fresh scoped permission observations exist for `github_push`, `github_actions`, and `google_drive_write`.
+6. Fresh scoped permission observations exist for `github_push` and `google_drive_write`. The publication transport does not call a host Actions write API; Actions readiness is verified after the request push by observing the matching import run and its receipt/log evidence.
 7. `.github/workflows/workspace-import.yml` matches the audited exact-identity importer contract below.
 
 Run:
@@ -52,11 +52,13 @@ python3 scripts/codex_loop.py web-publish-plan --cwd REPO \
   --remote-head FULL_REMOTE_HEAD \
   --remote-tree FULL_REMOTE_TREE \
   --capability-scope github_push=repo:OWNER/REPO \
-  --capability-scope github_actions=actions:OWNER/REPO \
   --capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging
 ```
 
 `web-publish-archive` remains only a compatibility alias for bundle creation; it no longer creates a tar source archive. New integrations should use `web-publish-bundle`.
+
+`github_actions` is intentionally absent from this host-permission gate. The importer is triggered by the GitHub request commit itself, not by an Actions dispatch/rerun API call. After that trigger, treat the matching workflow run as the live Actions/runtime proof; a missing or failed run is a publication failure to reconcile, not a reason to fabricate an earlier source-mutating permission probe.
+
 
 ## Git bundle identity
 

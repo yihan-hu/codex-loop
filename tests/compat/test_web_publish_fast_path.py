@@ -43,7 +43,7 @@ def ready_store(root):
 
 
 def scopes():
-    return {"github_push": "repo:owner/repo", "github_actions": "actions:owner/repo:download", "google_drive_write": "drive:staging"}
+    return {"github_push": "repo:owner/repo", "google_drive_write": "drive:staging"}
 
 
 class FastPublishTests(unittest.TestCase):
@@ -97,7 +97,29 @@ class FastPublishTests(unittest.TestCase):
                 plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=head, remote_tree="0" * 40, capability_scopes=scopes(), verified_tree_fast_path=True)
                 self.assertEqual(plan["mode"], "FAST_PUBLISH")
                 self.assertTrue(plan["validation_reused"])
-                self.assertEqual(len(plan["capability_observations_reused"]), 3)
+                self.assertEqual(len(plan["capability_observations_reused"]), 2)
+            finally:
+                self.cleanup(route)
+
+    def test_fast_publish_treats_actions_as_post_trigger_runtime_proof(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            base, base_tree = init_repo(root)
+            (root / "second.txt").write_text("second\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "second"], cwd=root, check=True)
+            store = ready_store(root)
+            route = self.route(); self.caps(route["session_id"])
+            try:
+                plan = web_publish_plan(
+                    root, store, session_id=route["session_id"], repository="owner/repo",
+                    branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(),
+                )
+                self.assertEqual(plan["mode"], "FAST_PUBLISH")
+                self.assertEqual(plan["host_permission_capabilities_required"], ["github_push", "google_drive_write"])
+                self.assertNotIn("github_actions", plan["capability_observations"])
+                self.assertTrue(plan["github_actions_runtime_proof"]["required"])
+                self.assertEqual(plan["github_actions_runtime_proof"]["mode"], "matching_push_triggered_import_run")
             finally:
                 self.cleanup(route)
 
@@ -199,7 +221,6 @@ class FastPublishTests(unittest.TestCase):
                     plan["required_refresh_actions"],
                     [
                         "refresh_capability:github_push",
-                        "refresh_capability:github_actions",
                         "refresh_capability:google_drive_write",
                     ],
                 )
