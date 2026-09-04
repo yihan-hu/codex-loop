@@ -19,7 +19,7 @@ jobs:
       - name: Checkout trigger commit
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Resolve exact-identity request
         id: request
@@ -105,22 +105,42 @@ jobs:
             origin "$source_commit:refs/heads/$GITHUB_REF_NAME"
           published_commit="$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | awk '{print $1}')"
           test "$published_commit" = "$source_commit"
+          test "$(git rev-parse "$published_commit^{tree}")" = "$source_tree"
           echo "commit=$published_commit" >> "$GITHUB_OUTPUT"
           echo "tree=$source_tree" >> "$GITHUB_OUTPUT"
 
-      - name: Bind published source bundle
+      - name: Build and fresh-restore published acquisition bundle
         id: published_source
         shell: bash
         run: |
           set -euo pipefail
-          cp /tmp/source.bundle /tmp/published-source.bundle
+          published_commit='${{ steps.publish.outputs.commit }}'
+          published_tree='${{ steps.publish.outputs.tree }}'
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          export_ref='refs/heads/codex-loop-published-export'
+          git update-ref "$export_ref" "$published_commit"
+          git bundle create /tmp/published-source.bundle "$export_ref"
+          git update-ref -d "$export_ref"
           source_sha256="$(sha256sum /tmp/published-source.bundle | awk '{print $1}')"
           source_size="$(stat -c %s /tmp/published-source.bundle)"
-          test "$source_sha256" = "$(jq -r .bundle_sha256 /tmp/workspace-import-request.json)"
-          test "$source_size" = "$(jq -r .bundle_size /tmp/workspace-import-request.json)"
+          restore_root="$(mktemp -d)"
+          git clone -q /tmp/published-source.bundle "$restore_root/repo"
+          git -C "$restore_root/repo" checkout -q --detach "$published_commit"
+          test "$(git -C "$restore_root/repo" rev-parse HEAD)" = "$published_commit"
+          test "$(git -C "$restore_root/repo" rev-parse 'HEAD^{tree}')" = "$published_tree"
+          rm -rf "$restore_root"
           echo "sha256=$source_sha256" >> "$GITHUB_OUTPUT"
           echo "size=$source_size" >> "$GITHUB_OUTPUT"
-          echo "published source commit=${{ steps.publish.outputs.commit }} tree=${{ steps.publish.outputs.tree }} size=$source_size sha256=$source_sha256"
+          echo "published source commit=$published_commit tree=$published_tree size=$source_size sha256=$source_sha256 fresh_restore=PASS"
+
+      - name: Upload published source bundle
+        id: published_upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-source-${{ github.run_id }}
+          path: /tmp/published-source.bundle
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Write receipt
         shell: bash
@@ -139,7 +159,8 @@ jobs:
             --arg published_source_sha256 '${{ steps.published_source.outputs.sha256 }}' \
             --argjson published_source_size '${{ steps.published_source.outputs.size }}' \
             --arg published_source_artifact 'published-source-${{ github.run_id }}' \
-            '{version:3,transfer_id:$transfer_id,trigger_sha:$trigger,target_branch:$branch,bundle_sha256:$bundle_sha256,bundle_size:$bundle_size,bundle_ref:$bundle_ref,published_commit:$published_commit,published_tree:$published_tree,published_source_sha256:$published_source_sha256,published_source_size:$published_source_size,published_source_artifact:$published_source_artifact}' \
+            --arg published_source_artifact_id '${{ steps.published_upload.outputs.artifact-id }}' \
+            '{version:3,transfer_id:$transfer_id,trigger_sha:$trigger,target_branch:$branch,bundle_sha256:$bundle_sha256,bundle_size:$bundle_size,bundle_ref:$bundle_ref,published_commit:$published_commit,published_tree:$published_tree,published_source_sha256:$published_source_sha256,published_source_size:$published_source_size,published_source_artifact:$published_source_artifact,published_source_artifact_id:$published_source_artifact_id,fresh_restore:"PASS"}' \
             > /tmp/workspace-import-receipt.json
           cat /tmp/workspace-import-receipt.json
 
@@ -148,13 +169,5 @@ jobs:
         with:
           name: workspace-import-receipt-${{ github.run_id }}
           path: /tmp/workspace-import-receipt.json
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Upload published source bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: published-source-${{ github.run_id }}
-          path: /tmp/published-source.bundle
           if-no-files-found: error
           retention-days: 90
