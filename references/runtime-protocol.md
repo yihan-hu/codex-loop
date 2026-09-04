@@ -388,6 +388,8 @@ python3 scripts/codex_loop.py web-publish-plan --cwd REPO \
   --capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging
 ```
 
+FAST_PUBLISH is the command default. Before transport, the planner also inspects `.github/workflows/**` against the exact remote base. A reviewed workflow delta returns `FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED`: update only the listed workflow control-plane files through the GitHub Connector, reacquire the resulting exact remote revision through `Workspace Download` (or another approved exact path), reapply the remaining non-workflow delta in that fresh Web workspace, and prove the complete tree matches the previously audited source tree before rerunning FAST. This prevents a GitHub Actions App token with only `contents: write` from failing late when the source commit itself changes a workflow file.
+
 FAST_PUBLISH is the command default. `--verified-tree-fast-path` remains a compatibility alias. The full standard Web importer is reachable only through explicit `--standard-web`, which callers may use only after the user explicitly selects that fallback.
 
 The FAST/standard importer is push-triggered, so `github_actions` is not part of this publication host-permission gate. After creating the request commit, require the matching import workflow run and receipt/log evidence before remote commit/tree readback can establish `SOURCE_PUSHED`. Do not blindly retry a request whose Actions outcome is missing or ambiguous.

@@ -20,6 +20,14 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("force-with-lease", web_publish)
         self.assertIn("web-publish-plan", web_publish)
 
+    def test_web_publish_models_workflow_control_plane_refresh_before_import(self):
+        web_publish = (ROOT / "references" / "web-mode-publish.md").read_text()
+        skill = (ROOT / "SKILL.md").read_text()
+        self.assertIn("FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED", web_publish)
+        self.assertIn("GitHub Connector", web_publish)
+        self.assertIn("Workspace Download", web_publish)
+        self.assertIn("workflow-file permission", skill)
+
     def test_local_mode_remains_native_git_only(self):
         skill = (ROOT / "SKILL.md").read_text()
         release = (ROOT / "references" / "release-lineage.md").read_text()

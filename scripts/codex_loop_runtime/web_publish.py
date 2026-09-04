@@ -57,6 +57,43 @@ def _commit_has_path(root: Path, commit: str, path: str) -> bool:
     return probe.returncode == 0
 
 
+def _workflow_control_plane_updates(root: Path, base: str, head: str) -> list[dict[str, str]]:
+    probe = run_git(
+        root,
+        [
+            "diff",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            f"{base}..{head}",
+            "--",
+            ".github/workflows",
+        ],
+    )
+    if probe.returncode != 0:
+        raise RuntimeError(
+            "cannot inspect workflow control-plane delta: "
+            + probe.stderr.decode("utf-8", errors="replace").strip()
+        )
+    paths = sorted(
+        path.decode("utf-8", errors="strict")
+        for path in probe.stdout.split(b"\0")
+        if path
+    )
+    updates: list[dict[str, str]] = []
+    for path in paths:
+        remote_exists = _commit_has_path(root, base, path)
+        local_exists = _commit_has_path(root, head, path)
+        if remote_exists and local_exists:
+            action = "update"
+        elif local_exists:
+            action = "create"
+        else:
+            action = "delete"
+        updates.append({"path": path, "action": action})
+    return updates
+
+
 def _validation_fresh(store: Any) -> tuple[bool, dict[str, Any]]:
     generation = store.generation()
     if not bool(store.get_meta("requires_validation", True)):
@@ -329,12 +366,33 @@ def web_publish_plan(
     standard_workflow_path = ".github/workflows/workspace-import.yml"
     remote_has_fast_workflow = _commit_has_path(root, remote_head_normalized, fast_workflow_path)
     remote_has_standard_workflow = _commit_has_path(root, remote_head_normalized, standard_workflow_path)
+    local_has_fast_workflow = _commit_has_path(root, head, fast_workflow_path)
+    workflow_updates = (
+        _workflow_control_plane_updates(root, remote_head_normalized, head)
+        if remote_is_local_ancestor and not already
+        else []
+    )
+    workflow_update_paths = {entry["path"] for entry in workflow_updates}
     desired_prerequisite = None if already else (remote_head_normalized if remote_is_local_ancestor else None)
     if not already and not remote_is_local_ancestor:
         reasons.append("remote_head_not_local_ancestor")
-    if not already and not remote_has_fast_workflow:
+    if (
+        not already
+        and not remote_has_fast_workflow
+        and not (local_has_fast_workflow and fast_workflow_path in workflow_update_paths)
+    ):
         reasons.append("fast_import_workflow_not_in_remote_base")
-    fast = not reasons
+    control_plane_refresh_required = bool(
+        verified_tree_fast_path
+        and workflow_updates
+        and clean
+        and validation_ok
+        and review_ok
+        and all_fresh
+        and remote_is_local_ancestor
+        and not reasons
+    )
+    fast = not reasons and not control_plane_refresh_required
     refreshable_reasons = {
         "validation_not_fresh",
         "change_review_not_fresh",
@@ -372,6 +430,8 @@ def web_publish_plan(
         mode = "FAIL_CLOSED"
     elif already:
         mode = "ALREADY_PUBLISHED"
+    elif control_plane_refresh_required:
+        mode = "FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED"
     elif fast:
         mode = "FAST_PUBLISH"
     else:
@@ -461,6 +521,14 @@ def web_publish_plan(
         )
     elif already:
         next_action = "skip transport; continue post-push reconciliation"
+    elif mode == "FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED":
+        next_action = (
+            "stop before bundle staging/request creation; update only control_plane_workflow_updates through the GitHub Connector "
+            "against the exact observed branch head, then observe the resulting remote commit/tree and reacquire that exact "
+            "control-plane revision through Workspace Download (or another approved exact acquisition path). Reapply only the "
+            "remaining non-workflow source delta in the fresh Web workspace, prove the resulting complete source tree equals the "
+            "previously audited source tree before any new semantic edit, then rerun the default FAST_PUBLISH planner"
+        )
     elif mode == "FAST_PUBLISH":
         next_action = (
             "build exactly one thin Git bundle from expected_base, stage it, and run audited Workspace Import Fast"
@@ -474,6 +542,14 @@ def web_publish_plan(
         "planner_default": "FAST_PUBLISH",
         "fast_path_ready": fast,
         "fast_path_refresh_required": refresh_required,
+        "control_plane_refresh_required": control_plane_refresh_required,
+        "control_plane_workflow_updates": workflow_updates,
+        "control_plane_refresh_reason": (
+            "github_actions_token_cannot_publish_workflow_file_changes"
+            if control_plane_refresh_required
+            else None
+        ),
+        "control_plane_reacquisition_required": control_plane_refresh_required,
         "required_refresh_actions": required_refresh_actions,
         "stale_capabilities": stale_capabilities,
         "forbidden_before_fast_retry": (
@@ -527,6 +603,7 @@ def web_publish_plan(
         "bundle_build_prerequisite_commit": desired_prerequisite if transport_ready else None,
         "remote_head_is_local_ancestor": remote_is_local_ancestor,
         "remote_has_fast_import_workflow": remote_has_fast_workflow,
+        "local_has_fast_import_workflow": local_has_fast_workflow,
         "remote_has_standard_import_workflow": remote_has_standard_workflow,
         "already_published_exactly": already,
         "fast_path_budget": {

@@ -123,6 +123,41 @@ class FastPublishTests(unittest.TestCase):
             finally:
                 self.cleanup(route)
 
+    def test_workflow_delta_requires_connector_control_plane_refresh_before_fast_transport(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            base, base_tree = init_repo(root)
+            workflow = root / ".github" / "workflows" / "workspace-import.yml"
+            workflow.write_text("name: Standard Import\n# refreshed\n")
+            (root / "second.txt").write_text("second\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "workflow and source"], cwd=root, check=True)
+            store = ready_store(root)
+            route = self.route(); self.caps(route["session_id"])
+            try:
+                plan = web_publish_plan(
+                    root, store, session_id=route["session_id"], repository="owner/repo",
+                    branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(),
+                )
+                self.assertEqual(plan["mode"], "FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED")
+                self.assertTrue(plan["control_plane_refresh_required"])
+                self.assertTrue(plan["control_plane_reacquisition_required"])
+                self.assertEqual(
+                    plan["control_plane_workflow_updates"],
+                    [{"path": ".github/workflows/workspace-import.yml", "action": "update"}],
+                )
+                self.assertEqual(
+                    plan["control_plane_refresh_reason"],
+                    "github_actions_token_cannot_publish_workflow_file_changes",
+                )
+                self.assertIsNone(plan["workflow_path"])
+                self.assertIsNone(plan["request_directory"])
+                self.assertIsNone(plan["bundle_action"])
+                self.assertIn("GitHub Connector", plan["next"])
+                self.assertIn("Workspace Download", plan["next"])
+            finally:
+                self.cleanup(route)
+
     def test_publish_only_continuation_freezes_fresh_evidence_for_fast_publish(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
@@ -325,7 +360,7 @@ class FastPublishTests(unittest.TestCase):
                 self.cleanup(route)
 
 
-    def test_fast_workflow_must_exist_in_remote_base(self):
+    def test_missing_fast_workflow_can_be_bootstrapped_by_control_plane_refresh(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             base, base_tree = init_repo(root, with_fast_workflow=False)
@@ -338,16 +373,32 @@ class FastPublishTests(unittest.TestCase):
             route = self.route(); self.caps(route["session_id"])
             try:
                 plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(), verified_tree_fast_path=True)
-                self.assertEqual(plan["mode"], "FAIL_CLOSED")
-                self.assertTrue(plan["fail_closed"])
-                self.assertTrue(plan["design_repair_required"])
+                self.assertEqual(plan["mode"], "FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED")
                 self.assertFalse(plan["remote_has_fast_import_workflow"])
-                self.assertIn("fast_import_workflow_not_in_remote_base", plan["surprise_reasons"])
+                self.assertTrue(plan["local_has_fast_import_workflow"])
+                self.assertEqual(
+                    plan["control_plane_workflow_updates"],
+                    [{"path": ".github/workflows/workspace-import-fast.yml", "action": "create"}],
+                )
                 self.assertIsNone(plan["bundle_strategy"])
                 self.assertIsNone(plan["workflow_path"])
                 self.assertIsNone(plan["request_directory"])
-                self.assertIsNone(plan["receipt_mode"])
-                self.assertIn("present the modeled recovery options", plan["next"])
+            finally:
+                self.cleanup(route)
+
+    def test_missing_fast_workflow_without_local_replacement_still_fails_closed(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            base, base_tree = init_repo(root, with_fast_workflow=False)
+            (root / "second.txt").write_text("second\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "source only"], cwd=root, check=True)
+            store = ready_store(root)
+            route = self.route(); self.caps(route["session_id"])
+            try:
+                plan = web_publish_plan(root, store, session_id=route["session_id"], repository="owner/repo", branch="main", remote_head=base, remote_tree=base_tree, capability_scopes=scopes(), verified_tree_fast_path=True)
+                self.assertEqual(plan["mode"], "FAIL_CLOSED")
+                self.assertIn("fast_import_workflow_not_in_remote_base", plan["surprise_reasons"])
             finally:
                 self.cleanup(route)
 

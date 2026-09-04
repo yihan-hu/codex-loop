@@ -73,6 +73,20 @@ The bundle builder creates a temporary `refs/heads/codex-loop-publish-<nonce>` p
 
 A dirty workspace, stale validation, or stale final review blocks bundle creation. The Drive file is transport only and never becomes a development baseline.
 
+## Workflow-changing publication control plane
+
+GitHub-hosted import jobs run with `GITHUB_TOKEN` / GitHub App credentials. `contents: write` is sufficient for ordinary source refs, but GitHub separately rejects a push that creates or updates `.github/workflows/**` when that App token lacks workflow-file write permission. Therefore a Web publish whose audited source changes workflow files must **not** discover this only after staging and triggering an importer.
+
+Before any bundle staging or import-request commit, `web-publish-plan` must compare audited HEAD with the exact observed remote base. If `.github/workflows/**` differs, return `FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED` and list each workflow path plus `create` / `update` / `delete`. The host must then:
+
+1. use the GitHub Connector only for those reviewed workflow control-plane files, starting from the exact observed branch head;
+2. observe the resulting remote commit/tree;
+3. reacquire that exact control-plane revision through `Workspace Download` or another approved exact GitHub -> Web acquisition path;
+4. in that fresh Web workspace, reapply only the remaining non-workflow source delta and prove the complete resulting tree equals the previously audited source tree before any new semantic edit;
+5. rerun the default FAST planner against the refreshed remote base.
+
+Do not create a FAST/standard import request before this refresh is complete. Do not relay ordinary repository source bytes through GitHub contents/blob/tree APIs. This is a narrow control-plane exception for workflow files and preserves the binary Git-bundle data plane for the rest of the source. If the required exact reacquisition cannot be proven, stop rather than fabricate ancestry or force a different transport.
+
 ## Staging and trigger request
 
 Upload the exact bundle binary to the dedicated `ChatGPT-GitHub-Staging` Drive folder through the real `file_uri` bridge. Record returned Drive file ID, exact size, and SHA-256. Apply temporary `anyone: reader` access only to that exact staging object/folder boundary required by the runner.
