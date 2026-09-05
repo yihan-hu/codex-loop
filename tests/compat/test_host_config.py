@@ -25,19 +25,19 @@ def call(home: Path, *args: str, check: bool = True):
 
 
 class HostConfigTests(unittest.TestCase):
-    def test_missing_config_uses_v2_safe_defaults(self):
+    def test_missing_config_uses_v3_safe_defaults(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"
             shown, _ = call(home, "host-config", "show")
             data = shown["data"]
-            self.assertEqual(data["schema_version"], 2)
+            self.assertEqual(data["schema_version"], 3)
             self.assertEqual(data["progress_visibility"]["mode"], "enhanced")
             self.assertEqual(data["browser"]["preferred_target"], "cloud_browser")
             self.assertEqual(data["persistence"]["task_backend"], "off")
             self.assertEqual(data["persistence"]["host_profile_backend"], "local_only")
             self.assertFalse((home / "host.json").exists())
 
-    def test_v1_migrates_to_v2_on_write_and_moves_workspace_alias(self):
+    def test_v1_migrates_to_v3_on_write_and_moves_workspace_alias(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"; home.mkdir()
             path = home / "host.json"
@@ -48,7 +48,7 @@ class HostConfigTests(unittest.TestCase):
             self.assertEqual(shown["data"]["progress_visibility"]["mode"], "quiet")
             call(home, "host-config", "set", "browser.preferred_target", "cloud_browser")
             raw = json.loads(path.read_text())
-            self.assertEqual(raw["schema_version"], 2)
+            self.assertEqual(raw["schema_version"], 3)
             self.assertEqual(raw["workspace"]["default_local_workspace"], "piwork")
             self.assertNotIn("default_local_workspace", raw)
 
@@ -111,7 +111,7 @@ class HostConfigTests(unittest.TestCase):
             path = home / "host.json"
             if os.name != "nt":
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-            self.assertEqual(json.loads(path.read_text())["schema_version"], 2)
+            self.assertEqual(json.loads(path.read_text())["schema_version"], 3)
 
 
 class BrowserRoutingTests(unittest.TestCase):

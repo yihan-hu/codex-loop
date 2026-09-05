@@ -10,12 +10,13 @@ from typing import Any
 
 from .workspace_registry import host_config_path
 
-HOST_CONFIG_SCHEMA_VERSION = 2
+HOST_CONFIG_SCHEMA_VERSION = 3
 HOST_CONFIG_MAX_BYTES = 64 * 1024
 PROGRESS_MODES = frozenset({"quiet", "standard", "enhanced"})
 BROWSER_TARGETS = frozenset({"cloud_browser", "local_chrome"})
 TASK_PERSISTENCE_BACKENDS = frozenset({"off", "google_drive"})
 PROFILE_PERSISTENCE_BACKENDS = frozenset({"local_only", "google_drive"})
+DRIVE_CACHE_MAX_FOLDERS = 64
 
 DEFAULT_PROGRESS_CONFIG: dict[str, Any] = {
     "mode": "enhanced",
@@ -38,6 +39,10 @@ DEFAULT_HOST_PROFILE: dict[str, Any] = {
     "workspace": {
         "default_local_workspace": None,
     },
+    "drive": {
+        "delete_enabled": False,
+        "cache_folder_paths": [],
+    },
     "persistence": {
         "task_backend": "off",
         "host_profile_backend": "local_only",
@@ -49,6 +54,7 @@ _SECTION_KEYS = {
     "browser": frozenset(DEFAULT_HOST_PROFILE["browser"]),
     "web_publish": frozenset(DEFAULT_HOST_PROFILE["web_publish"]),
     "workspace": frozenset(DEFAULT_HOST_PROFILE["workspace"]),
+    "drive": frozenset(DEFAULT_HOST_PROFILE["drive"]),
     "persistence": frozenset(DEFAULT_HOST_PROFILE["persistence"]),
 }
 _LEAF_PATHS = {
@@ -172,6 +178,30 @@ def _validate_section(section: str, raw: Any) -> dict[str, Any]:
         alias = result["default_local_workspace"]
         if alias is not None and (not isinstance(alias, str) or not alias.strip() or len(alias) > 128):
             raise ValueError("workspace.default_local_workspace must be null or a bounded non-empty alias")
+    elif section == "drive":
+        if not isinstance(result["delete_enabled"], bool):
+            raise ValueError("drive.delete_enabled must be boolean")
+        paths = result["cache_folder_paths"]
+        if not isinstance(paths, list):
+            raise ValueError("drive.cache_folder_paths must be a JSON array")
+        if len(paths) > DRIVE_CACHE_MAX_FOLDERS:
+            raise ValueError(f"drive.cache_folder_paths may contain at most {DRIVE_CACHE_MAX_FOLDERS} entries")
+        normalized = []
+        seen = set()
+        for raw_path in paths:
+            if not isinstance(raw_path, str):
+                raise ValueError("drive.cache_folder_paths entries must be strings")
+            value = raw_path.strip().replace("\\", "/")
+            if not value or len(value) > 1024 or any(ord(ch) < 32 for ch in value):
+                raise ValueError("drive.cache_folder_paths entries must be bounded non-empty printable strings")
+            parts = [part for part in value.split("/") if part]
+            if not parts or any(part in {".", ".."} for part in parts):
+                raise ValueError("drive.cache_folder_paths entries must be canonical relative Drive paths")
+            value = "/".join(parts)
+            if value not in seen:
+                seen.add(value)
+                normalized.append(value)
+        result["cache_folder_paths"] = normalized
     elif section == "persistence":
         if result["task_backend"] not in TASK_PERSISTENCE_BACKENDS:
             raise ValueError(f"persistence.task_backend must be one of {sorted(TASK_PERSISTENCE_BACKENDS)}")
@@ -247,6 +277,11 @@ def _load_raw_host_config(*, strict: bool) -> tuple[dict[str, Any], list[str], b
             migrated, warnings = _migrate_v1(raw)
             _validate_raw_v2(migrated)
             return migrated, warnings, True
+        if version == 2:
+            migrated = dict(raw)
+            migrated["schema_version"] = HOST_CONFIG_SCHEMA_VERSION
+            _validate_raw_v2(migrated)
+            return migrated, ["host_config_schema_v2_migrated_in_memory"], True
         _validate_raw_v2(raw)
         return dict(raw), [], True
     except (ValueError, TypeError) as exc:
@@ -260,7 +295,7 @@ def effective_host_profile() -> dict[str, Any]:
     profile = copy.deepcopy(DEFAULT_HOST_PROFILE)
     try:
         profile["progress_visibility"] = _validate_progress(raw.get("progress_visibility"))
-        for section in ("browser", "web_publish", "workspace", "persistence"):
+        for section in ("browser", "web_publish", "workspace", "drive", "persistence"):
             profile[section] = _validate_section(section, raw.get(section))
     except ValueError as exc:
         profile = copy.deepcopy(DEFAULT_HOST_PROFILE)

@@ -90,8 +90,14 @@ from codex_loop_runtime.source_acquisition import (
     verify_restored_git_workspace,
 )
 from codex_loop_runtime.workspace_cache import (
+    authorize_drive_cache_cleanup,
     build_workspace_cache,
+    drive_cache_cleanup_plan,
+    drive_delete_policy,
+    register_drive_cache_folder,
+    registered_drive_cache_folders,
     restore_workspace_cache,
+    unregister_drive_cache_folder,
     validate_workspace_cache,
     workspace_cache_cleanup_plan,
 )
@@ -138,6 +144,12 @@ HOST_ADAPTER_COMMANDS = (
     ('workspace-cache-validate', 'validate a Workspace Capsule and its exact Git/worktree identity'),
     ('workspace-cache-restore', 'restore a Workspace Capsule into a fresh Git workspace and emit a consumption receipt'),
     ('workspace-cache-cleanup-plan', 'plan bounded consumed/expired Drive Workspace Capsule cleanup'),
+    ('drive-delete-policy', 'show the host-local global Drive deletion switch before any Drive delete'),
+    ('drive-cache-register', 'remember a Codex Loop cache folder path in host-local non-uploaded config'),
+    ('drive-cache-unregister', 'remove a cache folder path from host-local config'),
+    ('drive-cache-list', 'list host-local registered Codex Loop Drive cache folders'),
+    ('drive-cache-cleanup-plan', 'nominate >=3-day registered cache objects for one LLM review; never delete'),
+    ('drive-cache-cleanup-authorize', 'after LLM review and explicit human confirmation, gate exact Drive cache deletes'),
     ('objective-audit', 'record requirement-by-requirement completion evidence'),
     ('workspace-register', 'register a private host workspace alias'),
     ('workspace-registry-list', 'list private host workspace aliases'),
@@ -1365,6 +1377,65 @@ def _cmd_workspace_cache_cleanup_plan(argv: list[str]) -> int:
     return 0
 
 
+def _load_bounded_json_file(path_text: str, max_bytes: int, label: str):
+    payload = Path(path_text).resolve().read_bytes()
+    if len(payload) > max_bytes:
+        raise ValueError(f"{label} exceeds {max_bytes} bytes")
+    return json.loads(payload.decode("utf-8"))
+
+
+def _cmd_drive_delete_policy(argv: list[str]) -> int:
+    argparse.ArgumentParser(prog="codex_loop.py drive-delete-policy").parse_args(argv[1:])
+    emit_ok(drive_delete_policy())
+    return 0
+
+
+def _cmd_drive_cache_register(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="codex_loop.py drive-cache-register")
+    p.add_argument("--folder-path", required=True)
+    a = p.parse_args(argv[1:])
+    emit_ok(register_drive_cache_folder(a.folder_path))
+    return 0
+
+
+def _cmd_drive_cache_unregister(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="codex_loop.py drive-cache-unregister")
+    p.add_argument("--folder-path", required=True)
+    a = p.parse_args(argv[1:])
+    emit_ok(unregister_drive_cache_folder(a.folder_path))
+    return 0
+
+
+def _cmd_drive_cache_list(argv: list[str]) -> int:
+    argparse.ArgumentParser(prog="codex_loop.py drive-cache-list").parse_args(argv[1:])
+    emit_ok(registered_drive_cache_folders())
+    return 0
+
+
+def _cmd_drive_cache_cleanup_plan(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="codex_loop.py drive-cache-cleanup-plan")
+    p.add_argument("--objects-json", required=True)
+    a = p.parse_args(argv[1:])
+    objects = _load_bounded_json_file(a.objects_json, 1024 * 1024, "Drive cache cleanup object list")
+    if isinstance(objects, dict) and set(objects) == {"objects"}:
+        objects = objects["objects"]
+    emit_ok(drive_cache_cleanup_plan(objects))
+    return 0
+
+
+def _cmd_drive_cache_cleanup_authorize(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="codex_loop.py drive-cache-cleanup-authorize")
+    p.add_argument("--plan-json", required=True)
+    p.add_argument("--llm-confirmed-id", action="append", default=[])
+    p.add_argument("--llm-review-completed", action="store_true")
+    p.add_argument("--current-user-confirmation-observed", action="store_true")
+    p.add_argument("--confirmation-evidence")
+    a = p.parse_args(argv[1:])
+    plan = _load_bounded_json_file(a.plan_json, 1024 * 1024, "Drive cache cleanup plan")
+    emit_ok(authorize_drive_cache_cleanup(plan, llm_confirmed_ids=a.llm_confirmed_id, llm_review_completed=a.llm_review_completed, human_confirmation_observed=a.current_user_confirmation_observed, confirmation_evidence=a.confirmation_evidence))
+    return 0
+
+
 def _cmd_objective_audit(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py objective-audit')
     p.add_argument('--cwd')
@@ -1579,6 +1650,18 @@ def main() -> int:
             return _cmd_workspace_cache_restore(argv)
         if argv[0] == 'workspace-cache-cleanup-plan':
             return _cmd_workspace_cache_cleanup_plan(argv)
+        if argv[0] == 'drive-delete-policy':
+            return _cmd_drive_delete_policy(argv)
+        if argv[0] == 'drive-cache-register':
+            return _cmd_drive_cache_register(argv)
+        if argv[0] == 'drive-cache-unregister':
+            return _cmd_drive_cache_unregister(argv)
+        if argv[0] == 'drive-cache-list':
+            return _cmd_drive_cache_list(argv)
+        if argv[0] == 'drive-cache-cleanup-plan':
+            return _cmd_drive_cache_cleanup_plan(argv)
+        if argv[0] == 'drive-cache-cleanup-authorize':
+            return _cmd_drive_cache_cleanup_authorize(argv)
         if argv[0] == 'objective-audit':
             return _cmd_objective_audit(argv)
         if argv[0] == 'workspace-register':

@@ -59,3 +59,7 @@ Schema v1 `default_local_workspace` migrates into `workspace.default_local_works
 The profile may be read for non-sensitive global preferences at any time, but local path resolution still requires explicit Local-development intent and the ordinary current-conversation grant/host authorization checks. It must never be used as a fallback source for `deployment_target` or to reconstruct a missing routing-session file.
 
 Host Profile files, Drive IDs, workspace aliases/paths, browser preferences, credentials, session grants, and task state must never enter Git, source transport artifacts, or Skill packages.
+
+## Drive deletion and cache policy
+
+Host Profile schema v3 adds `drive.delete_enabled` (default false) and `drive.cache_folder_paths`. Both fields are local-only policy/registry state in `~/.codex-loop/host.json`; they must not be included in Git, task persistence manifests, Drive profile persistence, source bundles, or cross-conversation handoffs. Schema v1/v2 profiles migrate in memory and rewrite as v3 on the next explicit Host Profile write.
