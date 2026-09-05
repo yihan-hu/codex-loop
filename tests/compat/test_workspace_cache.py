@@ -59,7 +59,7 @@ class WorkspaceCacheTests(unittest.TestCase):
             self.assertEqual(
                 datetime.fromisoformat(receipt["expires_at"].replace("Z", "+00:00"))
                 - datetime.fromisoformat(receipt["created_at"].replace("Z", "+00:00")),
-                timedelta(days=7),
+                timedelta(days=3),
             )
             validated = validate_workspace_cache(capsule, expected_sha256=receipt["capsule_sha256"])
             self.assertEqual(validated["head_commit"], head)
@@ -142,8 +142,8 @@ class WorkspaceCacheTests(unittest.TestCase):
         ]
         plan = workspace_cache_cleanup_plan(objects, now=now)
         reasons = {item["cache_id"]: item["reason"] for item in plan["delete_candidates"]}
-        self.assertEqual(reasons[cache_a], "consumed")
-        self.assertEqual(reasons[cache_b], "expired_7d")
+        self.assertNotIn(cache_a, reasons)
+        self.assertEqual(reasons[cache_b], "expired_3d")
         self.assertIn(cache_a, plan["auto_restore_excluded_cache_ids"])
         self.assertTrue(any(item.get("cache_id") == cache_c for item in plan["cleanup_pending"]))
         self.assertEqual(plan["ignored_non_cache_objects"][0]["id"], "other")

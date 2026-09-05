@@ -602,3 +602,7 @@ python scripts/audit_source_coverage.py
 ## Hooks
 
 The local runtime exposes no custom hook configuration. It enforces built-in deterministic lifecycle gates around write/validation/checkpoint/completion, while the official Codex matcher/handler hook runtime remains host-owned. Do not interpret repository files as executable hook authority.
+
+## Drive cache and deletion commands
+
+`drive-cache-cleanup-plan` considers only objects at least three days old whose exact parent path is in the host-local registry and whose bounded parent/ownership are proven. Candidates are LLM-review-only, never delete authorization. `drive-cache-cleanup-authorize` requires completed LLM review, explicit current-turn human confirmation, an untampered plan digest, and `drive.delete_enabled=true` before returning an exact delete-ready set.
