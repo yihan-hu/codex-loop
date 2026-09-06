@@ -33,7 +33,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         )
         return json.loads(proc.stdout)["data"]["session_id"]
 
-    def self_handoff(self, root, commit, repository="owner/repo"):
+    def self_handoff(self, root, commit, repository="yihan-hu/codex-loop"):
         return call(
             root,
             "skill-deploy-handoff",
@@ -43,11 +43,15 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             repository,
             "--commit",
             commit,
+            "--source-tree",
+            "1" * 40,
+            "--package-sha256",
+            "2" * 64,
             "--routing-session-id",
             self.route(),
         )
 
-    def self_install_begin(self, root, commit, repository="owner/repo"):
+    def self_install_begin(self, root, commit, repository="yihan-hu/codex-loop"):
         return call(
             root,
             "skill-deploy-install-begin",
@@ -74,7 +78,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         if criterion:
             call(root, "criterion", "--index", "0", "--status", "pass", "--evidence", "fixture criterion")
 
-    def test_handoff_preserves_result_turn_and_install_begin_owns_native_terminal_turn(self):
+    def test_handoff_preserves_result_turn_and_install_begin_owns_fixed_installer_terminal_turn(self):
         commit = "0123456789abcdef0123456789abcdef01234567"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -84,16 +88,16 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             handoff, _ = self.self_handoff(root, commit)
             data = handoff["data"]
             self.assertEqual(data["source_state"], "SOURCE_PUSHED")
-            self.assertEqual(data["native_update_state"], "NATIVE_UPDATE_REQUIRED")
+            self.assertEqual(data["native_update_state"], "INSTALLER_HANDOFF_REQUIRED")
             self.assertEqual(data["native_surface_state"], "NATIVE_SURFACE_NOT_OBSERVED")
             self.assertEqual(data["library_bridge_state"], "BRIDGE_NOT_SELECTED")
-            self.assertEqual(data["install_strategy"], "native_same_name_update")
-            self.assertTrue(data["native_self_update_attempt_allowed"])
+            self.assertEqual(data["install_strategy"], "fixed_codex_loop_installer")
+            self.assertFalse(data["native_self_update_attempt_allowed"])
             self.assertEqual(data["ui_state"], "UI_NOT_OBSERVED")
             self.assertEqual(data["deployment_state"], "DEPLOY_PENDING")
             self.assertEqual(data["install_state"], "INSTALL_READY")
-            self.assertEqual(data["required_action"], "prepare_verified_production_package_then_begin_install_turn")
-            self.assertEqual(data["handoff_mode"], "self_update_native_update_ready")
+            self.assertEqual(data["required_action"], "invoke_fixed_codex_loop_installer_with_verified_handoff_after_skill_deploy_install_begin")
+            self.assertEqual(data["handoff_mode"], "self_update_fixed_installer_ready")
             self.assertIsNone(data["terminal_owner"])
             self.assertTrue(data["codex_loop_resume_allowed"])
             self.assertFalse(data["same_turn_codex_loop_followup_forbidden"])
@@ -113,7 +117,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--surface-kind",
@@ -128,11 +132,11 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             install_begin, _ = self.self_install_begin(root, commit)
             install_data = install_begin["data"]
             self.assertEqual(install_data["install_state"], "INSTALL_TURN_STARTED")
-            self.assertEqual(install_data["handoff_mode"], "terminal_self_update_native")
-            self.assertEqual(install_data["install_strategy"], "native_same_name_update")
-            self.assertTrue(install_data["native_self_update_attempt_allowed"])
-            self.assertEqual(install_data["terminal_owner"], "skill-creator/host")
-            self.assertEqual(install_data["required_action"], "invoke_native_same_name_update_with_verified_production_package_as_final_current_turn_action")
+            self.assertEqual(install_data["handoff_mode"], "terminal_self_update_fixed_installer")
+            self.assertEqual(install_data["install_strategy"], "fixed_codex_loop_installer")
+            self.assertFalse(install_data["native_self_update_attempt_allowed"])
+            self.assertEqual(install_data["terminal_owner"], "codex-loop-install/host")
+            self.assertEqual(install_data["required_action"], "invoke_codex_loop_install_with_verified_handoff_and_production_package_as_final_current_turn_action")
             self.assertFalse(install_data["codex_loop_resume_allowed"])
             self.assertTrue(install_data["same_turn_codex_loop_followup_forbidden"])
             self.assertTrue(install_data["reconcile_on_next_turn"])
@@ -141,7 +145,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("terminal Codex Loop self-update handoff is active", blocked["error"]["message"])
 
-    def test_native_surface_and_deployment_are_separate_observed_states(self):
+    def test_installer_surface_and_deployment_are_separate_observed_states(self):
         commit = "0123456789abcdef0123456789abcdef01234567"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -155,7 +159,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--later-host-turn-observed",
@@ -170,7 +174,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--surface-kind",
@@ -178,11 +182,11 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--evidence",
                 "host visibly surfaced the native Skill install/update control",
             )
-            self.assertEqual(surface["data"]["native_update_state"], "NATIVE_UPDATE_DISPATCHED")
+            self.assertEqual(surface["data"]["native_update_state"], "NATIVE_SELF_UPDATE_BYPASSED")
             self.assertEqual(surface["data"]["native_surface_state"], "NATIVE_SURFACE_OBSERVED")
             self.assertEqual(surface["data"]["library_bridge_state"], "BRIDGE_NOT_USED")
-            self.assertEqual(surface["data"]["install_strategy"], "native_same_name_update")
-            self.assertTrue(surface["data"]["native_self_update_attempt_allowed"])
+            self.assertEqual(surface["data"]["install_strategy"], "fixed_codex_loop_installer")
+            self.assertFalse(surface["data"]["native_self_update_attempt_allowed"])
             self.assertEqual(surface["data"]["ui_state"], "UI_SURFACED")
             self.assertEqual(surface["data"]["deployment_state"], "DEPLOY_PENDING")
             self.assertFalse(surface["data"]["surface_is_deployment_evidence"])
@@ -198,7 +202,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--evidence",
@@ -207,8 +211,8 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertEqual(done_deploy["data"]["deployment_state"], "DEPLOYED")
             self.assertEqual(done_deploy["data"]["native_update_state"], "NATIVE_UPDATE_CONFIRMED")
             self.assertEqual(done_deploy["data"]["library_bridge_state"], "BRIDGE_NOT_USED")
-            self.assertEqual(done_deploy["data"]["install_strategy"], "native_same_name_update")
-            self.assertTrue(done_deploy["data"]["native_self_update_attempt_allowed"])
+            self.assertEqual(done_deploy["data"]["install_strategy"], "fixed_codex_loop_installer")
+            self.assertFalse(done_deploy["data"]["native_self_update_attempt_allowed"])
 
             call(
                 root,
@@ -240,7 +244,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--later-host-turn-observed",
@@ -253,7 +257,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--evidence",
@@ -277,7 +281,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--later-host-turn-observed",
@@ -290,7 +294,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--surface-kind",
@@ -304,7 +308,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--evidence",
@@ -316,8 +320,8 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertEqual(data["deployment_state"], "DEPLOYED")
             self.assertEqual(data["native_update_state"], "NATIVE_UPDATE_CONFIRMED")
             self.assertEqual(data["library_bridge_state"], "BRIDGE_NOT_USED")
-            self.assertEqual(data["install_strategy"], "native_same_name_update")
-            self.assertTrue(data["native_self_update_attempt_allowed"])
+            self.assertEqual(data["install_strategy"], "fixed_codex_loop_installer")
+            self.assertFalse(data["native_self_update_attempt_allowed"])
             self.assertFalse(data["handoff_is_ui_evidence"])
             self.assertFalse(data["handoff_is_deployment_evidence"])
 
@@ -327,8 +331,8 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             root = Path(tmp)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             self.bootstrap(root, objective="deduplicate deployment handoff", criterion=False)
-            first, _ = call(root, "skill-deploy-handoff", "--skill-name", "epi-prose", "--repository", "owner/repo", "--commit", commit)
-            second, _ = call(root, "skill-deploy-handoff", "--skill-name", "epi-prose", "--repository", "owner/repo", "--commit", commit)
+            first, _ = call(root, "skill-deploy-handoff", "--skill-name", "epi-prose", "--repository", "yihan-hu/codex-loop", "--commit", commit)
+            second, _ = call(root, "skill-deploy-handoff", "--skill-name", "epi-prose", "--repository", "yihan-hu/codex-loop", "--commit", commit)
             self.assertEqual(first["data"]["external_action_id"], second["data"]["external_action_id"])
 
     def test_self_update_resume_requires_explicit_later_turn_observation(self):
@@ -345,7 +349,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--evidence",
@@ -369,15 +373,16 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
             )
             call(
-                root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "owner/repo",
-                "--commit", commit, "--routing-session-id", sid,
+                root, "skill-deploy-handoff", "--skill-name", "codex-loop", "--repository", "yihan-hu/codex-loop",
+                "--commit", commit, "--source-tree", "1" * 40, "--package-sha256", "2" * 64,
+                "--routing-session-id", sid,
             )
             call(
-                root, "skill-deploy-install-begin", "--skill-name", "codex-loop", "--repository", "owner/repo",
+                root, "skill-deploy-install-begin", "--skill-name", "codex-loop", "--repository", "yihan-hu/codex-loop",
                 "--commit", commit, "--routing-session-id", sid,
             )
             resumed, _ = call(
-                root, "skill-deploy-resume", "--skill-name", "codex-loop", "--repository", "owner/repo",
+                root, "skill-deploy-resume", "--skill-name", "codex-loop", "--repository", "yihan-hu/codex-loop",
                 "--commit", commit, "--later-host-turn-observed", "--same-conversation-observed",
                 "--evidence", "later user turn in the same conversation",
             )
@@ -390,7 +395,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             )
             self.assertTrue(json.loads(status.stdout)["data"]["fresh"])
 
-    def test_repeated_self_handoff_keeps_native_update_path_and_does_not_auto_bridge(self):
+    def test_repeated_self_handoff_keeps_fixed_installer_path_and_does_not_auto_bridge(self):
         commit = "e" * 40
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -404,7 +409,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 commit,
                 "--later-host-turn-observed",
@@ -413,12 +418,39 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             )
             repeated, _ = self.self_handoff(root, commit)
             data = repeated["data"]
-            self.assertEqual(data["native_update_state"], "NATIVE_UPDATE_REQUIRED")
-            self.assertEqual(data["install_strategy"], "native_same_name_update")
-            self.assertTrue(data["native_self_update_attempt_allowed"])
+            self.assertEqual(data["native_update_state"], "INSTALLER_HANDOFF_REQUIRED")
+            self.assertEqual(data["install_strategy"], "fixed_codex_loop_installer")
+            self.assertFalse(data["native_self_update_attempt_allowed"])
             self.assertEqual(data["required_action"], "reconcile_existing_self_update")
             self.assertEqual(data["handoff_mode"], "self_update_reconcile")
-            self.assertEqual(data["host_managed_alternative"], "supported_host_managed_skill_update")
+            self.assertEqual(data["host_managed_alternative"], "codex-loop-install")
+
+    def test_repeated_self_handoff_rejects_different_package_identity(self):
+        commit = "9" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            self.bootstrap(root, criterion=False)
+            self.self_handoff(root, commit)
+            out, proc = call(
+                root,
+                "skill-deploy-handoff",
+                "--skill-name",
+                "codex-loop",
+                "--repository",
+                "yihan-hu/codex-loop",
+                "--commit",
+                commit,
+                "--source-tree",
+                "1" * 40,
+                "--package-sha256",
+                "3" * 64,
+                "--routing-session-id",
+                self.route(),
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("does not match the requested tree/package SHA-256", out["error"]["message"])
 
     def test_handoff_rejects_short_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -431,7 +463,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--skill-name",
                 "codex-loop",
                 "--repository",
-                "owner/repo",
+                "yihan-hu/codex-loop",
                 "--commit",
                 "deadbeef",
                 "--routing-session-id",
@@ -441,7 +473,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("full 40-hex", out["error"]["message"])
 
-    def test_docs_require_native_self_update_and_no_automatic_bridge(self):
+    def test_docs_require_fixed_installer_self_update_and_no_automatic_bridge(self):
         skill = (ROOT / "SKILL.md").read_text()
         deployment = (ROOT / "references" / "skill-deployment.md").read_text()
         web_publish = (ROOT / "references" / "web-mode-publish.md").read_text()
@@ -454,15 +486,15 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         self.assertIn("git clone", skill)
         self.assertIn("publish-enter", skill)
         self.assertIn("Drive staging -> RDC", skill)
-        self.assertIn("native same-name", skill)
-        self.assertIn("Do not automatically create or save a bridge Skill", skill)
+        self.assertIn("fixed `codex-loop-install`", skill)
+        self.assertIn("fixed installed `codex-loop-install`", skill)
         self.assertIn("skill-creator", skill)
         self.assertIn("handoff itself remains planning evidence, never UI or deployment evidence", skill)
         self.assertIn("Skill update surface ownership and Codex Loop self-update override", deployment)
-        self.assertIn("native_same_name_update", deployment)
+        self.assertIn("fixed_codex_loop_installer", deployment)
         self.assertIn("BRIDGE_NOT_SELECTED", deployment)
         self.assertIn("explicit user-requested recovery fallback", deployment)
-        self.assertIn("not installed/registered", deployment)
+        self.assertIn("fixed `codex-loop-install` companion", deployment)
         self.assertIn("skill-deploy-install-begin", deployment)
         self.assertIn("INSTALL_READY", deployment)
         self.assertIn("skill-deploy-resume", deployment)
@@ -470,12 +502,12 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         self.assertIn("routing_session_id", deployment)
         self.assertIn("skill-deploy-surface-record", deployment)
         self.assertIn("skill-deploy-complete", deployment)
-        self.assertIn("native_same_name_update", runtime)
+        self.assertIn("fixed_codex_loop_installer", runtime)
         self.assertIn("BRIDGE_NOT_SELECTED", runtime)
-        self.assertIn("NATIVE_UPDATE_DISPATCHED", runtime)
+        self.assertIn("NATIVE_SELF_UPDATE_BYPASSED", runtime)
         self.assertIn("active workspace Skill", completion)
-        self.assertIn("No bridge Skill is created automatically", completion)
-        self.assertIn("native same-name Skill update surface", readme)
+        self.assertIn("No per-update bridge Skill is created automatically", completion)
+        self.assertIn("fixed installed `codex-loop-install` companion", readme)
         self.assertIn("not created automatically", readme)
         self.assertIn("thin_from_remote_head", web_publish)
         self.assertIn("Do not attempt a full-history bundle first", web_publish)

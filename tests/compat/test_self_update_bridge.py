@@ -72,22 +72,22 @@ policy:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("native_same_name_update", deployment)
+        self.assertIn("fixed_codex_loop_installer", deployment)
         self.assertIn("BRIDGE_NOT_SELECTED", deployment)
         self.assertIn("explicit user-requested recovery fallback", deployment)
-        self.assertIn("not installed/registered", deployment)
+        self.assertIn("fixed `codex-loop-install` companion", deployment)
         self.assertIn("build_self_update_bridge.py", deployment)
         self.assertIn("b5a748", deployment.lower())
         self.assertIn("visible temporary Library Skill", deployment)
 
-        self.assertIn("native same-name", skill)
-        self.assertIn("Do not automatically create or save a bridge Skill", skill)
+        self.assertIn("fixed installer", skill.lower())
+        self.assertIn("no automatic per-update bridge", skill.lower())
         self.assertIn("legacy", skill.lower())
         self.assertIn("explicit user-requested recovery", skill)
 
-        self.assertIn("native same-name Skill update surface", readme)
+        self.assertIn("fixed companion Skill `codex-loop-install`", readme)
         self.assertIn("not created automatically", readme)
-        self.assertIn("legacy bridge generator is explicit recovery only", readme.lower())
+        self.assertIn("legacy bridge generator remains explicit recovery only", readme.lower())
 
         for text in (deployment, skill, readme):
             self.assertNotIn("HOST_SAME_NAME_SKILL_UPDATE_SURFACE_UNSTABLE", text)

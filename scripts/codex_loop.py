@@ -567,6 +567,8 @@ def _parse_skill_deploy_args(
     p.add_argument('--skill-name', required=True)
     p.add_argument('--repository', required=True)
     p.add_argument('--commit', required=True)
+    p.add_argument('--source-tree')
+    p.add_argument('--package-sha256')
     if include_routing_session:
         p.add_argument('--routing-session-id')
     if include_surface:
@@ -604,12 +606,22 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
                 'same-conversation Web publish capability observations can survive the later dedicated install turn'
             )
         routing_snapshot = route_show(session_id=routing_session_id)
-    default_strategy = 'native_same_name_update' if is_self_update else 'native_skill_update'
+    source_tree = str(args.source_tree or '').strip().lower() or None
+    package_sha256 = str(args.package_sha256 or '').strip().lower() or None
+    if is_self_update:
+        if not _FULL_COMMIT_RE.fullmatch(source_tree or ''):
+            raise ValueError('Codex Loop self-update handoff requires --source-tree as a full 40-hex Git tree SHA')
+        if not re.fullmatch(r'[0-9a-f]{64}', package_sha256 or ''):
+            raise ValueError('Codex Loop self-update handoff requires --package-sha256 as a full 64-hex package SHA-256')
+    default_strategy = 'fixed_codex_loop_installer' if is_self_update else 'native_skill_update'
     planned_details = {
-        'handoff_mode': 'self_update_native_update_ready' if is_self_update else 'native_skill_update',
+        'handoff_mode': 'self_update_fixed_installer_ready' if is_self_update else 'native_skill_update',
         'install_strategy': default_strategy,
+        'installer_skill': 'codex-loop-install' if is_self_update else None,
+        'source_tree': source_tree if is_self_update else None,
+        'package_sha256': package_sha256 if is_self_update else None,
         'bridge_fallback_policy': 'explicit_user_request_only' if is_self_update else None,
-        'native_self_update_attempt_allowed': True if is_self_update else None,
+        'native_self_update_attempt_allowed': False if is_self_update else None,
         'terminal_owner': None,
         'install_turn_started': False if is_self_update else None,
         'reconcile_on_next_turn': False,
@@ -629,6 +641,11 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
     action = store.external_action(action_id)
     action_state = action['state']
     action_details = json.loads(action['details_json']) if action.get('details_json') else {}
+    if is_self_update:
+        if action_details.get('source_tree') != source_tree or action_details.get('package_sha256') != package_sha256:
+            raise ValueError('existing Codex Loop self-update handoff identity does not match the requested tree/package SHA-256')
+        if action_details.get('install_strategy') not in {'fixed_codex_loop_installer', 'verified_library_bridge'}:
+            raise ValueError('existing Codex Loop self-update action uses an incompatible legacy install strategy; reconcile it before creating a fixed-installer handoff')
     strategy = action_details.get('install_strategy') or default_strategy
     bridge_used = bool(is_self_update and strategy == 'verified_library_bridge')
     if action_state == 'terminal_success':
@@ -644,7 +661,7 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         ui_state = 'UI_SURFACED' if action_details.get('ui_surfaced') is True else 'UI_NOT_REQUIRED' if action_details.get('ui_surfaced') is False else 'UI_STATE_UNKNOWN'
         deployment_state = 'DEPLOY_PENDING'
     else:
-        native_update_state = 'NATIVE_UPDATE_REQUIRED'
+        native_update_state = 'INSTALLER_HANDOFF_REQUIRED' if is_self_update else 'NATIVE_UPDATE_REQUIRED'
         native_surface_state = 'NATIVE_SURFACE_NOT_OBSERVED'
         library_bridge_state = 'BRIDGE_NOT_SELECTED' if is_self_update else None
         ui_state = 'UI_NOT_OBSERVED'
@@ -662,19 +679,37 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'deployment_state': deployment_state,
         'install_state': 'INSTALL_READY' if install_ready else None,
         'target': 'current_chatgpt_workspace_skill',
-        'native_handoff_owner': 'skill-creator/host',
+        'native_handoff_owner': 'codex-loop-install/host' if is_self_update else 'skill-creator/host',
         'install_strategy': strategy,
+        'installer_skill': 'codex-loop-install' if is_self_update else None,
+        'installer_state': (
+            'INSTALLER_HANDOFF_READY' if install_ready else
+            'INSTALLER_CONFIRMED' if action_state == 'terminal_success' else
+            'INSTALLER_DISPATCHED' if action_state in {'dispatched', 'outcome_unknown'} else
+            'INSTALLER_RECONCILE_REQUIRED' if is_self_update else None
+        ),
+        'installer_handoff': ({
+            'version': 1,
+            'installer_skill': 'codex-loop-install',
+            'skill_name': 'codex-loop',
+            'repository': repository,
+            'source_state': 'SOURCE_PUSHED',
+            'deployment_target': 'chatgpt_web_skill',
+            'source_commit': commit,
+            'source_tree': action_details.get('source_tree'),
+            'package_sha256': action_details.get('package_sha256'),
+        } if is_self_update else None),
         'bridge_fallback_policy': 'explicit_user_request_only' if is_self_update else None,
         'bridge_fallback_generator': 'scripts/build_self_update_bridge.py' if is_self_update else None,
-        'native_self_update_attempt_allowed': (not bridge_used) if is_self_update else None,
+        'native_self_update_attempt_allowed': False if is_self_update else None,
         'required_action': (
-            'prepare_verified_production_package_then_begin_install_turn' if install_ready else
+            'invoke_fixed_codex_loop_installer_with_verified_handoff_after_skill_deploy_install_begin' if install_ready else
             'reconcile_existing_self_update' if is_self_update else
             'invoke_skill_creator_or_equivalent_native_skill_update_flow'
         ),
-        'host_managed_alternative': 'supported_host_managed_skill_update',
+        'host_managed_alternative': 'codex-loop-install' if is_self_update else 'supported_host_managed_skill_update',
         'handoff_mode': (
-            'self_update_native_update_ready' if install_ready else
+            'self_update_fixed_installer_ready' if install_ready else
             'self_update_reconcile' if is_self_update else
             'native_skill_update'
         ),
@@ -723,12 +758,18 @@ def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
         raise ValueError('install turn routing session does not match the session captured by skill-deploy-handoff')
     routing_snapshot = route_show(session_id=routing_session_id)
     updated_details = dict(prior_details)
+    if prior_details.get('install_strategy') != 'fixed_codex_loop_installer':
+        raise ValueError('Codex Loop install turn requires a fixed codex-loop-install handoff')
+    if prior_details.get('installer_skill') != 'codex-loop-install':
+        raise ValueError('Codex Loop install turn is missing the fixed installer binding')
     updated_details.update({
-        'handoff_mode': 'terminal_self_update_native',
-        'install_strategy': 'native_same_name_update',
+        'handoff_mode': 'terminal_self_update_fixed_installer',
+        'install_strategy': 'fixed_codex_loop_installer',
+        'installer_skill': 'codex-loop-install',
+        'installer_state': 'INSTALLER_HANDOFF_STARTED',
         'bridge_fallback_policy': 'explicit_user_request_only',
-        'native_self_update_attempt_allowed': True,
-        'terminal_owner': 'skill-creator/host',
+        'native_self_update_attempt_allowed': False,
+        'terminal_owner': 'codex-loop-install/host',
         'install_turn_started': True,
         'reconcile_on_next_turn': True,
         'same_turn_codex_loop_resume_allowed': False,
@@ -752,10 +793,13 @@ def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
         'commit': commit,
         'identity': identity,
         'external_action_id': action['action_id'],
-        'terminal_owner': 'skill-creator/host',
-        'install_strategy': 'native_same_name_update',
+        'terminal_owner': 'codex-loop-install/host',
+        'install_strategy': 'fixed_codex_loop_installer',
+        'installer_skill': 'codex-loop-install',
+        'source_tree': prior_details.get('source_tree'),
+        'package_sha256': prior_details.get('package_sha256'),
         'bridge_fallback_policy': 'explicit_user_request_only',
-        'native_self_update_attempt_allowed': True,
+        'native_self_update_attempt_allowed': False,
         'routing_session_id': routing_session_id,
         'routing_generation': routing_snapshot.get('generation'),
         'routing_host_surface': routing_snapshot.get('host_surface'),
@@ -768,13 +812,26 @@ def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
         'source_state': 'SOURCE_PUSHED',
         'deployment_state': 'DEPLOY_PENDING',
         'install_state': 'INSTALL_TURN_STARTED',
-        'handoff_mode': 'terminal_self_update_native',
-        'install_strategy': 'native_same_name_update',
+        'handoff_mode': 'terminal_self_update_fixed_installer',
+        'install_strategy': 'fixed_codex_loop_installer',
+        'installer_skill': 'codex-loop-install',
+        'installer_state': 'INSTALLER_HANDOFF_STARTED',
+        'installer_handoff': {
+            'version': 1,
+            'installer_skill': 'codex-loop-install',
+            'skill_name': 'codex-loop',
+            'repository': repository,
+            'source_state': 'SOURCE_PUSHED',
+            'deployment_target': 'chatgpt_web_skill',
+            'source_commit': commit,
+            'source_tree': prior_details.get('source_tree'),
+            'package_sha256': prior_details.get('package_sha256'),
+        },
         'library_bridge_state': 'BRIDGE_NOT_SELECTED',
         'bridge_fallback_policy': 'explicit_user_request_only',
-        'native_self_update_attempt_allowed': True,
-        'terminal_owner': 'skill-creator/host',
-        'required_action': 'invoke_native_same_name_update_with_verified_production_package_as_final_current_turn_action',
+        'native_self_update_attempt_allowed': False,
+        'terminal_owner': 'codex-loop-install/host',
+        'required_action': 'invoke_codex_loop_install_with_verified_handoff_and_production_package_as_final_current_turn_action',
         'codex_loop_resume_allowed': False,
         'same_turn_codex_loop_followup_forbidden': True,
         'reconcile_on_next_turn': True,
@@ -850,22 +907,24 @@ def _cmd_skill_deploy_resume(argv: list[str]) -> int:
         action_id=action['action_id'],
     )
     store.set_meta(_SELF_UPDATE_BARRIER_KEY, None)
-    strategy = prior_details.get('install_strategy') or 'native_same_name_update'
+    strategy = prior_details.get('install_strategy') or 'fixed_codex_loop_installer'
     bridge_used = strategy == 'verified_library_bridge'
     emit_ok({
         'skill_name': skill_name,
         'repository': repository,
         'commit': commit,
-        'handoff_mode': 'terminal_self_update_library_bridge' if bridge_used else 'terminal_self_update_native',
+        'handoff_mode': 'terminal_self_update_library_bridge' if bridge_used else 'terminal_self_update_fixed_installer',
         'install_strategy': strategy,
+        'installer_skill': 'codex-loop-install' if not bridge_used else None,
+        'installer_state': 'INSTALLER_RECONCILE_REQUIRED' if not bridge_used else None,
         'library_bridge_state': 'BRIDGE_SURFACE_PENDING' if bridge_used else 'BRIDGE_NOT_SELECTED',
         'bridge_fallback_policy': 'explicit_user_request_only',
-        'native_self_update_attempt_allowed': not bridge_used,
+        'native_self_update_attempt_allowed': False,
         'terminal_barrier_state': 'RELEASED_ON_LATER_TURN',
         'later_host_turn_observed': True,
         'reconciliation_evidence': evidence,
         'deployment_state': 'DEPLOY_PENDING',
-        'next_action': 'reconcile observed native self-update surface and installed production revision; do not infer either',
+        'next_action': 'reconcile the installer-owned native install surface and installed production revision; do not infer either',
         'external_action_id': action['action_id'],
         'routing_session_id': routing_session_id,
         'routing_session_reused': routing_session_reused,
@@ -892,7 +951,7 @@ def _cmd_skill_deploy_surface_record(argv: list[str]) -> int:
         raise ValueError('Codex Loop self-update surface may be recorded only after skill-deploy-install-begin starts the dedicated install turn')
     if action['state'] not in {'planned', 'dispatched'}:
         raise ValueError(f"Skill deployment action is already {action['state']}; native surface cannot be newly recorded")
-    strategy = action_details.get('install_strategy') or ('native_same_name_update' if skill_name == 'codex-loop' else 'native_skill_update')
+    strategy = action_details.get('install_strategy') or ('fixed_codex_loop_installer' if skill_name == 'codex-loop' else 'native_skill_update')
     bridge_used = bool(skill_name == 'codex-loop' and strategy == 'verified_library_bridge')
     merged_details = dict(action_details)
     merged_details.update({
@@ -913,12 +972,14 @@ def _cmd_skill_deploy_surface_record(argv: list[str]) -> int:
         'repository': repository,
         'commit': commit,
         'source_state': 'SOURCE_PUSHED',
-        'native_update_state': 'NATIVE_SELF_UPDATE_BYPASSED' if bridge_used else 'NATIVE_UPDATE_DISPATCHED',
+        'native_update_state': 'NATIVE_SELF_UPDATE_BYPASSED' if skill_name == 'codex-loop' else 'NATIVE_UPDATE_DISPATCHED',
         'native_surface_state': 'NATIVE_SURFACE_OBSERVED',
+        'installer_skill': 'codex-loop-install' if skill_name == 'codex-loop' and not bridge_used else None,
+        'installer_state': 'INSTALLER_DISPATCHED' if skill_name == 'codex-loop' and not bridge_used else None,
         'library_bridge_state': ('BRIDGE_SURFACE_OBSERVED' if bridge_used else 'BRIDGE_NOT_USED') if skill_name == 'codex-loop' else None,
         'install_strategy': strategy,
         'bridge_fallback_policy': 'explicit_user_request_only' if skill_name == 'codex-loop' else None,
-        'native_self_update_attempt_allowed': (not bridge_used) if skill_name == 'codex-loop' else None,
+        'native_self_update_attempt_allowed': False if skill_name == 'codex-loop' else None,
         'ui_state': 'UI_SURFACED' if args.surface_kind == 'skill_creator_install_ui' else 'UI_NOT_REQUIRED',
         'deployment_state': 'DEPLOY_PENDING',
         'surface_kind': args.surface_kind,
@@ -937,7 +998,7 @@ def _cmd_skill_deploy_complete(argv: list[str]) -> int:
     if action['state'] not in {'dispatched', 'outcome_unknown'}:
         raise ValueError('Skill deployment can complete only after a native update/install surface was actually dispatched or observed')
     prior_details = json.loads(action['details_json']) if action.get('details_json') else {}
-    strategy = prior_details.get('install_strategy') or ('native_same_name_update' if skill_name == 'codex-loop' else 'native_skill_update')
+    strategy = prior_details.get('install_strategy') or ('fixed_codex_loop_installer' if skill_name == 'codex-loop' else 'native_skill_update')
     bridge_used = bool(skill_name == 'codex-loop' and strategy == 'verified_library_bridge')
     merged_details = dict(prior_details)
     merged_details.update({
@@ -959,10 +1020,12 @@ def _cmd_skill_deploy_complete(argv: list[str]) -> int:
         'source_state': 'SOURCE_PUSHED',
         'native_update_state': 'NATIVE_UPDATE_CONFIRMED',
         'native_surface_state': 'NATIVE_SURFACE_OBSERVED',
+        'installer_skill': 'codex-loop-install' if skill_name == 'codex-loop' and not bridge_used else None,
+        'installer_state': 'INSTALLER_CONFIRMED' if skill_name == 'codex-loop' and not bridge_used else None,
         'library_bridge_state': ('BRIDGE_PATH_CONFIRMED' if bridge_used else 'BRIDGE_NOT_USED') if skill_name == 'codex-loop' else None,
         'install_strategy': strategy,
         'bridge_fallback_policy': 'explicit_user_request_only' if skill_name == 'codex-loop' else None,
-        'native_self_update_attempt_allowed': (not bridge_used) if skill_name == 'codex-loop' else None,
+        'native_self_update_attempt_allowed': False if skill_name == 'codex-loop' else None,
         'deployment_state': 'DEPLOYED',
         'deployment_evidence': args.evidence.strip(),
         'external_action_id': action_id,
@@ -1589,7 +1652,7 @@ def _enforce_terminal_self_update_barrier(argv: list[str]) -> None:
         return
     raise RuntimeError(
         'terminal Codex Loop self-update handoff is active; do not run another Codex Loop command in the same turn. '
-        'Let skill-creator/the host own the native install surface. On a later user/host turn, run skill-deploy-resume '
+        'Let codex-loop-install/the host own the native install surface. On a later user/host turn, run skill-deploy-resume '
         'with --later-host-turn-observed before reconciliation.'
     )
 

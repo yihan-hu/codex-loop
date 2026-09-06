@@ -99,9 +99,9 @@ When Web mode modifies a Skill that is already active/present in the current Cha
 
 ### Skill update surface ownership and Codex Loop self-update override
 
-The **native Skill update surface belongs to `skill-creator`/the ChatGPT host, not to Codex Loop**. Codex Loop owns lifecycle continuity and deployment evidence bookkeeping only. **Codex Loop must never emulate, synthesize, or infer the product Install/Update UI** from internal JSON, assistant prose, an attachment, or a generated `skill.zip`. Ordinary Skills use the normal host-native update path. Codex Loop self-update also uses the host-native path, but preserves a dedicated terminal turn boundary so the old running revision never continues after the update surface is initiated.
+The **native Skill install/update surface belongs to `skill-creator`/the ChatGPT host, not to Codex Loop**. Codex Loop owns lifecycle continuity, exact package identity, and deployment evidence bookkeeping. **Codex Loop must never emulate, synthesize, or infer the product Install/Update UI** from internal JSON, assistant prose, an attachment, or a generated `skill.zip`. Ordinary Skills use the normal host-native update path. Codex Loop self-update uses the permanently installed companion Skill `codex-loop-install` as the terminal installer so the running `codex-loop` revision never updates itself and no per-update bridge has to be installed.
 
-After verified `SOURCE_PUSHED`, create a deterministic planning handoff for the exact published commit:
+After verified `SOURCE_PUSHED`, build and provenance-verify the exact production `codex-loop` package, then create a deterministic planning handoff:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-handoff \
@@ -109,17 +109,22 @@ python3 scripts/codex_loop.py skill-deploy-handoff \
   --skill-name NAME \
   --repository OWNER/REPO \
   --commit FULL_40_HEX_SHA \
+  --source-tree FULL_40_HEX_TREE \
+  --package-sha256 FULL_64_HEX_PACKAGE_SHA256 \
   --routing-session-id ROUTING_SESSION  # required for codex-loop self-update
 ```
 
-The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. For ordinary Skills it returns `NATIVE_UPDATE_REQUIRED`, `NATIVE_SURFACE_NOT_OBSERVED`, `UI_NOT_OBSERVED`, and `DEPLOY_PENDING`. For `skill-name=codex-loop`, it must return `NATIVE_UPDATE_REQUIRED`, `BRIDGE_NOT_SELECTED`, `install_strategy=native_same_name_update`, `native_self_update_attempt_allowed=true`, `bridge_fallback_policy=explicit_user_request_only`, `INSTALL_READY`, `handoff_mode=self_update_native_update_ready`, and `next_install_command=skill-deploy-install-begin`. No terminal barrier is active yet. Repeated handoff calls for the same Skill/commit deduplicate to the same action.
+For ordinary Skills, `--source-tree`, `--package-sha256`, and the routing session are not required. For `skill-name=codex-loop`, the package must already be maintainer/provenance-bound to the pushed repository/commit/tree, and the handoff must return `INSTALLER_HANDOFF_REQUIRED`, `BRIDGE_NOT_SELECTED`, `install_strategy=fixed_codex_loop_installer`, `installer_skill=codex-loop-install`, `native_self_update_attempt_allowed=false`, `INSTALL_READY`, `handoff_mode=self_update_fixed_installer_ready`, `next_install_command=skill-deploy-install-begin`, and an `installer_handoff` whose commit/tree/package hash exactly match the verified production package. No terminal barrier is active yet. Repeated handoff calls for the same Skill/commit deduplicate to the same external action.
+
+The fixed installer is maintained separately under `skills/codex-loop-install/` in the source repository and is excluded from the root consumer package. It is explicit/handoff-only and validates the structured handoff plus the package's bundled deployment manifest before invoking the host-native install/update surface. It never chooses a revision, publishes source, installs arbitrary Skills, or updates itself. Installer maintenance is a separate ordinary Skill deployment owned by Codex Loop.
 
 For self-update, the active routing session is captured in private task-local deployment state at `INSTALL_READY`, then copied into the terminal barrier only when `skill-deploy-install-begin` starts the install-only turn. It is continuity state, not permission or deployment evidence.
 
 Resolve the Codex Loop self-update handoff in this order:
 
-1. Treat `skill-deploy-handoff` as result-preserving **native-update planning** only. Keep the validated production `codex-loop` `skill.zip` byte-for-byte unchanged and bound to the exact pushed revision. Do **not** generate a bridge Skill.
-2. On a later install-only turn, start the terminal boundary explicitly:
+1. Treat `skill-deploy-handoff` as result-preserving **fixed-installer planning** only. Keep the validated production `codex-loop` `skill.zip` byte-for-byte unchanged. Do not directly invoke a same-name self-update and do not generate a per-update bridge Skill.
+2. Require `codex-loop-install` to already be installed before starting the terminal turn. If it is missing, deployment remains pending with `CODEX_LOOP_INSTALLER_NOT_INSTALLED`; install the fixed companion as a separate ordinary Skill deployment first.
+3. On the dedicated install-only turn, start the terminal boundary explicitly:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-install-begin \
@@ -129,8 +134,8 @@ python3 scripts/codex_loop.py skill-deploy-install-begin \
   --commit FULL_40_HEX_SHA
 ```
 
-   `skill-deploy-install-begin` must return `install_strategy=native_same_name_update` and `native_self_update_attempt_allowed=true`. Its final required action is to invoke the `skill-creator`/host-native **same-name update** with the already verified production package. Do not run another Codex Loop command after the host surface is initiated.
-3. For a Codex Loop self-update, wait for a later user/host turn before reconciliation. At the start of that later turn, release the terminal barrier:
+   `skill-deploy-install-begin` must return `install_strategy=fixed_codex_loop_installer`, `installer_skill=codex-loop-install`, `installer_state=INSTALLER_HANDOFF_STARTED`, `native_self_update_attempt_allowed=false`, and the same structured `installer_handoff`. Its final required current-turn action is invoking the installed `codex-loop-install` Skill with that handoff plus the unchanged production package. The installer validates and then owns the host-native Skill install/update surface. Do not run another Codex Loop command after the installer handoff begins.
+4. For a Codex Loop self-update, wait for a later user/host turn before reconciliation. At the start of that later turn, release the terminal barrier:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-resume \
@@ -140,33 +145,21 @@ python3 scripts/codex_loop.py skill-deploy-resume \
   --commit FULL_40_HEX_SHA \
   --later-host-turn-observed \
   --same-conversation-observed \
-  --evidence "new user/host turn in the same conversation after native install handoff"
+  --evidence "new user/host turn in the same conversation after codex-loop-install handoff"
 ```
 
    `skill-deploy-resume` is a turn-boundary acknowledgement, not UI or deployment evidence. With `--same-conversation-observed`, reuse the returned `routing_session_id` and do not call `route-init` again; still-fresh scoped capability observations remain eligible for reuse. In a genuinely new conversation, omit that flag and initialize a new route.
-4. Only after the later-turn resume and after the host actually exposed/initiated the native Skill update surface, record that observation:
+5. Only after the later-turn resume and after `codex-loop-install` actually caused the host native Skill install/update surface to be exposed/initiated, record that observation with `skill-deploy-surface-record`. The action becomes `dispatched`; deployment remains `DEPLOY_PENDING`.
+6. Only after host-visible evidence shows the intended production revision is active, record deployment completion with `skill-deploy-complete`. It refuses a merely planned action and requires a real dispatched/observed install surface.
+7. If the fixed installer is absent, rejects the handoff/package, cannot invoke the native surface, or the surface rejects the update, leave the action unresolved and report the exact blocker. Do not downgrade it into a closing note and do not call the task deployed.
 
-```bash
-python3 scripts/codex_loop.py skill-deploy-surface-record \
-  --cwd REPO \
-  --skill-name NAME \
-  --repository OWNER/REPO \
-  --commit FULL_40_HEX_SHA \
-  --surface-kind skill_creator_install_ui \
-  --evidence "host visibly surfaced/initiated the native Skill install/update control"
-```
+`SOURCE_PUSHED`, `SKILL_PACKAGED`, `INSTALLER_HANDOFF_READY`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored install instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence. For Codex Loop self-update, `INSTALL_READY` is a separate pre-terminal state: the result-bearing turn remains normal. Only `skill-deploy-install-begin` creates the **terminal ownership boundary** for the install-only turn; the next Codex Loop lifecycle action after that boundary belongs to a later host turn and starts with `skill-deploy-resume`.
 
-   For direct Codex Loop self-update this advances the external action to `dispatched` and returns `NATIVE_UPDATE_DISPATCHED`, `BRIDGE_NOT_USED`, and `UI_SURFACED`; deployment remains `DEPLOY_PENDING` until the intended production revision is observably active.
-5. Only after host-visible evidence shows the intended revision is active, record deployment completion with `skill-deploy-complete`. It refuses a merely planned action and requires a real dispatched/observed native surface.
-6. If no native update/install surface can be invoked or observed, or the surface rejects the update, leave the action unresolved and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED` or the exact observed host error. Do not downgrade this into a closing note and do not call the task deployed.
+### Legacy bridge policy: explicit recovery only
 
-`SOURCE_PUSHED`, `SKILL_PACKAGED`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored Save/Update instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence. For Codex Loop self-update, `INSTALL_READY` is a separate pre-terminal state: the result-bearing turn remains normal. Only `skill-deploy-install-begin` creates the **terminal ownership boundary** for the install-only turn; the next Codex Loop lifecycle action after that boundary belongs to a later host turn and starts with `skill-deploy-resume`.
+Do **not** automatically create, package, save, or invoke a per-update bridge Skill. The fixed `codex-loop-install` companion replaces the bridge as the normal self-update executor.
 
-### Bridge policy: explicit recovery only
-
-Do **not** automatically create, package, save, or invoke a bridge Skill. A Skill that is not installed/registered is not a valid executable Skill surface merely because its files exist in the Web workspace. Unless the ChatGPT host exposes a genuine ephemeral-Skill execution primitive that proves no Library item is registered, “temporarily invoke an uninstalled bridge Skill” is unavailable and must not be simulated.
-
-The existing `scripts/build_self_update_bridge.py` generator is retained only as a **legacy explicit user-requested recovery fallback**. If the user explicitly chooses that fallback, disclose that saving it creates a visible temporary Library Skill, preserve the user-verified `b5a748` two-file envelope, validate it with Skill Creator, and keep the canonical production package unchanged. Never select this fallback merely because the native update surface is missing or because a bridge generator exists.
+The existing `scripts/build_self_update_bridge.py` generator is retained only as a **legacy explicit user-requested recovery fallback** for a broken/missing fixed installer when the user specifically chooses that recovery. Saving that fallback creates a visible temporary Library Skill. Preserve the user-verified `b5a748` two-file envelope, validate it with Skill Creator, and keep the canonical production package unchanged. Never select this fallback merely because the generator exists.
 
 ## Local post-push workspace synchronization
 

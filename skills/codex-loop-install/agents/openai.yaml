@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex Loop Install"
+  short_description: "Fixed installer for verified Codex Loop updates"
+  default_prompt: "Use $codex-loop-install only to validate and install the exact Codex Loop package named by a verified self-update handoff."
+policy:
+  allow_implicit_invocation: false

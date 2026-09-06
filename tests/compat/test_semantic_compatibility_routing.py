@@ -41,7 +41,7 @@ class SemanticCompatibilityRoutingTests(unittest.TestCase):
         self.assertIn("publish-enter", skill)
         self.assertIn("Drive staging -> RDC", skill)
         self.assertIn("install/update **Codex Loop itself**", skill)
-        self.assertIn("Automatically generating or saving a bridge Skill", skill)
+        self.assertIn("fixed installed `codex-loop-install` companion", skill)
 
 
     def test_equivalence_rule_does_not_weaken_unique_capability_boundaries(self):
