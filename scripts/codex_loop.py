@@ -634,8 +634,10 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'routing_generation': routing_snapshot.get('generation') if routing_snapshot else None,
         'routing_host_surface': routing_snapshot.get('host_surface') if routing_snapshot else None,
         'routing_workspace_mode': routing_snapshot.get('workspace_mode') if routing_snapshot else None,
-        'library_not_found_recovery_policy': 'fresh_name_bridge_explicit_only' if is_installer_maintenance else None,
-        'library_not_found_recovery_generator': 'scripts/build_self_update_bridge.py --target-skill codex-loop-install' if is_installer_maintenance else None,
+        'maintenance_owner': 'codex-loop' if is_installer_maintenance else None,
+        'installer_self_update_allowed': False if is_installer_maintenance else None,
+        'bridge_recovery_allowed': False if is_installer_maintenance else None,
+        'library_not_found_policy': 'report_host_blocker_without_bridge' if is_installer_maintenance else None,
     }
     action_id = store.record_external(
         'chatgpt_skill_update',
@@ -711,11 +713,14 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'installer_invocation_mode': action_details.get('installer_invocation_mode') if is_self_update else None,
         'terminal_surface_contract': action_details.get('terminal_surface_contract') if is_self_update else None,
         'attachment_only_install_allowed': action_details.get('attachment_only_install_allowed') if is_self_update else None,
-        'library_not_found_recovery_policy': action_details.get('library_not_found_recovery_policy') if is_installer_maintenance else None,
-        'library_not_found_recovery_generator': action_details.get('library_not_found_recovery_generator') if is_installer_maintenance else None,
+        'maintenance_owner': action_details.get('maintenance_owner') if is_installer_maintenance else None,
+        'installer_self_update_allowed': action_details.get('installer_self_update_allowed') if is_installer_maintenance else None,
+        'bridge_recovery_allowed': action_details.get('bridge_recovery_allowed') if is_installer_maintenance else None,
+        'library_not_found_policy': action_details.get('library_not_found_policy') if is_installer_maintenance else None,
         'required_action': (
             'route_exact_codex_loop_install_intent_to_fixed_installer_after_skill_deploy_install_begin' if install_ready else
             'reconcile_existing_self_update' if is_self_update else
+            'invoke_skill_creator_or_equivalent_native_skill_update_flow_owned_by_codex_loop' if is_installer_maintenance else
             'invoke_skill_creator_or_equivalent_native_skill_update_flow'
         ),
         'host_managed_alternative': 'codex-loop-install' if is_self_update else 'supported_host_managed_skill_update',

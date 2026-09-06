@@ -233,7 +233,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             done, _ = call(root, "completion")
             self.assertEqual(done["data"]["status"], "PASS")
 
-    def test_installer_maintenance_handoff_exposes_fixed_library_not_found_recovery(self):
+    def test_installer_maintenance_handoff_is_codex_loop_owned_and_bridge_free(self):
         commit = "89abcdef0123456789abcdef0123456789abcdef"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -251,10 +251,13 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             )
             data = handoff["data"]
             self.assertEqual(data["install_strategy"], "native_skill_update")
-            self.assertEqual(data["library_not_found_recovery_policy"], "fresh_name_bridge_explicit_only")
+            self.assertEqual(data["maintenance_owner"], "codex-loop")
+            self.assertFalse(data["installer_self_update_allowed"])
+            self.assertFalse(data["bridge_recovery_allowed"])
+            self.assertEqual(data["library_not_found_policy"], "report_host_blocker_without_bridge")
             self.assertEqual(
-                data["library_not_found_recovery_generator"],
-                "scripts/build_self_update_bridge.py --target-skill codex-loop-install",
+                data["required_action"],
+                "invoke_skill_creator_or_equivalent_native_skill_update_flow_owned_by_codex_loop",
             )
             self.assertEqual(data["deployment_state"], "DEPLOY_PENDING")
 
