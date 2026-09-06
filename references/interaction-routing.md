@@ -13,7 +13,9 @@ Canonical intent translations include:
 - `pytest`, `npm test`, build, lint, typecheck, or another ordinary validation command -> Codex Loop plans/binds the exact command, the host executes it visibly, and the runtime records the observed result; a local-runtime `requires_host_visible_execution` response is routing, not a capability failure;
 - “use a subagent/reviewer” -> a native host subagent when available, otherwise the declared logical-isolation/serialized delegation path in `delegation.md`;
 - “save this workspace”, “continue this in another chat”, or equivalent explicit recoverability intent -> the Workspace Cache path in `persistence.md`;
-- generic Skill `install`/`update` on a ChatGPT Web host -> the native `chatgpt_web_skill` target unless the user explicitly selected a different deployment target.
+- generic Skill `install`/`update` on a ChatGPT Web host -> the native `chatgpt_web_skill` target unless the user explicitly selected a different deployment target; Codex Loop self-update uses the verified production package through native same-name update and does not auto-create a bridge Skill;
+- “save/copy/send/move this file to my Mac/local host” -> the verified Drive staging -> RDC binary transfer contract in `web-to-local-handoff.md`; the transfer request itself authorizes only the narrow downstream `rdc_transfer`;
+- “open/click/use Chrome” or native GUI wording -> resolve `interaction_target` independently; do not infer Local workspace mode or current-task local computer authorization.
 
 Only **pre-registered semantic equivalents** qualify. Do not substitute a path that changes the user's required identity, authorization boundary, security property, or state semantics. In particular, a task that specifically requires the user's local Chrome profile/session, a local filesystem checkout, or another unique host capability remains blocked when that exact capability is unavailable unless the user explicitly selects a different target.
 

@@ -74,7 +74,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         if criterion:
             call(root, "criterion", "--index", "0", "--status", "pass", "--evidence", "fixture criterion")
 
-    def test_handoff_preserves_result_turn_and_install_begin_owns_bridge_terminal_turn(self):
+    def test_handoff_preserves_result_turn_and_install_begin_owns_native_terminal_turn(self):
         commit = "0123456789abcdef0123456789abcdef01234567"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -84,16 +84,16 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             handoff, _ = self.self_handoff(root, commit)
             data = handoff["data"]
             self.assertEqual(data["source_state"], "SOURCE_PUSHED")
-            self.assertEqual(data["native_update_state"], "NATIVE_SELF_UPDATE_BYPASSED")
+            self.assertEqual(data["native_update_state"], "NATIVE_UPDATE_REQUIRED")
             self.assertEqual(data["native_surface_state"], "NATIVE_SURFACE_NOT_OBSERVED")
-            self.assertEqual(data["library_bridge_state"], "BRIDGE_REQUIRED")
-            self.assertEqual(data["install_strategy"], "verified_library_bridge")
-            self.assertFalse(data["native_self_update_attempt_allowed"])
+            self.assertEqual(data["library_bridge_state"], "BRIDGE_NOT_SELECTED")
+            self.assertEqual(data["install_strategy"], "native_same_name_update")
+            self.assertTrue(data["native_self_update_attempt_allowed"])
             self.assertEqual(data["ui_state"], "UI_NOT_OBSERVED")
             self.assertEqual(data["deployment_state"], "DEPLOY_PENDING")
             self.assertEqual(data["install_state"], "INSTALL_READY")
-            self.assertEqual(data["required_action"], "prepare_verified_library_bridge_then_begin_install_turn")
-            self.assertEqual(data["handoff_mode"], "self_update_library_bridge_ready")
+            self.assertEqual(data["required_action"], "prepare_verified_production_package_then_begin_install_turn")
+            self.assertEqual(data["handoff_mode"], "self_update_native_update_ready")
             self.assertIsNone(data["terminal_owner"])
             self.assertTrue(data["codex_loop_resume_allowed"])
             self.assertFalse(data["same_turn_codex_loop_followup_forbidden"])
@@ -128,11 +128,11 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             install_begin, _ = self.self_install_begin(root, commit)
             install_data = install_begin["data"]
             self.assertEqual(install_data["install_state"], "INSTALL_TURN_STARTED")
-            self.assertEqual(install_data["handoff_mode"], "terminal_self_update_library_bridge")
-            self.assertEqual(install_data["install_strategy"], "verified_library_bridge")
-            self.assertFalse(install_data["native_self_update_attempt_allowed"])
-            self.assertEqual(install_data["terminal_owner"], "skill-creator/host-library-save")
-            self.assertEqual(install_data["required_action"], "save_prepared_fresh_library_bridge_as_final_current_turn_action")
+            self.assertEqual(install_data["handoff_mode"], "terminal_self_update_native")
+            self.assertEqual(install_data["install_strategy"], "native_same_name_update")
+            self.assertTrue(install_data["native_self_update_attempt_allowed"])
+            self.assertEqual(install_data["terminal_owner"], "skill-creator/host")
+            self.assertEqual(install_data["required_action"], "invoke_native_same_name_update_with_verified_production_package_as_final_current_turn_action")
             self.assertFalse(install_data["codex_loop_resume_allowed"])
             self.assertTrue(install_data["same_turn_codex_loop_followup_forbidden"])
             self.assertTrue(install_data["reconcile_on_next_turn"])
@@ -178,11 +178,11 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 "--evidence",
                 "host visibly surfaced the native Skill install/update control",
             )
-            self.assertEqual(surface["data"]["native_update_state"], "NATIVE_SELF_UPDATE_BYPASSED")
+            self.assertEqual(surface["data"]["native_update_state"], "NATIVE_UPDATE_DISPATCHED")
             self.assertEqual(surface["data"]["native_surface_state"], "NATIVE_SURFACE_OBSERVED")
-            self.assertEqual(surface["data"]["library_bridge_state"], "BRIDGE_SURFACE_OBSERVED")
-            self.assertEqual(surface["data"]["install_strategy"], "verified_library_bridge")
-            self.assertFalse(surface["data"]["native_self_update_attempt_allowed"])
+            self.assertEqual(surface["data"]["library_bridge_state"], "BRIDGE_NOT_USED")
+            self.assertEqual(surface["data"]["install_strategy"], "native_same_name_update")
+            self.assertTrue(surface["data"]["native_self_update_attempt_allowed"])
             self.assertEqual(surface["data"]["ui_state"], "UI_SURFACED")
             self.assertEqual(surface["data"]["deployment_state"], "DEPLOY_PENDING")
             self.assertFalse(surface["data"]["surface_is_deployment_evidence"])
@@ -206,9 +206,9 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             )
             self.assertEqual(done_deploy["data"]["deployment_state"], "DEPLOYED")
             self.assertEqual(done_deploy["data"]["native_update_state"], "NATIVE_UPDATE_CONFIRMED")
-            self.assertEqual(done_deploy["data"]["library_bridge_state"], "BRIDGE_PATH_CONFIRMED")
-            self.assertEqual(done_deploy["data"]["install_strategy"], "verified_library_bridge")
-            self.assertFalse(done_deploy["data"]["native_self_update_attempt_allowed"])
+            self.assertEqual(done_deploy["data"]["library_bridge_state"], "BRIDGE_NOT_USED")
+            self.assertEqual(done_deploy["data"]["install_strategy"], "native_same_name_update")
+            self.assertTrue(done_deploy["data"]["native_self_update_attempt_allowed"])
 
             call(
                 root,
@@ -315,9 +315,9 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertEqual(data["external_action_state"], "terminal_success")
             self.assertEqual(data["deployment_state"], "DEPLOYED")
             self.assertEqual(data["native_update_state"], "NATIVE_UPDATE_CONFIRMED")
-            self.assertEqual(data["library_bridge_state"], "BRIDGE_PATH_CONFIRMED")
-            self.assertEqual(data["install_strategy"], "verified_library_bridge")
-            self.assertFalse(data["native_self_update_attempt_allowed"])
+            self.assertEqual(data["library_bridge_state"], "BRIDGE_NOT_USED")
+            self.assertEqual(data["install_strategy"], "native_same_name_update")
+            self.assertTrue(data["native_self_update_attempt_allowed"])
             self.assertFalse(data["handoff_is_ui_evidence"])
             self.assertFalse(data["handoff_is_deployment_evidence"])
 
@@ -390,7 +390,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             )
             self.assertTrue(json.loads(status.stdout)["data"]["fresh"])
 
-    def test_repeated_self_handoff_never_reopens_native_update_path(self):
+    def test_repeated_self_handoff_keeps_native_update_path_and_does_not_auto_bridge(self):
         commit = "e" * 40
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -409,16 +409,16 @@ class SkillPostPushRefreshTests(unittest.TestCase):
                 commit,
                 "--later-host-turn-observed",
                 "--evidence",
-                "later host turn observed after bridge save attempt",
+                "later host turn observed after native update attempt",
             )
             repeated, _ = self.self_handoff(root, commit)
             data = repeated["data"]
-            self.assertEqual(data["native_update_state"], "NATIVE_SELF_UPDATE_BYPASSED")
-            self.assertEqual(data["install_strategy"], "verified_library_bridge")
-            self.assertFalse(data["native_self_update_attempt_allowed"])
-            self.assertEqual(data["required_action"], "reconcile_existing_verified_library_bridge_self_update")
-            self.assertEqual(data["handoff_mode"], "self_update_library_bridge_reconcile")
-            self.assertIsNone(data["host_managed_alternative"])
+            self.assertEqual(data["native_update_state"], "NATIVE_UPDATE_REQUIRED")
+            self.assertEqual(data["install_strategy"], "native_same_name_update")
+            self.assertTrue(data["native_self_update_attempt_allowed"])
+            self.assertEqual(data["required_action"], "reconcile_existing_self_update")
+            self.assertEqual(data["handoff_mode"], "self_update_reconcile")
+            self.assertEqual(data["host_managed_alternative"], "supported_host_managed_skill_update")
 
     def test_handoff_rejects_short_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -441,7 +441,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("full 40-hex", out["error"]["message"])
 
-    def test_docs_require_verified_bridge_for_codex_loop_self_update(self):
+    def test_docs_require_native_self_update_and_no_automatic_bridge(self):
         skill = (ROOT / "SKILL.md").read_text()
         deployment = (ROOT / "references" / "skill-deployment.md").read_text()
         web_publish = (ROOT / "references" / "web-mode-publish.md").read_text()
@@ -450,50 +450,39 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text()
 
         self.assertIn("Current-workspace Skill post-push invariant", skill)
+        self.assertIn("Common command intent interception", skill)
+        self.assertIn("git clone", skill)
+        self.assertIn("publish-enter", skill)
+        self.assertIn("Drive staging -> RDC", skill)
+        self.assertIn("native same-name", skill)
+        self.assertIn("Do not automatically create or save a bridge Skill", skill)
         self.assertIn("skill-creator", skill)
         self.assertIn("handoff itself remains planning evidence, never UI or deployment evidence", skill)
-        self.assertIn("Codex Loop self-update override", deployment)
-        self.assertIn("Codex Loop must never emulate", deployment)
+        self.assertIn("Skill update surface ownership and Codex Loop self-update override", deployment)
+        self.assertIn("native_same_name_update", deployment)
+        self.assertIn("BRIDGE_NOT_SELECTED", deployment)
+        self.assertIn("explicit user-requested recovery fallback", deployment)
+        self.assertIn("not installed/registered", deployment)
         self.assertIn("skill-deploy-install-begin", deployment)
         self.assertIn("INSTALL_READY", deployment)
         self.assertIn("skill-deploy-resume", deployment)
         self.assertIn("--same-conversation-observed", deployment)
         self.assertIn("routing_session_id", deployment)
-        self.assertIn("thin_from_remote_head", web_publish)
-        self.assertIn("Do not attempt a full-history bundle first", web_publish)
         self.assertIn("skill-deploy-surface-record", deployment)
         self.assertIn("skill-deploy-complete", deployment)
+        self.assertIn("native_same_name_update", runtime)
+        self.assertIn("BRIDGE_NOT_SELECTED", runtime)
+        self.assertIn("NATIVE_UPDATE_DISPATCHED", runtime)
+        self.assertIn("active workspace Skill", completion)
+        self.assertIn("No bridge Skill is created automatically", completion)
+        self.assertIn("native same-name Skill update surface", readme)
+        self.assertIn("not created automatically", readme)
+        self.assertIn("thin_from_remote_head", web_publish)
+        self.assertIn("Do not attempt a full-history bundle first", web_publish)
         self.assertIn("FAST_PUBLISH", web_publish)
         self.assertIn("source-only", web_publish)
-        self.assertIn("terminal ownership boundary", deployment)
-        self.assertIn("skill-creator", deployment)
-        self.assertIn("UI_SURFACED", runtime)
-        self.assertIn("skill-deploy-install-begin", runtime)
-        self.assertIn("skill-deploy-resume", runtime)
-        self.assertIn("active workspace Skill", completion)
-        self.assertIn("Library-surface initiation", completion)
-        self.assertIn("verified fresh-name Library bridge", readme)
-        self.assertIn("terminal barrier", readme)
-        self.assertIn("Default and only Codex Loop self-update Library path", deployment)
-        self.assertIn("install_strategy=verified_library_bridge", deployment)
-        self.assertIn("native_self_update_attempt_allowed=false", deployment)
-        self.assertIn("NATIVE_SELF_UPDATE_BYPASSED", runtime)
-        self.assertIn("BRIDGE_REQUIRED", runtime)
-        self.assertIn("standard same-name/native production update", readme)
-        self.assertIn("Do not first present the production package", deployment)
-        self.assertIn("build_self_update_bridge.py", skill)
-        self.assertIn("b5a748", skill.lower())
-        self.assertIn("b5a748", deployment.lower())
-        self.assertIn("b5a748", readme.lower())
-        self.assertIn("Library not found", deployment)
-        self.assertIn("exactly `SKILL.md` and `agents/openai.yaml`", deployment)
-        self.assertIn("quoted", deployment)
-        self.assertIn("no `policy.products`", deployment)
-        self.assertIn("do not emit a follow-up bridge command", deployment.lower())
-        self.assertNotIn("explicitly invoke the exact saved bridge", deployment.lower())
-        self.assertNotIn("HOST_SAME_NAME_SKILL_UPDATE_SURFACE_UNSTABLE", deployment)
-        self.assertNotIn("Try in chat", deployment)
-        self.assertNotIn("A/B", deployment)
+        self.assertNotIn("Default and only Codex Loop self-update Library path", deployment)
+        self.assertNotIn("BRIDGE_REQUIRED", runtime)
 
 
 if __name__ == "__main__":

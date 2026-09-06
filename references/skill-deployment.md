@@ -99,7 +99,7 @@ When Web mode modifies a Skill that is already active/present in the current Cha
 
 ### Skill update surface ownership and Codex Loop self-update override
 
-The **native Skill update surface belongs to `skill-creator`/the ChatGPT host, not to Codex Loop**. Codex Loop owns lifecycle continuity and deployment evidence bookkeeping only. **Codex Loop must never emulate, synthesize, or infer the product Install/Update UI** from an internal action, returned JSON, assistant prose, an attachment, or a generated `skill.zip`. For ordinary Skills, use the normal host-native update path. **For Codex Loop installing/updating itself in ChatGPT Web, do not attempt the standard same-name/native production update at all. The default and only automatic strategy is the host-verified fresh-name Library bridge (`b5a748-library-save-success`).** Change that policy only when the user explicitly requests a different self-install strategy in the current task.
+The **native Skill update surface belongs to `skill-creator`/the ChatGPT host, not to Codex Loop**. Codex Loop owns lifecycle continuity and deployment evidence bookkeeping only. **Codex Loop must never emulate, synthesize, or infer the product Install/Update UI** from internal JSON, assistant prose, an attachment, or a generated `skill.zip`. Ordinary Skills use the normal host-native update path. Codex Loop self-update also uses the host-native path, but preserves a dedicated terminal turn boundary so the old running revision never continues after the update surface is initiated.
 
 After verified `SOURCE_PUSHED`, create a deterministic planning handoff for the exact published commit:
 
@@ -112,12 +112,13 @@ python3 scripts/codex_loop.py skill-deploy-handoff \
   --routing-session-id ROUTING_SESSION  # required for codex-loop self-update
 ```
 
-The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. For ordinary Skills it returns `NATIVE_UPDATE_REQUIRED`, `NATIVE_SURFACE_NOT_OBSERVED`, `UI_NOT_OBSERVED`, and `DEPLOY_PENDING`. For `skill-name=codex-loop`, it instead returns `NATIVE_SELF_UPDATE_BYPASSED`, `BRIDGE_REQUIRED`, `install_strategy=verified_library_bridge`, `native_self_update_attempt_allowed=false`, `INSTALL_READY`, `handoff_mode=self_update_library_bridge_ready`, and `next_install_command=skill-deploy-install-begin`; **no standard native self-update is attempted and no terminal barrier is active yet**. Repeated handoff calls for the same Skill/commit deduplicate to the same action.
+The handoff records a planned non-idempotent external action with kind `chatgpt_skill_update` and stable identity `chatgpt-skill:NAME@COMMIT`. For ordinary Skills it returns `NATIVE_UPDATE_REQUIRED`, `NATIVE_SURFACE_NOT_OBSERVED`, `UI_NOT_OBSERVED`, and `DEPLOY_PENDING`. For `skill-name=codex-loop`, it must return `NATIVE_UPDATE_REQUIRED`, `BRIDGE_NOT_SELECTED`, `install_strategy=native_same_name_update`, `native_self_update_attempt_allowed=true`, `bridge_fallback_policy=explicit_user_request_only`, `INSTALL_READY`, `handoff_mode=self_update_native_update_ready`, and `next_install_command=skill-deploy-install-begin`. No terminal barrier is active yet. Repeated handoff calls for the same Skill/commit deduplicate to the same action.
+
 For self-update, the active routing session is captured in private task-local deployment state at `INSTALL_READY`, then copied into the terminal barrier only when `skill-deploy-install-begin` starts the install-only turn. It is continuity state, not permission or deployment evidence.
 
 Resolve the Codex Loop self-update handoff in this order:
 
-1. Treat `skill-deploy-handoff` as result-preserving **Library-bridge planning** only. It returns `INSTALL_READY` and **must not activate the terminal barrier**. Before any install-only turn, generate a fresh bridge with `python3 scripts/build_self_update_bridge.py --output-dir OUT`, omitting `--instance-id`; run the pinned bridge regression, validate the generated bridge with Skill Creator `quick_validate.py`, and package it with the official `package_skill.py`. Keep the canonical production `codex-loop` `skill.zip` byte-for-byte unchanged. **Do not first present the production package to a same-name/native update surface.**
+1. Treat `skill-deploy-handoff` as result-preserving **native-update planning** only. Keep the validated production `codex-loop` `skill.zip` byte-for-byte unchanged and bound to the exact pushed revision. Do **not** generate a bridge Skill.
 2. On a later install-only turn, start the terminal boundary explicitly:
 
 ```bash
@@ -128,7 +129,7 @@ python3 scripts/codex_loop.py skill-deploy-install-begin \
   --commit FULL_40_HEX_SHA
 ```
 
-   `skill-deploy-install-begin` must return `install_strategy=verified_library_bridge` and `native_self_update_attempt_allowed=false`. Its final required action is to present/save the already-prepared **fresh bridge package** through the host Library Save surface. Do not invoke a standard same-name/native production update, do not substitute a different bridge profile, and do not run another Codex Loop command after the Library surface is initiated.
+   `skill-deploy-install-begin` must return `install_strategy=native_same_name_update` and `native_self_update_attempt_allowed=true`. Its final required action is to invoke the `skill-creator`/host-native **same-name update** with the already verified production package. Do not run another Codex Loop command after the host surface is initiated.
 3. For a Codex Loop self-update, wait for a later user/host turn before reconciliation. At the start of that later turn, release the terminal barrier:
 
 ```bash
@@ -142,8 +143,8 @@ python3 scripts/codex_loop.py skill-deploy-resume \
   --evidence "new user/host turn in the same conversation after native install handoff"
 ```
 
-   `skill-deploy-resume` is a turn-boundary acknowledgement, not UI or deployment evidence. With `--same-conversation-observed`, reuse the returned `routing_session_id` and do not call `route-init` again; still-fresh scoped capability observations remain eligible for FAST_PUBLISH reuse. In a genuinely new conversation, omit that flag and initialize a new route.
-4. Only after the later-turn resume and after the host actually exposed/initiated the **fresh bridge Library Save surface**, record that observation:
+   `skill-deploy-resume` is a turn-boundary acknowledgement, not UI or deployment evidence. With `--same-conversation-observed`, reuse the returned `routing_session_id` and do not call `route-init` again; still-fresh scoped capability observations remain eligible for reuse. In a genuinely new conversation, omit that flag and initialize a new route.
+4. Only after the later-turn resume and after the host actually exposed/initiated the native Skill update surface, record that observation:
 
 ```bash
 python3 scripts/codex_loop.py skill-deploy-surface-record \
@@ -152,37 +153,20 @@ python3 scripts/codex_loop.py skill-deploy-surface-record \
   --repository OWNER/REPO \
   --commit FULL_40_HEX_SHA \
   --surface-kind skill_creator_install_ui \
-  --evidence "host visibly surfaced/saved the freshly generated Codex Loop Library bridge"
+  --evidence "host visibly surfaced/initiated the native Skill install/update control"
 ```
 
-   For Codex Loop self-update this advances the external action to `dispatched` and returns `NATIVE_SELF_UPDATE_BYPASSED`, `BRIDGE_SURFACE_OBSERVED`, and `UI_SURFACED`; deployment is still `DEPLOY_PENDING` until the intended production Codex Loop revision is observably active. The `host_managed_update` alternative is for ordinary Skills, not the default Codex Loop self-update path.
-5. Only after host-visible evidence shows the intended revision is active, record deployment completion:
-
-```bash
-python3 scripts/codex_loop.py skill-deploy-complete \
-  --cwd REPO \
-  --skill-name NAME \
-  --repository OWNER/REPO \
-  --commit FULL_40_HEX_SHA \
-  --evidence "current workspace Skill reports the intended revision"
-```
-
-   `skill-deploy-complete` refuses to run while the action is merely `planned`; a native surface must have actually been dispatched/observed first.
-6. If no native update/install surface can be invoked or observed, leave the action unresolved and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED`. Do not downgrade this into a closing note and do not call the task deployed.
+   For direct Codex Loop self-update this advances the external action to `dispatched` and returns `NATIVE_UPDATE_DISPATCHED`, `BRIDGE_NOT_USED`, and `UI_SURFACED`; deployment remains `DEPLOY_PENDING` until the intended production revision is observably active.
+5. Only after host-visible evidence shows the intended revision is active, record deployment completion with `skill-deploy-complete`. It refuses a merely planned action and requires a real dispatched/observed native surface.
+6. If no native update/install surface can be invoked or observed, or the surface rejects the update, leave the action unresolved and report `DEPLOY_PENDING — HOST_SKILL_INSTALL_SURFACE_NOT_OBSERVED` or the exact observed host error. Do not downgrade this into a closing note and do not call the task deployed.
 
 `SOURCE_PUSHED`, `SKILL_PACKAGED`, `UI_SURFACED`, and `DEPLOYED` are distinct evidence states. A Git push, package build, `skill-deploy-handoff`, or assistant-authored Save/Update instruction can never satisfy `UI_SURFACED`. Likewise, `UI_SURFACED` can never satisfy `DEPLOYED` without installed-revision evidence. For Codex Loop self-update, `INSTALL_READY` is a separate pre-terminal state: the result-bearing turn remains normal. Only `skill-deploy-install-begin` creates the **terminal ownership boundary** for the install-only turn; the next Codex Loop lifecycle action after that boundary belongs to a later host turn and starts with `skill-deploy-resume`.
 
-### Default and only Codex Loop self-update Library path
+### Bridge policy: explicit recovery only
 
-Use this path for **every** ChatGPT Web Codex Loop install/self-update from the start, not only after `Library not found`. The verified bridge wording still mentions `Library not found` because that wording is part of the host-verified `b5a748` envelope and must not be hand-edited:
+Do **not** automatically create, package, save, or invoke a bridge Skill. A Skill that is not installed/registered is not a valid executable Skill surface merely because its files exist in the Web workspace. Unless the ChatGPT host exposes a genuine ephemeral-Skill execution primitive that proves no Library item is registered, “temporarily invoke an uninstalled bridge Skill” is unavailable and must not be simulated.
 
-1. Freeze the canonical production artifact. Keep the validated consumer `codex-loop` `skill.zip` byte-for-byte unchanged, and keep its package SHA/runtime-manifest hash associated with the already verified source commit/tree in external release evidence. Do not add repository identity back into the consumer ZIP.
-2. Generate a bridge outside the Codex Loop Skill tree with `python3 scripts/build_self_update_bridge.py --output-dir OUT`. Every real install must omit `--instance-id` so every attempt receives a fresh identity.
-3. Preserve the **user-verified `b5a748` Library-safe envelope exactly**: exactly `SKILL.md` and `agents/openai.yaml`; quoted `interface` strings; `allow_implicit_invocation: false`; no `policy.products`; the verified `Library not found` recovery description/default-prompt wording; and a `default_prompt` self-reference to the fresh bridge name. The regression fixture deliberately runs the generator with `--instance-id b5a748` and requires both generated files to match the successful Save sample byte-for-byte. Do not hand-edit the envelope.
-4. Run the pinned self-update regression, Skill Creator `quick_validate.py`, and the official `package_skill.py`. Save only that freshly generated bridge through the host-native Library surface. Do not first try the production ZIP through the standard same-name/native update surface; do not substitute a fixed-name bridge, alternate profile, or probe build.
-5. When the fresh bridge Save succeeds, end assistant-side recovery guidance there: **do not emit a follow-up bridge command**. The saved Skill is explicit-only; if the host later invokes it through the native Skill surface, it may only present the already-validated canonical production package unchanged and end immediately. On a later observed turn, verify `skills://codex-loop/references/deployment-manifest.json`; for a consumer package, record `DEPLOYED` only when the active bundle manifest hash matches the intended packaged artifact whose external release evidence is bound to the pushed source revision. A maintainer package may additionally prove that revision from its embedded source provenance.
-
-This is the only automatic Codex Loop ChatGPT Web self-install path until the user explicitly changes that policy and a later host-verified success replaces it. Do not retain or attempt an alternate standard native self-update branch in normal deployment instructions. ZIP SHA-256 is not a template invariant because the official packager may encode varying ZIP timestamps; the two generated source files are the invariant.
+The existing `scripts/build_self_update_bridge.py` generator is retained only as a **legacy explicit user-requested recovery fallback**. If the user explicitly chooses that fallback, disclose that saving it creates a visible temporary Library Skill, preserve the user-verified `b5a748` two-file envelope, validate it with Skill Creator, and keep the canonical production package unchanged. Never select this fallback merely because the native update surface is missing or because a bridge generator exists.
 
 ## Local post-push workspace synchronization
 

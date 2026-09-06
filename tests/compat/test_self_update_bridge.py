@@ -67,28 +67,33 @@ policy:
             self.assertRegex(payload["bridge_name"], r"^codex-loop-update-bridge-[a-z0-9]{5,12}$")
             self.assertRegex(payload["instance_id"], r"^[a-z0-9]{5,12}$")
 
-    def test_docs_make_verified_bridge_the_only_default_self_install_path(self):
+    def test_docs_keep_bridge_as_explicit_recovery_fallback_only(self):
         deployment = (ROOT / "references" / "skill-deployment.md").read_text(encoding="utf-8")
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("native_same_name_update", deployment)
+        self.assertIn("BRIDGE_NOT_SELECTED", deployment)
+        self.assertIn("explicit user-requested recovery fallback", deployment)
+        self.assertIn("not installed/registered", deployment)
+        self.assertIn("build_self_update_bridge.py", deployment)
+        self.assertIn("b5a748", deployment.lower())
+        self.assertIn("visible temporary Library Skill", deployment)
+
+        self.assertIn("native same-name", skill)
+        self.assertIn("Do not automatically create or save a bridge Skill", skill)
+        self.assertIn("legacy", skill.lower())
+        self.assertIn("explicit user-requested recovery", skill)
+
+        self.assertIn("native same-name Skill update surface", readme)
+        self.assertIn("not created automatically", readme)
+        self.assertIn("legacy bridge generator is explicit recovery only", readme.lower())
+
         for text in (deployment, skill, readme):
-            self.assertIn("b5a748", text.lower())
-            self.assertIn("build_self_update_bridge.py", text)
-            self.assertIn("Library not found", text)
             self.assertNotIn("HOST_SAME_NAME_SKILL_UPDATE_SURFACE_UNSTABLE", text)
             self.assertNotIn("Try in chat", text)
             self.assertNotIn("A/B", text)
-            self.assertIn("do not emit a follow-up bridge command", text.lower())
-            self.assertNotIn("explicitly invoke that exact bridge", text.lower())
-        self.assertIn("Default and only Codex Loop self-update Library path", deployment)
-        self.assertIn("every", deployment.lower())
-        self.assertIn("do not attempt the standard same-name/native production update", deployment.lower())
-        self.assertIn("do not first try a standard same-name/native production update", readme.lower())
-        self.assertIn("install_strategy=verified_library_bridge", skill)
-        self.assertIn("native_self_update_attempt_allowed=false", skill)
-        self.assertIn("exactly `SKILL.md` and `agents/openai.yaml`", deployment)
-        self.assertIn("quoted", deployment)
-        self.assertIn("no `policy.products`", deployment)
+        self.assertNotIn("Default and only Codex Loop self-update Library path", deployment)
 
     def test_generator_refuses_overwrite_same_instance(self):
         with tempfile.TemporaryDirectory() as td:
