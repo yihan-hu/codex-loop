@@ -53,16 +53,21 @@ class FixedInstallerTests(unittest.TestCase):
         )
         return proc, json.loads(proc.stdout)
 
-    def test_installer_is_fixed_explicit_and_handoff_only(self):
+    def test_installer_is_fixed_narrowly_implicit_and_handoff_validated(self):
         skill = (INSTALLER / "SKILL.md").read_text(encoding="utf-8")
         metadata = (INSTALLER / "agents" / "openai.yaml").read_text(encoding="utf-8")
         contract = (INSTALLER / "references" / "handoff-contract.md").read_text(encoding="utf-8")
         self.assertIn("name: codex-loop-install", skill)
         self.assertIn("fixed terminal installer", skill.lower())
         self.assertIn("Never install a Skill whose name is not exactly `codex-loop`", skill)
-        self.assertIn("allow_implicit_invocation: false", metadata)
+        self.assertIn("allow_implicit_invocation: true", metadata)
         self.assertIn('"repository": "yihan-hu/codex-loop"', contract)
         self.assertIn('"package_sha256"', contract)
+        self.assertIn("install, update, or reinstall Codex Loop", skill)
+        self.assertIn("present that exact package through the host-native Skill update surface", skill)
+        self.assertIn("Do not invoke Codex Loop and do not edit, repackage, rename, or substitute the canonical package", skill)
+        self.assertIn("Do not substitute a sandbox/download link", skill)
+        self.assertIn("Generic Skill installation must not route to this installer", contract)
 
     def test_validator_accepts_exact_bound_package(self):
         commit = "a" * 40
@@ -77,6 +82,10 @@ class FixedInstallerTests(unittest.TestCase):
             self.assertEqual(payload["source_commit"], commit)
             self.assertEqual(payload["source_tree"], tree)
             self.assertEqual(payload["package_sha256"], digest)
+            self.assertEqual(payload["installer_invocation_mode"], "implicit_exact_codex_loop_intent_or_explicit_skill")
+            self.assertEqual(payload["terminal_surface_contract"], "present_exact_canonical_package_through_host_native_skill_update_surface")
+            self.assertFalse(payload["attachment_only_install_allowed"])
+            self.assertFalse(payload["bridge_required"])
 
     def test_validator_rejects_package_hash_mismatch(self):
         commit = "c" * 40

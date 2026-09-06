@@ -111,7 +111,16 @@ def main() -> int:
         result = validate_package(args.package, handoff)
     except (OSError, ValueError, json.JSONDecodeError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
         return fail(str(exc))
-    print(json.dumps({"status": "PASS", **handoff, **result}, sort_keys=True))
+    print(json.dumps({
+        "status": "PASS",
+        **handoff,
+        **result,
+        "installer_invocation_mode": "implicit_exact_codex_loop_intent_or_explicit_skill",
+        "terminal_surface_contract": "present_exact_canonical_package_through_host_native_skill_update_surface",
+        "attachment_only_install_allowed": False,
+        "bridge_required": False,
+        "next_action": "present_exact_canonical_package_through_host_native_skill_update_surface_and_end_turn",
+    }, sort_keys=True))
     return 0
 
 

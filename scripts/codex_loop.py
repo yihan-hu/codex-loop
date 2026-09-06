@@ -596,6 +596,7 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
     store.ensure_active()
     identity = _skill_deploy_identity(skill_name, commit)
     is_self_update = skill_name == 'codex-loop'
+    is_installer_maintenance = skill_name == 'codex-loop-install'
     routing_session_id = None
     routing_snapshot = None
     if is_self_update:
@@ -622,6 +623,9 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'package_sha256': package_sha256 if is_self_update else None,
         'bridge_fallback_policy': 'explicit_user_request_only' if is_self_update else None,
         'native_self_update_attempt_allowed': False if is_self_update else None,
+        'installer_invocation_mode': 'implicit_exact_codex_loop_intent_or_explicit_skill' if is_self_update else None,
+        'terminal_surface_contract': 'present_exact_canonical_package_through_host_native_skill_update_surface' if is_self_update else None,
+        'attachment_only_install_allowed': False if is_self_update else None,
         'terminal_owner': None,
         'install_turn_started': False if is_self_update else None,
         'reconcile_on_next_turn': False,
@@ -630,6 +634,8 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'routing_generation': routing_snapshot.get('generation') if routing_snapshot else None,
         'routing_host_surface': routing_snapshot.get('host_surface') if routing_snapshot else None,
         'routing_workspace_mode': routing_snapshot.get('workspace_mode') if routing_snapshot else None,
+        'library_not_found_recovery_policy': 'fresh_name_bridge_explicit_only' if is_installer_maintenance else None,
+        'library_not_found_recovery_generator': 'scripts/build_self_update_bridge.py --target-skill codex-loop-install' if is_installer_maintenance else None,
     }
     action_id = store.record_external(
         'chatgpt_skill_update',
@@ -702,8 +708,13 @@ def _cmd_skill_deploy_handoff(argv: list[str]) -> int:
         'bridge_fallback_policy': 'explicit_user_request_only' if is_self_update else None,
         'bridge_fallback_generator': 'scripts/build_self_update_bridge.py' if is_self_update else None,
         'native_self_update_attempt_allowed': False if is_self_update else None,
+        'installer_invocation_mode': action_details.get('installer_invocation_mode') if is_self_update else None,
+        'terminal_surface_contract': action_details.get('terminal_surface_contract') if is_self_update else None,
+        'attachment_only_install_allowed': action_details.get('attachment_only_install_allowed') if is_self_update else None,
+        'library_not_found_recovery_policy': action_details.get('library_not_found_recovery_policy') if is_installer_maintenance else None,
+        'library_not_found_recovery_generator': action_details.get('library_not_found_recovery_generator') if is_installer_maintenance else None,
         'required_action': (
-            'invoke_fixed_codex_loop_installer_with_verified_handoff_after_skill_deploy_install_begin' if install_ready else
+            'route_exact_codex_loop_install_intent_to_fixed_installer_after_skill_deploy_install_begin' if install_ready else
             'reconcile_existing_self_update' if is_self_update else
             'invoke_skill_creator_or_equivalent_native_skill_update_flow'
         ),
@@ -769,6 +780,9 @@ def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
         'installer_state': 'INSTALLER_HANDOFF_STARTED',
         'bridge_fallback_policy': 'explicit_user_request_only',
         'native_self_update_attempt_allowed': False,
+        'installer_invocation_mode': 'implicit_exact_codex_loop_intent_or_explicit_skill',
+        'terminal_surface_contract': 'present_exact_canonical_package_through_host_native_skill_update_surface',
+        'attachment_only_install_allowed': False,
         'terminal_owner': 'codex-loop-install/host',
         'install_turn_started': True,
         'reconcile_on_next_turn': True,
@@ -800,6 +814,9 @@ def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
         'package_sha256': prior_details.get('package_sha256'),
         'bridge_fallback_policy': 'explicit_user_request_only',
         'native_self_update_attempt_allowed': False,
+        'installer_invocation_mode': 'implicit_exact_codex_loop_intent_or_explicit_skill',
+        'terminal_surface_contract': 'present_exact_canonical_package_through_host_native_skill_update_surface',
+        'attachment_only_install_allowed': False,
         'routing_session_id': routing_session_id,
         'routing_generation': routing_snapshot.get('generation'),
         'routing_host_surface': routing_snapshot.get('host_surface'),
@@ -830,8 +847,11 @@ def _cmd_skill_deploy_install_begin(argv: list[str]) -> int:
         'library_bridge_state': 'BRIDGE_NOT_SELECTED',
         'bridge_fallback_policy': 'explicit_user_request_only',
         'native_self_update_attempt_allowed': False,
+        'installer_invocation_mode': 'implicit_exact_codex_loop_intent_or_explicit_skill',
+        'terminal_surface_contract': 'present_exact_canonical_package_through_host_native_skill_update_surface',
+        'attachment_only_install_allowed': False,
         'terminal_owner': 'codex-loop-install/host',
-        'required_action': 'invoke_codex_loop_install_with_verified_handoff_and_production_package_as_final_current_turn_action',
+        'required_action': 'route_exact_codex_loop_install_intent_to_fixed_installer_and_present_exact_package_through_host_native_surface_as_final_current_turn_action',
         'codex_loop_resume_allowed': False,
         'same_turn_codex_loop_followup_forbidden': True,
         'reconcile_on_next_turn': True,

@@ -116,7 +116,7 @@ python3 scripts/codex_loop.py skill-deploy-handoff \
 
 For ordinary Skills, `--source-tree`, `--package-sha256`, and the routing session are not required. For `skill-name=codex-loop`, the package must already be maintainer/provenance-bound to the pushed repository/commit/tree, and the handoff must return `INSTALLER_HANDOFF_REQUIRED`, `BRIDGE_NOT_SELECTED`, `install_strategy=fixed_codex_loop_installer`, `installer_skill=codex-loop-install`, `native_self_update_attempt_allowed=false`, `INSTALL_READY`, `handoff_mode=self_update_fixed_installer_ready`, `next_install_command=skill-deploy-install-begin`, and an `installer_handoff` whose commit/tree/package hash exactly match the verified production package. No terminal barrier is active yet. Repeated handoff calls for the same Skill/commit deduplicate to the same external action.
 
-The fixed installer is maintained separately under `skills/codex-loop-install/` in the source repository and is excluded from the root consumer package. It is explicit/handoff-only and validates the structured handoff plus the package's bundled deployment manifest before invoking the host-native install/update surface. It never chooses a revision, publishes source, installs arbitrary Skills, or updates itself. Installer maintenance is a separate ordinary Skill deployment owned by Codex Loop.
+The fixed installer is maintained separately under `skills/codex-loop-install/` in the source repository and is excluded from the root consumer package. It is narrowly implicit for exact Codex Loop install/update/reinstall intent, while remaining handoff-validated: it validates the structured handoff plus the package's bundled deployment manifest before invoking the host-native install/update surface. Generic Skill install intent must not route to it. It never chooses a revision, publishes source, installs arbitrary Skills, or updates itself. Installer maintenance is a separate ordinary Skill deployment owned by Codex Loop.
 
 For self-update, the active routing session is captured in private task-local deployment state at `INSTALL_READY`, then copied into the terminal barrier only when `skill-deploy-install-begin` starts the install-only turn. It is continuity state, not permission or deployment evidence.
 
@@ -134,7 +134,7 @@ python3 scripts/codex_loop.py skill-deploy-install-begin \
   --commit FULL_40_HEX_SHA
 ```
 
-   `skill-deploy-install-begin` must return `install_strategy=fixed_codex_loop_installer`, `installer_skill=codex-loop-install`, `installer_state=INSTALLER_HANDOFF_STARTED`, `native_self_update_attempt_allowed=false`, and the same structured `installer_handoff`. Its final required current-turn action is invoking the installed `codex-loop-install` Skill with that handoff plus the unchanged production package. The installer validates and then owns the host-native Skill install/update surface. Do not run another Codex Loop command after the installer handoff begins.
+   `skill-deploy-install-begin` must return `install_strategy=fixed_codex_loop_installer`, `installer_skill=codex-loop-install`, `installer_state=INSTALLER_HANDOFF_STARTED`, `native_self_update_attempt_allowed=false`, and the same structured `installer_handoff`. Its final required current-turn action is routing the exact Codex Loop install/update intent to the installed `codex-loop-install` Skill with that handoff plus the unchanged production package. After validation, the installer must reuse the user-verified bridge executor contract verbatim in substance: present that exact canonical package through the host-native Skill update surface and end the turn immediately. A sandbox/download link, attachment-only response, or assistant-authored install instruction is not that surface. Do not run another Codex Loop command after the installer handoff begins.
 4. For a Codex Loop self-update, wait for a later user/host turn before reconciliation. At the start of that later turn, release the terminal barrier:
 
 ```bash
@@ -160,6 +160,19 @@ python3 scripts/codex_loop.py skill-deploy-resume \
 Do **not** automatically create, package, save, or invoke a per-update bridge Skill. The fixed `codex-loop-install` companion replaces the bridge as the normal self-update executor.
 
 The existing `scripts/build_self_update_bridge.py` generator is retained only as a **legacy explicit user-requested recovery fallback** for a broken/missing fixed installer when the user specifically chooses that recovery. Saving that fallback creates a visible temporary Library Skill. Preserve the user-verified `b5a748` two-file envelope, validate it with Skill Creator, and keep the canonical production package unchanged. Never select this fallback merely because the generator exists.
+
+### Fixed `Library not found` recovery for installer maintenance
+
+The permanent `codex-loop-install` companion must never update itself. When Codex Loop is maintaining **that installer Skill itself** and an actually attempted host-native update of `codex-loop-install` returns the exact host error `Library not found`, use one fixed recovery path owned by Codex Loop:
+
+1. Keep the already validated canonical `codex-loop-install` `skill.zip` unchanged. The failed host surface is not deployment evidence and the currently installed companion remains the active version until later verification proves otherwise.
+2. Generate one fresh-name recovery bridge with `python3 scripts/build_self_update_bridge.py --output-dir OUT --target-skill codex-loop-install`. Omit `--instance-id` in a real recovery so every attempt receives a fresh identity.
+3. Preserve the same Library-safe two-file envelope shape as the historical `b5a748` recovery: exactly `SKILL.md` and `agents/openai.yaml`, quoted interface strings, `allow_implicit_invocation: false`, no `policy.products`, and explicit-only invocation. Validate it with Skill Creator and package it only with the official `package_skill.py`.
+4. Save that fresh bridge through the host Library surface. If the fresh bridge itself returns `Library not found`, do not loop indefinitely or mutate the installer package; stop with the host blocker because the Library surface itself is unavailable.
+5. After the fresh bridge is observably saved, invoke that bridge explicitly. It may only require the already validated canonical `codex-loop-install` package, present that exact package through the host-native Skill update surface, and end the turn immediately. It must not invoke Codex Loop or Codex Loop Install and must not edit, repackage, rename, or substitute the target package.
+6. On a later host/user turn, verify that `skills://codex-loop-install/SKILL.md` reflects the intended installer revision before recording the ordinary installer deployment complete.
+
+This recovery is **installer maintenance only**. The normal `codex-loop` self-update path still uses no bridge: once the fixed installer is healthy, `codex-loop -> codex-loop-install -> host-native Skill update surface` remains the default path.
 
 ## Local post-push workspace synchronization
 

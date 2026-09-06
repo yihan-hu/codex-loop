@@ -1,6 +1,6 @@
 interface:
   display_name: "Codex Loop Install"
-  short_description: "Fixed installer for verified Codex Loop updates"
-  default_prompt: "Use $codex-loop-install only to validate and install the exact Codex Loop package named by a verified self-update handoff."
+  short_description: "Host-native installer for verified Codex Loop updates"
+  default_prompt: "Use $codex-loop-install to validate the exact Codex Loop self-update handoff and present the bound canonical skill.zip through the host-native Skill update surface as the final action."
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true

@@ -42,6 +42,7 @@ class SemanticCompatibilityRoutingTests(unittest.TestCase):
         self.assertIn("Drive staging -> RDC", skill)
         self.assertIn("install/update **Codex Loop itself**", skill)
         self.assertIn("fixed installed `codex-loop-install` companion", skill)
+        self.assertIn("route to that companion implicitly", skill)
 
 
     def test_equivalence_rule_does_not_weaken_unique_capability_boundaries(self):

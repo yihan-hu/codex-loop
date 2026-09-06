@@ -96,7 +96,7 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertEqual(data["ui_state"], "UI_NOT_OBSERVED")
             self.assertEqual(data["deployment_state"], "DEPLOY_PENDING")
             self.assertEqual(data["install_state"], "INSTALL_READY")
-            self.assertEqual(data["required_action"], "invoke_fixed_codex_loop_installer_with_verified_handoff_after_skill_deploy_install_begin")
+            self.assertEqual(data["required_action"], "route_exact_codex_loop_install_intent_to_fixed_installer_after_skill_deploy_install_begin")
             self.assertEqual(data["handoff_mode"], "self_update_fixed_installer_ready")
             self.assertIsNone(data["terminal_owner"])
             self.assertTrue(data["codex_loop_resume_allowed"])
@@ -136,7 +136,10 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             self.assertEqual(install_data["install_strategy"], "fixed_codex_loop_installer")
             self.assertFalse(install_data["native_self_update_attempt_allowed"])
             self.assertEqual(install_data["terminal_owner"], "codex-loop-install/host")
-            self.assertEqual(install_data["required_action"], "invoke_codex_loop_install_with_verified_handoff_and_production_package_as_final_current_turn_action")
+            self.assertEqual(install_data["installer_invocation_mode"], "implicit_exact_codex_loop_intent_or_explicit_skill")
+            self.assertEqual(install_data["terminal_surface_contract"], "present_exact_canonical_package_through_host_native_skill_update_surface")
+            self.assertFalse(install_data["attachment_only_install_allowed"])
+            self.assertEqual(install_data["required_action"], "route_exact_codex_loop_install_intent_to_fixed_installer_and_present_exact_package_through_host_native_surface_as_final_current_turn_action")
             self.assertFalse(install_data["codex_loop_resume_allowed"])
             self.assertTrue(install_data["same_turn_codex_loop_followup_forbidden"])
             self.assertTrue(install_data["reconcile_on_next_turn"])
@@ -229,6 +232,31 @@ class SkillPostPushRefreshTests(unittest.TestCase):
             )
             done, _ = call(root, "completion")
             self.assertEqual(done["data"]["status"], "PASS")
+
+    def test_installer_maintenance_handoff_exposes_fixed_library_not_found_recovery(self):
+        commit = "89abcdef0123456789abcdef0123456789abcdef"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            self.bootstrap(root)
+            handoff, _ = call(
+                root,
+                "skill-deploy-handoff",
+                "--skill-name",
+                "codex-loop-install",
+                "--repository",
+                "yihan-hu/codex-loop",
+                "--commit",
+                commit,
+            )
+            data = handoff["data"]
+            self.assertEqual(data["install_strategy"], "native_skill_update")
+            self.assertEqual(data["library_not_found_recovery_policy"], "fresh_name_bridge_explicit_only")
+            self.assertEqual(
+                data["library_not_found_recovery_generator"],
+                "scripts/build_self_update_bridge.py --target-skill codex-loop-install",
+            )
+            self.assertEqual(data["deployment_state"], "DEPLOY_PENDING")
 
     def test_deployment_completion_requires_observed_native_surface(self):
         commit = "a" * 40
@@ -495,6 +523,8 @@ class SkillPostPushRefreshTests(unittest.TestCase):
         self.assertIn("BRIDGE_NOT_SELECTED", deployment)
         self.assertIn("explicit user-requested recovery fallback", deployment)
         self.assertIn("fixed `codex-loop-install` companion", deployment)
+        self.assertIn("narrowly implicit for exact Codex Loop install/update/reinstall intent", deployment)
+        self.assertIn("sandbox/download link", deployment)
         self.assertIn("skill-deploy-install-begin", deployment)
         self.assertIn("INSTALL_READY", deployment)
         self.assertIn("skill-deploy-resume", deployment)

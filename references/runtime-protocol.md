@@ -436,6 +436,9 @@ installer_skill                      = codex-loop-install
 installer_state                      = INSTALLER_HANDOFF_READY
 library_bridge_state                 = BRIDGE_NOT_SELECTED
 install_strategy                     = fixed_codex_loop_installer
+installer_invocation_mode            = implicit_exact_codex_loop_intent_or_explicit_skill
+terminal_surface_contract            = present_exact_canonical_package_through_host_native_skill_update_surface
+attachment_only_install_allowed      = false
 native_self_update_attempt_allowed  = false
 bridge_fallback_policy               = explicit_user_request_only
 install_state                        = INSTALL_READY
@@ -447,7 +450,7 @@ The response also includes `installer_handoff` with version 1, exact repository,
 
 Require the fixed `codex-loop-install` companion to be installed before starting the terminal turn. If it is missing, keep deployment pending and install that companion as a separate ordinary Skill deployment; do not replace it with a freshly generated bridge unless the user explicitly chooses legacy recovery.
 
-On a dedicated install-only turn, call `skill-deploy-install-begin` for the same Skill/repository/commit. It activates the terminal barrier and returns `INSTALL_TURN_STARTED`, `install_strategy=fixed_codex_loop_installer`, `installer_skill=codex-loop-install`, `installer_state=INSTALLER_HANDOFF_STARTED`, and `native_self_update_attempt_allowed=false`. The final current-turn action is invoking the installed `codex-loop-install` Skill with the unchanged verified production package and the exact `installer_handoff`. The installer validates the package/handoff and owns the host-native Skill install/update surface. After the installer handoff begins, do not run Codex Loop again in that turn.
+On a dedicated install-only turn, call `skill-deploy-install-begin` for the same Skill/repository/commit. It activates the terminal barrier and returns `INSTALL_TURN_STARTED`, `install_strategy=fixed_codex_loop_installer`, `installer_skill=codex-loop-install`, `installer_state=INSTALLER_HANDOFF_STARTED`, and `native_self_update_attempt_allowed=false`. The final current-turn action is routing the exact Codex Loop install/update intent to the installed `codex-loop-install` Skill with the unchanged verified production package and the exact `installer_handoff`. The installer is narrowly implicitly invokable for that exact intent, validates the package/handoff, and then executes the same terminal executor contract as the user-verified bridge: present the exact canonical package through the host-native Skill update surface and end the turn immediately. A sandbox/download link or attachment-only response is explicitly not that surface. After the installer handoff begins, do not run Codex Loop again in that turn.
 
 On a later user/host turn, release the barrier:
 
