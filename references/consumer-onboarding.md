@@ -23,9 +23,9 @@ Add GitHub only when the task needs repository reads, source acquisition, Action
 
 If the task only reads a repository, stop here. Google Drive is not required for read-only GitHub work.
 
-### Level 2 — Publish a Web workspace back to GitHub
+### Level 2 — Use the Web binary staging bridge / publish back to GitHub
 
-Web publication adds Google Drive because Codex Loop uses a binary staging bridge rather than sending source bytes through GitHub connector payloads.
+Ordinary Web -> Mac/local file transfer and Web publication use Google Drive as the verified binary staging bridge. Web publication additionally uses the audited GitHub control plane.
 
 One-time setup:
 
@@ -42,7 +42,7 @@ python3 scripts/codex_loop.py host-config set web_publish.staging_folder_id DRIV
 6. If repository or organization policy restricts the workflow token to read-only, change the repository/organization Actions workflow-permission policy so the import workflow can receive the declared write permission. Do not weaken unrelated branch or organization protections.
 7. Keep branch/ruleset protections compatible with Codex Loop's verified, lease-guarded publication path. If policy blocks it, report that exact blocker rather than bypassing protections.
 
-Security boundary: files staged in `ChatGPT-GitHub-Staging` are temporarily readable by anyone who has the link. Codex Loop deletes the exact staging object after verified consumption. Do not use this Web publication path for source that cannot tolerate that temporary exposure.
+Security boundary: files staged in `ChatGPT-GitHub-Staging` are temporarily readable by anyone who has the link. The same configured folder may be reused for ordinary Web -> local file transfers, so no second Drive staging setup is required. Codex Loop deletes only the exact staging object after verified consumption, subject to the global Drive deletion gate; the explicit transfer/publish request supplies the per-object cleanup intent, so no second cleanup confirmation is required. Do not use this staging boundary for source or files that cannot tolerate that temporary exposure.
 
 Before the first publish, a useful request is: `Check my Codex Loop Web publishing setup before changing anything.` Codex Loop should preflight GitHub push permission, GitHub Actions, and Google Drive write access and report only the missing prerequisites.
 

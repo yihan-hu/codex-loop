@@ -1,24 +1,45 @@
-# Verified Web-to-Local / Mac synchronization
+# Verified Web-to-Local / Mac transfer and synchronization
 
-Use this reference whenever repository bytes that are authoritative in Web mode need to be saved/synchronized to a Mac or another RDC host. This is a downstream binary transfer. It is **not** permission to make the local repository the development baseline and it does not require `workspace_mode=local`.
+Use this reference whenever bytes in the current ChatGPT/Web workspace need to be copied, saved, moved, or synchronized to a Mac or another RDC host. It covers both ordinary files and Web-authoritative repository synchronization. This is a downstream binary transfer. It is **not** permission to make a local repository the development baseline and it does not require `workspace_mode=local`.
+
+For an ordinary file-transfer request, the request itself is sufficient current-task intent to select this Drive -> RDC data plane and to satisfy the narrow `rdc_transfer` computer-use intent. Do not ask the user for a second transfer/data-plane/computer-use authorization. Destination-path access and host-enforced connector/RDC permissions remain separate gates.
 
 ## Fixed data plane
 
-There is exactly one supported automatic Web -> Local transfer path:
+There is exactly one supported automatic Web -> Local transport family:
 
 ```text
-current audited Web Git workspace
-  -> exact self-contained verified Git bundle
+ordinary file
+  -> exact source bytes + size + SHA-256
   -> Google Drive binary staging via real file_uri
-  -> exact Drive object id + size + SHA-256 readback
+  -> exact Drive object id + size readback
   -> minimum temporary download access needed by the authorized host
-  -> RDC downloads the exact binary to the explicitly authorized local path
+  -> RDC downloads the exact binary to the authorized local path
+  -> local size + SHA-256 verification
+  -> permanently delete the exact Drive staging object after verified consumption
+
+Web-authoritative repository
+  -> exact self-contained verified Git bundle
+  -> the same Google Drive staging -> RDC path
   -> local size + SHA-256 + git bundle verify
   -> optional Git import only under the separate local-source-mutation gate
   -> permanently delete the exact Drive staging object after verified consumption
 ```
 
-Do not choose among transports. Do not substitute GitHub Actions artifacts, repository archive URLs, GitHub contents/blob/tree source relay, Dropbox/IDrive, an unmodeled direct binary bridge, model-carried Base64/chunks/heredocs, or source regeneration/retyping. A failure in the fixed path is a transfer blocker, not permission to invent a fallback.
+Do not choose among transports. Do not substitute GitHub Actions artifacts, repository archive URLs, GitHub contents/blob/tree source relay, Dropbox/IDrive, an unmodeled direct binary bridge, model-carried Base64/chunks/heredocs, or source regeneration/retyping. A failure in the fixed path is a transfer blocker, not permission to invent a fallback. If the configured staging boundary is public-read, do not stage credentials, secrets, or content that cannot tolerate that temporary exposure.
+
+## Ordinary file transfer
+
+For a non-repository file, do not require Git cleanliness, validation, change review, a Git bundle, or `workspace_mode=local`.
+
+1. Resolve the exact source file bytes in the current ChatGPT/Web workspace and compute exact byte size plus SHA-256.
+2. Initialize/check routing as usual, then call `route-check --action rdc_transfer` for the authorized destination. When the user explicitly asked to move/save/copy/deliver the file to the local host, treat that request as the evidence for `--local-computer-authorized`; do not ask again. Pass the existing current-conversation destination/workspace grant when one is required by the host boundary.
+3. Upload the real file with Google Drive `upload_file(file_uri=...)` into the configured binary staging boundary. Do not model-transcribe the bytes.
+4. Read back the exact Drive object and require the expected object identity, parent, and size. Use only the minimum temporary download access needed by the authorized RDC host.
+5. Through RDC, download that exact Drive object to the requested/authorized destination path. Write to a temporary sibling when practical, verify local byte size and SHA-256 against the source, then atomically publish/rename the destination.
+6. After verified local consumption, delete only the exact staging object according to the staging transport cleanup contract.
+
+This flow needs no separate user authorization to choose Drive. Host-native permission prompts, connector connection requirements, and destination-path authorization are not bypassed. If the Drive staging bridge is unavailable or the file cannot tolerate the staging trust boundary, stop with a precise transfer blocker. Do not silently switch to model relay; model-carried transfer remains explicit-only.
 
 ## Deterministic planner
 

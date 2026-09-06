@@ -104,6 +104,10 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("Google Drive binary staging", handoff)
         self.assertIn("RDC downloads the exact binary", handoff)
         self.assertIn("Do not choose among transports", handoff)
+        self.assertIn("Ordinary file transfer", handoff)
+        self.assertIn("Do not ask the user for a second transfer/data-plane/computer-use authorization", handoff)
+        self.assertIn("ordinary web -> local/mac file transfer default", skill.lower())
+        self.assertIn("do **not** ask for a second Drive/data-plane/computer-use authorization", skill)
 
     def test_public_docs_do_not_hardcode_author_local_root(self):
         docs = [ROOT / "SKILL.md", ROOT / "README.md", *sorted((ROOT / "references").glob("*.md"))]

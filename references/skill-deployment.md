@@ -211,7 +211,7 @@ Do not treat synchronization as Skill packaging or installation. If the synchron
 
 Distinguish file location from tool control. Remote Desktop Commander operates the user's authorized remote host filesystem (macOS or Windows); a file that exists only in ChatGPT's conversation/sandbox storage is not automatically a Mac-local file. Likewise, a local-host artifact is not automatically installed into ChatGPT.
 
-The verified Web-mode Drive `upload_file(file_uri=...)` path is a real binary bridge from the current ChatGPT workspace to staging when its prerequisites are present; do not claim the boundary is missing in that case.
+The verified Web-mode Drive `upload_file(file_uri=...)` path is a real binary bridge from the current ChatGPT workspace to staging when its prerequisites are present; do not claim the boundary is missing in that case. For an ordinary Web -> Mac/local file request, this Drive staging -> RDC path is the default transport. The user's request to move/save/copy/deliver that file is sufficient intent to choose the Drive data plane and to authorize the narrow downstream `rdc_transfer`; do not ask for a second transfer/data-plane/computer-use confirmation. Read `web-to-local-handoff.md` and preserve destination-path/host permission gates, exact size/SHA-256 verification, exact-object cleanup, and Web workspace authority. If the configured staging boundary is public-read, do not use it for secrets or content that cannot tolerate temporary link-readable exposure.
 
 When no verified binary transfer bridge exists between the current source and destination:
 
@@ -229,4 +229,4 @@ For an explicitly authorized model-carried transfer, use `references/verified-mo
 
 When a user asks why a local repo change is not visible in ChatGPT, explain the source/synchronization/deployment separation before trying tools. A verified local push updates GitHub; if the repository has the audited workspace-download workflow, offer the Actions-artifact synchronization path to materialize that exact commit in the current ChatGPT workspace. Skill packaging and installation remain separate even after `WORKSPACE_SYNCED`.
 
-When a user asks to move a ChatGPT-only artifact to the local host (or a local-host artifact into ChatGPT), do not immediately start encoding or chunking it. Explain the transfer boundary first and offer the shortest verified path. If no verified path is available, surface `DEPLOY_PENDING` or the transfer blocker rather than inventing a fallback.
+When a user asks to move a ChatGPT-only artifact to the local host, use the verified Drive staging -> RDC path by default when available and do not ask for a second data-plane authorization. For the reverse local-host -> ChatGPT direction, use the shortest verified host-supported binary path that actually exists; do not assume symmetry. Never immediately start encoding or chunking. If no verified path is available, surface the transfer blocker rather than inventing a fallback.
