@@ -102,7 +102,7 @@ If the push outcome is ambiguous, inspect the real remote state with native Git 
 
 ## Packaging versus ChatGPT deployment
 
-Treat the packaged `skill.zip` as an immutable release artifact derived from the audited Git commit, not as proof that the installed ChatGPT Skill changed. Do not assume local source changes or a successful GitHub push synchronize into ChatGPT automatically. When deployment matters, read `skill-deployment.md`, report the deployment state separately, and require an explicit supported installation/update action or observed user confirmation before calling the Skill deployed.
+Treat the packaged `skill.zip` as an immutable release artifact derived from the audited Git commit, not as proof that the installed ChatGPT Skill changed. Do not assume local source changes or a successful GitHub push synchronize into ChatGPT automatically. For Codex Loop maintenance, return the validated package and stop; installation is a separate manual user action.
 
 If an artifact exists only on one side of a ChatGPT/local-host boundary and no verified binary file-transfer bridge is available, stop and explain that boundary. Do not reconstruct the artifact through model-carried chunks, base64, heredocs, repeated file writes, or connector payloads merely to bridge the gap. Use such an alternate data plane only when the user explicitly authorizes that exact method after the limitation and integrity risk are stated.
 

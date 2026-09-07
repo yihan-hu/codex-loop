@@ -84,9 +84,10 @@ class InteractionRoutingContractTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text()
         self.assertIn("For **any** Skill or Skill installation package", skill)
         self.assertIn("Workspace-resident Skill/package update", deployment)
-        self.assertIn("For any Skill or Skill installation package", deployment)
-        self.assertIn("all Skills and Skill installation packages", readme)
-        self.assertIn("never treat deployment intent as permission to automate browser clicks", readme)
+        self.assertIn("maintenance ends at a validated `skill.zip`", deployment)
+        self.assertIn("The user installs or replaces the Skill manually", readme)
+        self.assertIn("final validated `skill.zip`", readme)
+        self.assertIn("installs or replaces the Skill manually", readme)
 
     def test_browser_recovery_separates_host_and_session_health(self):
         recovery = (ROOT / "references" / "browser-control-recovery.md").read_text()

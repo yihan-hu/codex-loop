@@ -187,6 +187,15 @@
       "upgrade_path": "Replace the local routing file/adapter with native host routing metadata or tool-dispatch policy when exposed, while preserving the independent workspace_mode, interaction_target, and deployment_target semantics and fail-closed local transitions."
     },
     {
+      "id": "manual_skill_installation_boundary",
+      "layer": "control_plane",
+      "paths": [],
+      "required_patterns": [],
+      "status": "HOST_GAP",
+      "divergence": "Codex Loop distribution terminates at one validated skill.zip. Installing or replacing that package is a user-owned action in the ChatGPT Skills/Library UI and is not represented as Codex Loop lifecycle state.",
+      "upgrade_path": "Keep package generation and host installation as separate boundaries. Revisit this boundary only through an explicit design change if a documented host capability materially changes the installation model."
+    },
+    {
       "id": "optional_cloud_persistence",
       "layer": "concept",
       "paths": [],

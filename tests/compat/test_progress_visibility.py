@@ -166,7 +166,7 @@ class ProgressVisibilityTests(unittest.TestCase):
         self.assertIn("Host-adapter commands:", proc.stdout)
         self.assertIn("progress-config", proc.stdout)
         self.assertIn("progress-policy", proc.stdout)
-        self.assertIn("skill-deploy-handoff", proc.stdout)
+        self.assertIn("deployment-provenance-verify", proc.stdout)
 
     def test_skill_and_docs_bind_progress_policy_to_durable_lifecycle(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

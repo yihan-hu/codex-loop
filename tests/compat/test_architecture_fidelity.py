@@ -18,6 +18,16 @@ class ArchitectureFidelityTests(unittest.TestCase):
                 self.assertTrue(entry.get("divergence"))
                 self.assertTrue(entry.get("upgrade_path"))
 
+    def test_manual_installation_boundary_is_explicit(self):
+        data = json.loads((ROOT / "references" / "architecture-fidelity.yaml").read_text())
+        surfaces = {entry["id"]: entry for entry in data["watch_surfaces"]}
+        entry = surfaces["manual_skill_installation_boundary"]
+        self.assertEqual(entry["status"], "HOST_GAP")
+        self.assertIn("validated skill.zip", entry["divergence"])
+        self.assertIn("user-owned action", entry["divergence"])
+        self.assertIn("not represented as Codex Loop lifecycle state", entry["divergence"])
+        self.assertIn("separate boundaries", entry["upgrade_path"])
+
     def test_audit_script_checks_architecture_governance_without_upstream_checkout(self):
         proc = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "audit_source_coverage.py")],

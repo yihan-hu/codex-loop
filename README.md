@@ -41,7 +41,7 @@ Use Codex Loop for objectives such as:
 - preflighting required RDC, GitHub, Google Drive, browser, and host permissions before substantive multi-step execution;
 - publishing Web-mode workspace source through verified Drive staging + GitHub Actions, or Local-mode source through native Git;
 - packaging ChatGPT Skills;
-- refreshing an active current-workspace Skill after its Web-mode source is pushed, with a completion-blocking deployment handoff;
+- packaging an updated Codex Loop workspace into a validated manual-install `skill.zip`;
 - synchronizing a verified local GitHub commit back into the current ChatGPT workspace;
 - degrading requested reviewer/researcher/tester delegation to a bounded logical isolation when native subagents are unavailable.
 
@@ -49,17 +49,11 @@ Codex Loop is not Codex CLI and does not contain a model runtime. ChatGPT remain
 
 ## Install as a ChatGPT Skill
 
-This repository is the Skill source. In a normal external deployment, a Git checkout or ordinary source ZIP is not automatically an installed ChatGPT Skill: package the repository into a validated `skill.zip`, then use a supported install/update action or the ChatGPT Skills UI.
+This repository is the Skill source. Codex Loop does not install or update itself.
 
-There is one important workspace-hosted rule that applies to **all Skills and Skill installation packages**: if the Skill/package is already present or active in the current workspace or host-managed Skill environment, prefer supported host-managed non-browser update operations and never treat deployment intent as permission to automate browser clicks.
+After any Codex Loop source update, finish validation/review and produce a complete validated `skill.zip`. If the user also requested publication, prove the source push first, then package the updated workspace. Return `skill.zip` as the final update artifact. The user installs or replaces the Skill manually through the ChatGPT Skills/Library interface.
 
-Codex Loop now also keeps the install destination in a **conversation-scoped deterministic routing file**. In ChatGPT Web, a generic `install` resolves to the native `chatgpt_web_skill` target unless the user explicitly selects another deployment target. RDC availability, a remembered Mac checkout, or an existing `~/.codex/skills` directory cannot silently redirect that request to local Codex. The routing file is private temp state and resets with a new routing session; it is not stored in Host Profile or Git.
-
-For the **active current-workspace Skill being maintained in Web mode**, Codex Loop has a stronger post-push invariant: when you ask to push/publish the edited Skill, verified GitHub publication must be followed by deployment reconciliation for the same pushed revision. Codex Loop records a completion-blocking `chatgpt_skill_update` planning handoff, but the actual Skill surface is owned by `skill-creator`/the ChatGPT host. The handoff itself cannot count as UI evidence.
-
-For **Codex Loop installing/updating itself in ChatGPT Web**, use the fixed companion Skill `codex-loop-install`. After `SOURCE_PUSHED`, build the provenance-bound production `codex-loop` package and call `skill-deploy-handoff` with the exact commit, tree, package SHA-256, and routing session. The handoff records `INSTALL_READY`, `BRIDGE_NOT_SELECTED`, `install_strategy=fixed_codex_loop_installer`, `installer_skill=codex-loop-install`, `installer_state=INSTALLER_HANDOFF_READY`, and `native_self_update_attempt_allowed=false` without activating the terminal barrier. On the install-only turn, `skill-deploy-install-begin` activates the barrier; the final action is invoking the already installed `codex-loop-install` companion with the exact structured handoff and unchanged production package. The installer is narrowly implicitly routable for exact Codex Loop install/update/reinstall intent, validates provenance, and then owns the host-native install/update surface using the same terminal executor contract that the verified bridge used after it was invoked. Reconciliation starts only on a later user/host turn. When that turn is in the same conversation, use `skill-deploy-resume --later-host-turn-observed --same-conversation-observed` and keep using the returned `routing_session_id`.
-
-Source publication, installer handoff, native update-surface observation, and production deployment are separate evidence states. Codex Loop must not emulate the product UI in prose. The fixed installer lives under `skills/codex-loop-install/` and is installed once rather than regenerated for every update. A per-update bridge Skill is **not created automatically**; the legacy bridge generator remains explicit recovery only, and saving that fallback creates a visible Library item. Browser automation remains separately authorized.
+Packaging success means `SKILL_PACKAGED`: the validated archive is ready for the user to install manually.
 
 ## Quick start
 
@@ -88,7 +82,7 @@ Use my local Chrome to verify this signed-in flow.
 
 You do not need Remote Desktop Commander for ordinary Web-mode repository work. However, Web mode may still use RDC for **interaction-only** tasks such as controlling your local Chrome or macOS UI; that does not move the repository source of truth onto the Mac.
 
-If you ask to push, Codex Loop first calls the current workspace's stable `publish-enter --controller-abi 1` router. The router reads deterministic Web/Local state and owns the current publication protocol; the installed Skill does not rediscover transport from prose. In Web mode it selects the verified Google Drive -> GitHub Actions exact-identity path. If that workspace is the active Skill being edited, a successful source push immediately enters the mandatory Skill refresh handoff for the exact published commit; `SOURCE_PUSHED` alone is not the end of the task.
+If you ask to push, Codex Loop first calls the current workspace's stable `publish-enter --controller-abi 1` router. The router reads deterministic Web/Local state and owns the current publication protocol; the installed Skill does not rediscover transport from prose. In Web mode it selects the verified Google Drive -> GitHub Actions exact-identity path. If Codex Loop was edited, a successful source push is followed by packaging the updated workspace into the final validated `skill.zip`.
 
 **Local mode is a supported backup / escape hatch, not the recommended day-to-day path.** Use it when a task genuinely needs persistent files or tools on an RDC-backed computer, or when you deliberately want that local checkout to be the repository source of truth. macOS is the verified reference host. Windows repository Local mode is also allowed on a best-effort/beta basis: unsupported Windows-specific primitives degrade to host-visible execution or fail only the affected operation. For ordinary development Local mode is usually slower than the Web workspace + GitHub path because each task can add RDC and permission checks, native-host coordination, and extra push/synchronization round trips.
 
@@ -405,14 +399,12 @@ Workspace synchronization works for ordinary repositories as well as Skills. It 
 
 ## Skill packaging and installation
 
-Source publication, workspace synchronization, Skill packaging, and ChatGPT installation are separate states.
+Source publication, workspace synchronization, and Skill packaging are separate states.
 
 ```text
 SOURCE_PUSHED      GitHub matches the exact audited source commit/tree
 WORKSPACE_SYNCED   that exact commit has been verified in the ChatGPT workspace
 SKILL_PACKAGED     a validated skill.zip exists; consumer packages are repository-neutral
-DEPLOY_PENDING     the intended Skill revision still needs an observed current/installed-Skill update
-DEPLOYED           an explicit supported install/update action or user confirmation proves installation
 ```
 
 When packaging Codex Loop as a ChatGPT Skill, build the runtime-only archive rather than zipping the whole development repository:
@@ -423,9 +415,9 @@ python3 tools/build_skill_zip.py --source . --output /tmp/skill.zip
 
 The default build is a **consumer** package: its build-generated manifest uses `repository_binding=none` and contains no `source.repository`, commit, or tree fields. `yihan-hu/codex-loop` therefore remains maintainer/release context, not an installation-time repository requirement. Use `--distribution-profile maintainer --source-repository ... --source-commit ... --source-tree ...` only for an explicit provenance artifact.
 
-The builder emits exactly one top-level `codex-loop/` directory and includes only runtime Skill files (`SKILL.md`, `agents/`, `assets/`, `references/`, `scripts/`, plus license/attribution files). It excludes `.github/`, `tests/`, `README.md`, repository tooling, `__pycache__`, and compiled Python caches. This separation matters because a repository-valid ZIP is not necessarily a ChatGPT-installable Skill package. The repository source itself is not proof of installation.
+The builder emits exactly one top-level `codex-loop/` directory and includes only runtime Skill files (`SKILL.md`, `agents/`, `assets/`, `references/`, `scripts/`, plus license/attribution files). It excludes `.github/`, `tests/`, `README.md`, repository tooling, `__pycache__`, and compiled Python caches. This separation matters because a repository-valid ZIP is not necessarily a ChatGPT-installable Skill package.
 
-For Skill creation/update tasks, hand the validated `skill.zip`/source generation to the platform `skill-creator` workflow or an explicitly equivalent native host-managed update primitive. Codex Loop's own `skill-deploy-handoff` is planning only and must not be rendered or described as if it were the product Install/Update UI. Record an actually observed native surface with `skill-deploy-surface-record`, then record `DEPLOYED` only after installed-revision evidence with `skill-deploy-complete`.
+For every Codex Loop update, validate the resulting Skill with Skill Creator and return the complete final file named exactly `skill.zip`. That file is the terminal deliverable. Installation is manual and outside Codex Loop; do not wait for or record product UI or activation state. Manual installation is the only supported Codex Loop installation path.
 
 ## Useful prompts
 
@@ -481,11 +473,7 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 
 **GitHub source cannot be materialized into the Web workspace.** Confirm the repository has the audited `workspace-download.yml`, locate or produce a run bound to the exact target `head_sha`, and verify the artifact can be downloaded through the GitHub Connector. If one query surface cannot observe a push-triggered run, classify that as an observability limitation and inspect the repository's Actions runs through a compatible endpoint; do not conclude that the workflow failed merely from an empty incompatible query.
 
-**A new Skill version is not active after pushing.** For the active Skill being maintained in the current Web workspace, this should remain an unfinished `DEPLOY_PENDING` workflow until the intended revision is observably active. `skill-deploy-handoff` alone never counts as UI evidence. For Codex Loop self-update, use the fixed `codex-loop-install` companion with the verified production package and structured installer handoff, then on the next user/host turn run `skill-deploy-resume` and reconcile surface/deployment evidence with `skill-deploy-surface-record` and `skill-deploy-complete`. Do not auto-create a per-update bridge Skill.
-
-**Installing or updating Codex Loop in ChatGPT Web.** Default to the fixed installed `codex-loop-install` companion. It may be selected implicitly for an exact Codex Loop install/update/reinstall request, validates the exact provenance-bound production package, and drives the host-native update surface while the running `codex-loop` revision is quiescent. Returning or attaching `skill.zip` without that host-native surface is not installation. Install the companion once; do not create a new bridge Skill for every update. If the companion is missing or the host surface fails, stop with `DEPLOY_PENDING` and the exact blocker. The legacy fresh-name bridge is an explicit user-requested recovery fallback only, and using it necessarily creates a temporary visible Library entry.
-
-**Installing or updating `codex-loop-install`.** This is owned by `codex-loop`, not by the installer and not by a bridge. Treat `codex-loop-install` as an ordinary distinct Skill deployment: Codex Loop packages the intended installer revision, creates the ordinary native Skill-update handoff, and invokes the Skill Creator/host-native install/update surface. `codex-loop-install` must never update itself. If that host surface returns `Library not found`, keep `DEPLOY_PENDING` and report the exact host blocker; do not create any fresh-name bridge or route maintenance back through the installer.
+**A new Codex Loop version is not active after an update.** Use the `skill.zip` returned by the update workflow and install/replace the Skill manually through the ChatGPT Skills/Library interface. Codex Loop does not automate or reconcile its own installation.
 
 **Local mode disappeared in a new chat.** This is expected. Development mode is conversation-scoped; each new conversation starts in Web mode.
 
