@@ -41,7 +41,8 @@ class SemanticCompatibilityRoutingTests(unittest.TestCase):
         self.assertIn("publish-enter", skill)
         self.assertIn("Drive staging -> RDC", skill)
         self.assertIn("update/package **Codex Loop**", skill)
-        self.assertIn("repository-neutral validated `skill.zip`", skill)
+        self.assertIn("official Skill Creator `skill.zip`", skill)
+        self.assertIn("return only `codex-loop.zip`", skill)
         self.assertIn("Installation is manual", skill)
 
 

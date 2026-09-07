@@ -192,8 +192,8 @@
       "paths": [],
       "required_patterns": [],
       "status": "HOST_GAP",
-      "divergence": "Codex Loop distribution terminates at one validated skill.zip. Installing or replacing that package is a user-owned action in the ChatGPT Skills/Library UI and is not represented as Codex Loop lifecycle state.",
-      "upgrade_path": "Keep package generation and host installation as separate boundaries. Revisit this boundary only through an explicit design change if a documented host capability materially changes the installation model."
+      "divergence": "Codex Loop distribution produces one official validated skill.zip, then exposes those exact bytes under the chat-download filename codex-loop.zip. The rename is byte-preserving and exists only to keep the package on the normal download surface; installing or replacing it is a user-owned action and is not represented as Codex Loop lifecycle state.",
+      "upgrade_path": "Keep official Skill Creator packaging, byte-identical chat-download naming, and host installation as separate boundaries. Revisit the delivery filename only through an explicit design change if the host download/install routing behavior materially changes."
     },
     {
       "id": "optional_cloud_persistence",

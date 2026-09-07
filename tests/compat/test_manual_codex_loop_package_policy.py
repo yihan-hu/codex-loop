@@ -19,9 +19,11 @@ class ManualCodexLoopPackagePolicyTests(unittest.TestCase):
         runtime = (ROOT / "references" / "runtime-protocol.md").read_text(encoding="utf-8")
         for text in (skill, readme, deployment, runtime):
             self.assertIn("skill.zip", text)
+            self.assertIn("codex-loop.zip", text)
         self.assertIn("Installation is manual", skill)
+        self.assertIn("return only `codex-loop.zip`", skill)
         self.assertIn("manual installation", readme.lower())
-        self.assertIn("final update artifact", readme)
+        self.assertIn("normal chat download artifact", readme)
         self.assertIn("Stop there", deployment)
         self.assertIn("terminal state", runtime)
 

@@ -41,7 +41,7 @@ Use Codex Loop for objectives such as:
 - preflighting required RDC, GitHub, Google Drive, browser, and host permissions before substantive multi-step execution;
 - publishing Web-mode workspace source through verified Drive staging + GitHub Actions, or Local-mode source through native Git;
 - packaging ChatGPT Skills;
-- packaging an updated Codex Loop workspace into a validated manual-install `skill.zip`;
+- packaging an updated Codex Loop workspace into an official validated `skill.zip`, then exposing the same bytes as `codex-loop.zip` for normal chat download;
 - synchronizing a verified local GitHub commit back into the current ChatGPT workspace;
 - degrading requested reviewer/researcher/tester delegation to a bounded logical isolation when native subagents are unavailable.
 
@@ -51,7 +51,7 @@ Codex Loop is not Codex CLI and does not contain a model runtime. ChatGPT remain
 
 This repository is the Skill source. Codex Loop does not install or update itself.
 
-After any Codex Loop source update, finish validation/review and produce a complete validated `skill.zip`. If the user also requested publication, prove the source push first, then package the updated workspace. Return `skill.zip` as the final update artifact. The user installs or replaces the Skill manually through the ChatGPT Skills/Library interface.
+After any Codex Loop source update, finish validation/review and produce a complete official validated `skill.zip`. If the user also requested publication, prove the source push first, then package the updated workspace. Copy the finished `skill.zip` byte-for-byte to `codex-loop.zip`, verify the SHA-256 is unchanged, and return only `codex-loop.zip` as the normal chat download artifact. The user installs or replaces the Skill manually through the ChatGPT Skills/Library interface.
 
 Packaging success means `SKILL_PACKAGED`: the validated archive is ready for the user to install manually.
 
@@ -82,7 +82,7 @@ Use my local Chrome to verify this signed-in flow.
 
 You do not need Remote Desktop Commander for ordinary Web-mode repository work. However, Web mode may still use RDC for **interaction-only** tasks such as controlling your local Chrome or macOS UI; that does not move the repository source of truth onto the Mac.
 
-If you ask to push, Codex Loop first calls the current workspace's stable `publish-enter --controller-abi 1` router. The router reads deterministic Web/Local state and owns the current publication protocol; the installed Skill does not rediscover transport from prose. In Web mode it selects the verified Google Drive -> GitHub Actions exact-identity path. If Codex Loop was edited, a successful source push is followed by packaging the updated workspace into the final validated `skill.zip`.
+If you ask to push, Codex Loop first calls the current workspace's stable `publish-enter --controller-abi 1` router. The router reads deterministic Web/Local state and owns the current publication protocol; the installed Skill does not rediscover transport from prose. In Web mode it selects the verified Google Drive -> GitHub Actions exact-identity path. If Codex Loop was edited, a successful source push is followed by packaging the updated workspace into the official validated `skill.zip` and preparing the byte-identical `codex-loop.zip` chat download.
 
 **Local mode is a supported backup / escape hatch, not the recommended day-to-day path.** Use it when a task genuinely needs persistent files or tools on an RDC-backed computer, or when you deliberately want that local checkout to be the repository source of truth. macOS is the verified reference host. Windows repository Local mode is also allowed on a best-effort/beta basis: unsupported Windows-specific primitives degrade to host-visible execution or fail only the affected operation. For ordinary development Local mode is usually slower than the Web workspace + GitHub path because each task can add RDC and permission checks, native-host coordination, and extra push/synchronization round trips.
 
@@ -417,7 +417,7 @@ The default build is a **consumer** package: its build-generated manifest uses `
 
 The builder emits exactly one top-level `codex-loop/` directory and includes only runtime Skill files (`SKILL.md`, `agents/`, `assets/`, `references/`, `scripts/`, plus license/attribution files). It excludes `.github/`, `tests/`, `README.md`, repository tooling, `__pycache__`, and compiled Python caches. This separation matters because a repository-valid ZIP is not necessarily a ChatGPT-installable Skill package.
 
-For every Codex Loop update, validate the resulting Skill with Skill Creator and return the complete final file named exactly `skill.zip`. That file is the terminal deliverable. Installation is manual and outside Codex Loop; do not wait for or record product UI or activation state. Manual installation is the only supported Codex Loop installation path.
+For every Codex Loop update, validate the resulting Skill with Skill Creator so the canonical package is `skill.zip`. Then run `python3 scripts/prepare_codex_loop_download.py --source /path/to/skill.zip --output /path/to/codex-loop.zip`, which copies the file without recompression and verifies byte identity. Return only `codex-loop.zip` in chat; its SHA-256 must equal the official `skill.zip` SHA-256. That renamed file is the terminal deliverable. Installation is manual and outside Codex Loop; do not wait for or record product UI or activation state. Manual installation is the only supported Codex Loop installation path.
 
 ## Useful prompts
 
@@ -473,7 +473,7 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 
 **GitHub source cannot be materialized into the Web workspace.** Confirm the repository has the audited `workspace-download.yml`, locate or produce a run bound to the exact target `head_sha`, and verify the artifact can be downloaded through the GitHub Connector. If one query surface cannot observe a push-triggered run, classify that as an observability limitation and inspect the repository's Actions runs through a compatible endpoint; do not conclude that the workflow failed merely from an empty incompatible query.
 
-**A new Codex Loop version is not active after an update.** Use the `skill.zip` returned by the update workflow and install/replace the Skill manually through the ChatGPT Skills/Library interface. Codex Loop does not automate or reconcile its own installation.
+**A new Codex Loop version is not active after an update.** Use the `codex-loop.zip` returned by the update workflow and install/replace the Skill manually through the ChatGPT Skills/Library interface. `codex-loop.zip` is byte-identical to the official Skill Creator `skill.zip`; only the filename differs for normal chat download delivery. Codex Loop does not automate or reconcile its own installation.
 
 **Local mode disappeared in a new chat.** This is expected. Development mode is conversation-scoped; each new conversation starts in Web mode.
 

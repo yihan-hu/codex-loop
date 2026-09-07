@@ -12,7 +12,7 @@ Keep development location, source lineage, workspace synchronization, and ChatGP
 - A generic `push` request does not silently convert a conversation that is still in Web mode into Local mode. When the verified Web-mode prerequisites are available, publish from the current workspace through `web-mode-publish.md`; if those prerequisites are unavailable or the public-read staging boundary is unacceptable, preserve the Web result and report the blocker rather than migrating source without authorization.
 - **Conversation reset.** A new conversation starts in web mode again; local-mode state does not persist across conversations.
 - `skill.zip` is a release/install artifact, not a development baseline in either mode. Every Codex Loop package carries a build-generated `references/deployment-manifest.json` bound to the deterministic runtime file-manifest digest. Consumer packages intentionally carry no repository identity; explicit maintainer packages may additionally carry exact repository/commit/tree provenance marked `provenance_only`. The generated manifest is never committed and package SHA-256 remains external receipt evidence. The installed ChatGPT Skill is a deployed copy and never becomes source-of-truth merely because installation succeeded.
-- **Workspace-resident Skill/package update.** Reuse the existing workspace/host resource as source context and perform source/package publication through supported non-browser capabilities first. For Codex Loop itself, maintenance ends at a validated `skill.zip` returned to the user; installation is manual and is not tracked by Codex Loop. Other Skills follow their own Skill Creator/host installation workflow when the user requests installation.
+- **Workspace-resident Skill/package update.** Reuse the existing workspace/host resource as source context and perform source/package publication through supported non-browser capabilities first. For Codex Loop itself, maintenance ends after the validated official `skill.zip` is copied byte-for-byte to `codex-loop.zip` and that renamed package is returned to the user; installation is manual and is not tracked by Codex Loop. Other Skills follow their own Skill Creator/host installation workflow when the user requests installation.
 
 ## Deployment target routing
 
@@ -49,8 +49,9 @@ Web mode (default at conversation start)
   -> if GitHub publication is requested: verified Web publish path
   -> SOURCE_PUSHED
   -> if Codex Loop itself was updated: build + validate repository-neutral consumer skill.zip
+  -> copy bytes unchanged to codex-loop.zip and verify equal SHA-256
   -> SKILL_PACKAGED
-  -> return skill.zip; user installs manually
+  -> return codex-loop.zip; user installs manually
 
 Local mode (after explicit selection; persists for this conversation)
   LOCAL_ROOT canonical repo
@@ -60,8 +61,9 @@ Local mode (after explicit selection; persists for this conversation)
   -> SOURCE_PUSHED
   -> optionally offer sync to current ChatGPT workspace
   -> if Codex Loop itself was updated: build + validate repository-neutral consumer skill.zip
+  -> copy bytes unchanged to codex-loop.zip and verify equal SHA-256
   -> SKILL_PACKAGED
-  -> return skill.zip; user installs manually
+  -> return codex-loop.zip; user installs manually
 ```
 
 Report these stages independently:
@@ -90,11 +92,12 @@ When Codex Loop source changes, finish the source work, validation, review, and 
 
 1. Build the repository-neutral consumer runtime package with `tools/build_skill_zip.py`.
 2. Validate the packaged `codex-loop` Skill with Skill Creator.
-3. Repackage with Skill Creator's official `package_skill.py` when needed so the final filename is exactly `skill.zip`.
-4. Verify the final ZIP contains one top-level `codex-loop/` Skill and no development-only files or Python caches.
-5. Return the final `skill.zip` and its SHA-256 to the user.
+3. Repackage with Skill Creator's official `package_skill.py` when needed so the canonical package filename is exactly `skill.zip`.
+4. Verify the official ZIP contains one top-level `codex-loop/` Skill and no development-only files or Python caches.
+5. Run `python3 scripts/prepare_codex_loop_download.py --source /path/to/skill.zip --output /path/to/codex-loop.zip`. This must copy bytes only, never recompress, and must report identical SHA-256 values.
+6. Return only `codex-loop.zip` and its SHA-256 to the user as the normal chat download artifact.
 
-Stop there and return the final `skill.zip` plus its SHA-256. The user performs installation manually through the product's supported Skills/Library interface.
+Stop there and return `codex-loop.zip` plus its SHA-256. The user performs installation manually through the product's supported Skills/Library interface.
 
 For other Skills, packaging/install behavior follows the user's request and the relevant Skill Creator/host workflow; this manual-package rule is specifically the Codex Loop maintenance policy.
 
