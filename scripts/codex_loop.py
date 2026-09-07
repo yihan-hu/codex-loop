@@ -592,6 +592,7 @@ def _cmd_source_acquisition_plan(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py source-acquisition-plan')
     p.add_argument('--exact-commit-bundle-available', action='store_true')
     p.add_argument('--receipt-bound-bundle-available', action='store_true')
+    p.add_argument('--same-authority-artifact-discovery-exhausted', action='store_true')
     p.add_argument('--fallback-method', choices=sorted(FALLBACK_METHODS))
     p.add_argument('--current-user-fallback-authorization-observed', action='store_true')
     p.add_argument('--authorization-evidence')
@@ -599,6 +600,7 @@ def _cmd_source_acquisition_plan(argv: list[str]) -> int:
     emit_ok(source_acquisition_plan(
         exact_commit_bundle_available=args.exact_commit_bundle_available,
         receipt_bound_bundle_available=args.receipt_bound_bundle_available,
+        same_authority_artifact_discovery_exhausted=args.same_authority_artifact_discovery_exhausted,
         fallback_method=args.fallback_method,
         current_user_fallback_authorization_observed=args.current_user_fallback_authorization_observed,
         authorization_evidence=args.authorization_evidence,

@@ -28,7 +28,12 @@ This section is entered only after `repository-enter` returns `COLD_ACQUIRE_REQU
 python3 scripts/codex_loop.py source-acquisition-plan --exact-commit-bundle-available
 python3 scripts/codex_loop.py source-acquisition-plan --receipt-bound-bundle-available
 python3 scripts/codex_loop.py source-acquisition-plan
+# => CONTINUE_DISCOVERY while same-authority direct-artifact lookup is incomplete
+python3 scripts/codex_loop.py source-acquisition-plan --same-authority-artifact-discovery-exhausted
+# => BLOCKED only after compatible GitHub read-only discovery found no exact direct artifact
 ```
+
+A specialized workflow-run wrapper that cannot represent the required push or `workflow_dispatch` trigger does not satisfy the exhausted condition. Continue with a compatible read-only listing of repository Actions runs and inspect successful import-run receipts for an exact receipt-bound `published-source-<run_id>` artifact before declaring the direct path unavailable. This is same GitHub authority discovery, not a new source transport.
 
 After restoring a direct Git bundle into a fresh repository and setting its canonical GitHub origin/target branch, verify exact Git identity **before bootstrap or mutation**:
 
@@ -44,7 +49,7 @@ python3 scripts/codex_loop.py source-acquisition-verify \
 
 The verifier reads the actual Git repository; it requires exact HEAD/tree, matching canonical origin/branch, complete non-shallow history, and presence of the expected commit object. A source-only snapshot or disconnected root returns `WORKSPACE_GIT_IDENTITY_MISMATCH` and must never be bootstrapped as canonical source.
 
-The third command returns `BLOCKED`. Only after explicit current-task user authorization may a named fallback be planned:
+The no-flag discovery command returns `CONTINUE_DISCOVERY`; the explicit exhausted command returns `BLOCKED`. Only after explicit current-task user authorization may a named fallback be planned:
 
 ```bash
 python3 scripts/codex_loop.py source-acquisition-plan \
@@ -479,7 +484,7 @@ python scripts/codex_loop.py workspace-binding --cwd REPO
 
 The canonical root and shared Git repository identity must remain stable for the task. HEAD/branch may move only through the existing Git-mutation workflow. Use Git worktrees for concurrent tasks. Installed Skills are deployment state, are never edited in place, and are **default-off as source acquisition**. Only explicit current-turn user authorization may invoke the read-only installed-Skill copy exception in `references/source-acquisition.md`; current/latest claims still require exact remote equality, and explicitly accepted older/unknown provenance must be labeled honestly. Copied transport/release directories remain non-authoritative.
 
-When Web mode needs source from GitHub, use the exact-revision **Git bundle** workspace-download Actions artifact contract in `references/source-acquisition.md`, restore a real Git repository, and require exact commit/tree equality before binding it. A shell/network inability to run `git clone` in the container is not a reason to invent another source transport. Likewise, inability of one connector query to observe a workflow run must be recorded as an observability limitation, not as proof that the workflow failed or never ran.
+When Web mode needs source from GitHub, use the exact-revision **Git bundle** workspace-download Actions artifact contract in `references/source-acquisition.md`, restore a real Git repository, and require exact commit/tree equality before binding it. A shell/network inability to run `git clone` in the container is not a reason to invent another source transport. Likewise, inability of one connector query to observe a workflow run must be recorded as an observability limitation, not as proof that the workflow failed or never ran. If a compatible read-only repository Actions-runs endpoint exists, use it and inspect receipt-bound published-source artifacts before `source-acquisition-plan --same-authority-artifact-discovery-exhausted` may block.
 
 Commit source before packaging. Plan an export from the audited Git HEAD, build outside the canonical tree, then record the artifact hash:
 

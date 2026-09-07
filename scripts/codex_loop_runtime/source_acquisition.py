@@ -22,11 +22,12 @@ def source_acquisition_plan(
     *,
     exact_commit_bundle_available: bool = False,
     receipt_bound_bundle_available: bool = False,
+    same_authority_artifact_discovery_exhausted: bool = False,
     fallback_method: str | None = None,
     current_user_fallback_authorization_observed: bool = False,
     authorization_evidence: str | None = None,
 ) -> dict[str, Any]:
-    """Choose direct acquisition or fail closed; fallback is explicit-user-only."""
+    """Choose direct acquisition, continue evidence discovery, or fail closed; fallback is explicit-user-only."""
     if exact_commit_bundle_available:
         return {
             "status": "DIRECT",
@@ -43,12 +44,27 @@ def source_acquisition_plan(
         }
 
     method = None if fallback_method is None else str(fallback_method).strip().lower()
+    if method is None and not same_authority_artifact_discovery_exhausted:
+        return {
+            "status": "CONTINUE_DISCOVERY",
+            "classification": "DIRECT_ARTIFACT_DISCOVERY_INCOMPLETE",
+            "method": None,
+            "fallback_allowed": False,
+            "discovery_scope": "same_github_authority",
+            "next": (
+                "continue same-authority read-only direct-artifact discovery; a specialized workflow-run "
+                "query that cannot observe the trigger class is not evidence that no exact artifact exists. "
+                "Check compatible repository Actions-run observations and receipt-bound published-source "
+                "artifacts before declaring direct acquisition unavailable"
+            ),
+        }
     if method is None:
         return {
             "status": "BLOCKED",
             "classification": "WORKSPACE_DOWNLOAD_ARTIFACT_UNAVAILABLE",
             "method": None,
             "fallback_allowed": False,
+            "discovery_scope": "same_github_authority_exhausted",
             "next": "stop and surface the direct acquisition blocker; do not start slow recovery automatically",
         }
     if method not in FALLBACK_METHODS:

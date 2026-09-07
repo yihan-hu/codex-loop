@@ -27,12 +27,24 @@ class SourceAcquisitionFallbackTests(unittest.TestCase):
         self.assertEqual(plan["method"], "receipt_bound_git_bundle")
         self.assertFalse(plan["fallback_allowed"])
 
-    def test_missing_direct_artifact_blocks_without_fallback(self):
+    def test_observability_gap_continues_same_authority_discovery_before_blocking(self):
         plan = source_acquisition_plan()
-        self.assertEqual(plan["status"], "BLOCKED")
-        self.assertEqual(plan["classification"], "WORKSPACE_DOWNLOAD_ARTIFACT_UNAVAILABLE")
+        self.assertEqual(plan["status"], "CONTINUE_DISCOVERY")
+        self.assertEqual(plan["classification"], "DIRECT_ARTIFACT_DISCOVERY_INCOMPLETE")
+        self.assertEqual(plan["discovery_scope"], "same_github_authority")
         self.assertFalse(plan["fallback_allowed"])
-        self.assertIn("do not start slow recovery automatically", plan["next"])
+        self.assertIn("specialized workflow-run query", plan["next"])
+        self.assertIn("receipt-bound published-source", plan["next"])
+
+        recovered = source_acquisition_plan(receipt_bound_bundle_available=True)
+        self.assertEqual(recovered["status"], "DIRECT")
+        self.assertEqual(recovered["method"], "receipt_bound_git_bundle")
+
+        blocked = source_acquisition_plan(same_authority_artifact_discovery_exhausted=True)
+        self.assertEqual(blocked["status"], "BLOCKED")
+        self.assertEqual(blocked["classification"], "WORKSPACE_DOWNLOAD_ARTIFACT_UNAVAILABLE")
+        self.assertEqual(blocked["discovery_scope"], "same_github_authority_exhausted")
+        self.assertIn("do not start slow recovery automatically", blocked["next"])
 
     def test_fallback_requires_current_task_user_authorization_not_evidence_alone(self):
         with self.assertRaises(PermissionError):
@@ -101,9 +113,15 @@ class SourceAcquisitionFallbackTests(unittest.TestCase):
         self.assertFalse(result["fallback_allowed"])
         self.assertIn("stop", result["next"])
 
-    def test_cli_default_is_blocked_and_explicit_fallback_is_scoped(self):
-        blocked = subprocess.run(
+    def test_cli_requires_exhausted_same_authority_discovery_before_blocking(self):
+        discovery = subprocess.run(
             [sys.executable, str(CLI), "source-acquisition-plan"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        )
+        self.assertEqual(json.loads(discovery.stdout)["data"]["status"], "CONTINUE_DISCOVERY")
+        blocked = subprocess.run(
+            [sys.executable, str(CLI), "source-acquisition-plan",
+             "--same-authority-artifact-discovery-exhausted"],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
         )
         self.assertEqual(json.loads(blocked.stdout)["data"]["status"], "BLOCKED")

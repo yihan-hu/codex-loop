@@ -315,7 +315,7 @@ exact GitHub commit
   -> exact restored HEAD commit/tree verification
 ```
 
-The workflow supports push-triggered packaging and `workflow_dispatch`. Codex Loop binds the selected run to the exact `head_sha`; choosing the newest artifact is not enough. If no exact run can be produced or observed, it reports the acquisition/observability blocker instead of falling back to shell `git clone`, per-file reconstruction, or source-only archives.
+The workflow supports push-triggered packaging and `workflow_dispatch`. Codex Loop binds the selected run to the exact `head_sha`; choosing the newest artifact is not enough. If one specialized query cannot observe the relevant trigger, Codex Loop continues through compatible read-only Actions-run observations within the same GitHub authority and checks exact receipt-bound published-source artifacts. It reports the acquisition blocker only after those direct paths are exhausted, instead of falling back to shell `git clone`, per-file reconstruction, or source-only archives.
 
 Installed Skills are excluded from normal source resolution. Only an explicit current-conversation instruction such as “use the installed Codex Loop as this workspace source” invokes the read-only copy exception. See `references/source-acquisition.md`.
 
@@ -471,7 +471,7 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 
 **A pushed commit is not visible in ChatGPT.** Git push updates GitHub, not the current ChatGPT workspace. Ask to sync the pushed commit and make sure the repository has the audited workspace-download workflow.
 
-**GitHub source cannot be materialized into the Web workspace.** Confirm the repository has the audited `workspace-download.yml`, locate or produce a run bound to the exact target `head_sha`, and verify the artifact can be downloaded through the GitHub Connector. If one query surface cannot observe a push-triggered run, classify that as an observability limitation and inspect the repository's Actions runs through a compatible endpoint; do not conclude that the workflow failed merely from an empty incompatible query.
+**GitHub source cannot be materialized into the Web workspace.** Confirm the repository has the audited `workspace-download.yml`, locate or produce a run bound to the exact target `head_sha`, and verify the artifact can be downloaded through the GitHub Connector. If one query surface cannot observe a push-triggered run, classify that as an observability limitation and continue through a compatible read-only Actions-runs endpoint within the same GitHub authority; also inspect successful import-run receipts for an exact receipt-bound published-source artifact. Do not conclude that the workflow failed or the direct artifact is absent merely from an empty incompatible query.
 
 **A new Codex Loop version is not active after an update.** Use the `codex-loop.zip` returned by the update workflow and install/replace the Skill manually through the ChatGPT Skills/Library interface. `codex-loop.zip` is byte-identical to the official Skill Creator `skill.zip`; only the filename differs for normal chat download delivery. Codex Loop does not automate or reconcile its own installation.
 

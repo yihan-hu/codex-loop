@@ -58,8 +58,13 @@ class SourceAcquisitionPolicyTests(unittest.TestCase):
 
         self.assertIn("WORKSPACE_DOWNLOAD_OBSERVABILITY_UNAVAILABLE", acquisition)
         self.assertIn("not proof that the workflow never ran", acquisition)
-        self.assertIn("observability limitation", runtime)
-        self.assertIn("do not conclude that the workflow failed", readme)
+        self.assertIn("same-authority read-only", acquisition)
+        self.assertIn("receipt-bound published-source", acquisition)
+        self.assertIn("--same-authority-artifact-discovery-exhausted", acquisition)
+        self.assertIn("CONTINUE_DISCOVERY", runtime)
+        self.assertIn("repository Actions runs", runtime)
+        self.assertIn("do not conclude that the workflow failed", readme.lower())
+        self.assertIn("same GitHub authority", readme)
 
     def test_workspace_download_workflow_supports_manual_dispatch_and_bundle_export(self):
         workflow = (ROOT / ".github" / "workflows" / "workspace-download.yml").read_text()
