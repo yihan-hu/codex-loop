@@ -35,7 +35,7 @@ def init_repo(root, *, with_fast_workflow=True):
 
 
 def ready_store(root):
-    store = StateStore(root.parent / (root.name + "-state.sqlite3"))
+    store = StateStore(root / ".git" / "codex-loop-test" / "state.sqlite3")
     store.configure_task(root.name, "publish", ["publish"], requires_validation=False, no_validation_reason="test fixture uses no executable workload")
     store.set_meta("workspace_binding", capture_workspace_binding(root))
     store.set_meta("changes_reviewed_generation", 0)

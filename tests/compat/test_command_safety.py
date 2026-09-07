@@ -11,6 +11,11 @@ class CommandTests(unittest.TestCase):
   def test_shell_wrapper_always_host_visible(self):
     self.assertEqual(assess(['bash','-lc','echo hi >/tmp/x']).classification,SafetyClass.OPAQUE)
     self.assertEqual(assess(['bash','-c','echo hi']).classification,SafetyClass.OPAQUE)
+  def test_detached_background_and_docx_zip_ff_are_dangerous(self):
+    for cmd in (['nohup','sleep','10'],['setsid','sleep','10'],['disown']):
+      self.assertEqual(assess(cmd).classification,SafetyClass.DANGEROUS)
+    self.assertEqual(assess(['bash','-lc','sleep 10 &']).classification,SafetyClass.DANGEROUS)
+    self.assertEqual(assess(['zip','-FF','broken.docx','--out','fixed.docx']).classification,SafetyClass.DANGEROUS)
   def test_git_only_version_is_local(self):
     self.assertEqual(assess(['git','--version']).classification,SafetyClass.SAFE_KNOWN)
     for cmd in (['git','status'],['git','--help'],['git','reset','--hard'],['git','clean','-fd']): self.assertNotEqual(assess(cmd).classification,SafetyClass.SAFE_KNOWN)

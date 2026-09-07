@@ -27,7 +27,7 @@ The example root is illustrative only; use the root resolved for the current con
 
 1. Validate and review the intended final content in the canonical worktree.
 2. Commit the source and record the local commit/tree identity. If the commit only records already-reviewed content, do not rerun validation/review solely because the commit SHA changed unless the runtime freshness gate requires it.
-3. Run `git fetch origin main` and observe the current remote commit/tree. For source-only push requests, call the stable `publish-enter --controller-abi 1 --workspace-granted` entrypoint; it selects the Local native-Git planner. Do not package a Skill or create a release receipt first. If lineage diverged, integrate it locally and revalidate; never force around it.
+3. Run `git fetch origin main` and observe the current remote commit/tree. Route the push through the **bundled Codex Loop controller**; its Local `publish-enter --controller-abi 1 --workspace-granted` helper may plan the exact native-Git action, but the target repository itself does not need `scripts/codex_loop.py` or any Codex Loop runtime file. Do not package a Skill or create a release receipt first. If lineage diverged, integrate it locally and revalidate; never force around it.
 4. Push with native Git from the canonical worktree, for example `GIT_TERMINAL_PROMPT=0 git push --porcelain origin main:main`, with a `GH_CONFIG_DIR` derived from `LOCAL_ROOT` when that helper layout is used.
 5. Run native `git fetch origin main` after the push.
 6. Require both `git rev-parse HEAD == git rev-parse origin/main` and `git rev-parse HEAD^{tree} == git rev-parse origin/main^{tree}` before recording success.

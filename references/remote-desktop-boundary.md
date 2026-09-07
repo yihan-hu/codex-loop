@@ -1,6 +1,8 @@
 # Remote Desktop Commander boundaries
 
-RDC is a host execution/interaction transport and does not select repository development mode. Apply the repository boundary below when `workspace_mode=local`; apply the interaction-only boundary when RDC is used for `local_chrome` or `local_mac_gui` while the repository may remain in Web mode. See `interaction-routing.md`.
+RDC is a host execution/interaction transport, never an authority bypass. **Every RDC filesystem, search, process, browser/GUI, or configuration intent must be classified and routed through Codex Loop before the first RDC call.** RDC availability does not select repository development mode. Apply the repository boundary below when `workspace_mode=local`; apply the interaction-only boundary for `local_chrome`/`local_mac_gui`; use `route-check --action rdc_host_config` before the two narrow Codex Loop host config reads; they are routed read-only bootstrap actions, not exceptions. See `interaction-routing.md`.
+
+The host's `allowedDirectories` is a hard capability ceiling, not semantic permission. Codex Loop's current task scope is normally narrower; effective access is the intersection. `allowedDirectories=[]` or another broad host setting must never be interpreted as permission to scan home, sibling repositories, cloud folders, or other unrelated locations. Do not broaden RDC configuration during ordinary task execution; configuration mutation belongs in a separate explicit host-administration task/session.
 
 Before **any repository-affecting RDC action**, require an initialized conversation routing session and run `route-check --action rdc_repository` with the current conversation's workspace-grant state. While `workspace_mode=web`, that check must fail closed regardless of RDC connectivity, a known local checkout, an installed local Skill, or prior local use. Do not probe the local repository first and resolve routing afterward.
 
@@ -18,10 +20,10 @@ Primary Local Root + Session Granted Roots = Effective Local Roots
 
 The primary root comes from explicit Local-mode selection. A registered additional root enters the effective set only when the user explicitly grants that exact registry entry for the current conversation and RDC actually authorizes its resolved real path.
 
-1. Treat every Effective Local Root as an RDC development boundary for the current conversation only when the host actually authorizes it.
-2. Bind each repository task to exactly one canonical Git working tree inside one Effective Local Root. Other roots, sibling repositories, worktrees, scratch folders, and artifacts never become alternate source baselines.
-3. A session grant for one registered workspace does not grant its parent, siblings, or another alias. A broader RDC host root may contain multiple repositories, but semantic grant checks remain exact per registry entry.
-4. Scratch, artifact, release-staging, receipt, and temporary directories may be used inside the task's already-authorized Effective Local Roots when relevant; do not infer new roots from convenience.
+1. Effective Local Roots bound **where a repository may be selected or created**; they are not a standing license to inspect every descendant.
+2. After a repository task is bound, its canonical Git worktree becomes the default RDC filesystem/search/process scope. Other roots, sibling repositories, sibling worktrees, and unrelated descendants are out of scope unless the user separately names or grants them for this task.
+3. A session grant for one registered workspace does not grant its parent, siblings, or another alias. A broader RDC host root may contain multiple repositories, but semantic grant checks remain exact per registry entry and current task binding.
+4. Task-owned scratch, artifact, release-staging, receipt, and temporary paths may be used only when they are explicitly derived inside the bound worktree or another already-authorized task path; do not infer sibling scratch roots from convenience.
 5. Treat every location outside the Effective Local Roots as out of scope by default, including unrelated home-directory content, cloud-synced folders, Downloads, Desktop, Documents, credential stores, SSH configuration, package-manager caches, and system directories.
 6. Do not broaden the allowlist merely because a command, tool, dependency, or repository discovery step would be easier elsewhere. Ask for an explicit narrow temporary root when genuinely required.
 7. Keep any outside-root temporary authorization narrow: record the exact root and purpose, use it only for that purpose, and stop using it when the step is complete. Do not persist it as a registered trusted workspace unless the user separately asks to register that location.
@@ -49,8 +51,8 @@ If the alias is known but not granted, ask for current-conversation path permiss
 - Treat Local mode and root authorization as routing/access state, not source-write consent. Before the first edit/create/delete/overwrite/reformat of local source in each task, require explicit current-task local-source-mutation authorization. Do not infer it from earlier tasks, RDC availability, prior successful writes, a read-only inspection request, synchronization intent, or generic `push` wording.
 - RDC-backed repository work may target macOS or Windows. Do not reject `rdc_repository` solely because the host is Windows. Keep Windows-only gaps (managed sessions, POSIX shell semantics, atomic guarded replacement) host-visible or fail-precise for the affected operation as described in `local-mode-setup.md`.
 - A publish-only request may use native Git to publish already-existing audited local content when otherwise authorized, but it must not silently change source files to make the push succeed. If source integration or conflict resolution would be required, stop and request explicit local mutation authorization for that task.
-- Run repository-affecting RDC terminal commands with a working directory inside an Effective Local Root and the task's bound canonical working tree when source state matters. Reject commands whose explicit repository/file path arguments, redirections, archive targets, Git worktrees, package outputs, or subprocess paths escape the allowlist.
-- Restrict file search roots to Effective Local Roots. Never start whole-disk, home-directory, or unrelated-parent searches to discover a repository.
+- Run repository-affecting RDC terminal commands from the task's bound canonical worktree (or an explicitly named task-owned path). Reject commands whose file arguments, redirections, archive targets, Git worktrees, package outputs, or subprocess paths escape the current task scope even when they remain inside a broader Effective Local Root.
+- After binding, restrict file searches to the canonical worktree or an explicitly named task-owned path. Never search sibling repositories, the whole Effective Local Root, home directory, or disk merely to discover a replacement or convenience input.
 - Restrict reads, writes, moves, edits, archive extraction, packaging, and generated artifacts to allowed roots.
 - Treat symlink and path traversal as boundary-sensitive. Resolve the effective target before relying on a lexical path prefix; do not follow a symlink into an out-of-scope location.
 - Keep Git discovery, clone, fetch, commit, worktree, archive, and push operations rooted in the canonical workspace or an explicitly authorized temporary root. Do not use another checkout as an implicit source baseline.
@@ -72,7 +74,7 @@ When `interaction_target` is `local_chrome` or `local_mac_gui`, RDC may be used 
 - Keep temporary interaction artifacts ephemeral and delete them after verification when practical.
 - macOS Accessibility, Screen Recording, browser-profile, and similar permissions remain host-owned; never change them silently.
 
-The host-local files `~/.codex-loop/host.json` and `~/.codex-loop/workspace-registry.json` are narrow bootstrap/configuration exceptions used only for non-sensitive workspace identity/defaults and host behavior preferences such as progress visibility. They are not repository workspaces and must never contain credentials or persistent permission state. Reading them does not select Local mode.
+The host-local files `~/.codex-loop/host.json` and `~/.codex-loop/workspace-registry.json` are the only paths allowed by the routed `rdc_host_config` read-only action. They are not repository workspaces and must never contain credentials or persistent permission state. Reading them does not select Local mode, grant repository access, or authorize configuration mutation.
 
 ## Establishing a workspace
 

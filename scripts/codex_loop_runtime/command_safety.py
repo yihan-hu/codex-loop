@@ -182,6 +182,10 @@ def assess(argv: list[str] | tuple[str, ...], depth: int = 0) -> SafetyAssessmen
     cmd = _name(words[0])
     if cmd == "rm" and _rm_has_force(words[1:]):
         return SafetyAssessment(SafetyClass.DANGEROUS, "forced rm")
+    if cmd in {"nohup", "setsid", "disown"}:
+        return SafetyAssessment(SafetyClass.DANGEROUS, "detached/persistent process launch is forbidden without explicit current-task authorization")
+    if cmd == "zip" and any(arg == "-FF" for arg in words[1:]) and any(arg.lower().endswith(".docx") for arg in words[1:]):
+        return SafetyAssessment(SafetyClass.DANGEROUS, "automatic zip -FF repair of DOCX is forbidden; run unzip -t first and recover only on an explicitly reviewed copy")
     if cmd == "sudo":
         inner = assess(words[1:], depth + 1)
         return inner if inner.classification == SafetyClass.DANGEROUS else SafetyAssessment(SafetyClass.UNKNOWN, "sudo changes privilege context")
@@ -199,6 +203,12 @@ def assess(argv: list[str] | tuple[str, ...], depth: int = 0) -> SafetyAssessmen
         inner = assess(words[i:], depth + 1)
         return inner if inner.classification == SafetyClass.DANGEROUS else SafetyAssessment(SafetyClass.UNKNOWN, "env changes execution context")
     if cmd in {"bash", "sh", "zsh", "dash", "ksh"} and len(words) >= 3 and words[1] in {"-c", "-lc"}:
+        try:
+            background_tokens = list(shlex.shlex(words[2], posix=True, punctuation_chars=";&|<>"))
+        except ValueError:
+            background_tokens = []
+        if "&" in background_tokens:
+            return SafetyAssessment(SafetyClass.DANGEROUS, "shell background execution is forbidden without explicit current-task authorization")
         commands = _split_literal_script(words[2])
         if commands is not None:
             for command in commands:

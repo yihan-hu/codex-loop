@@ -27,6 +27,7 @@ MAX_PENDING_DELTA_BYTES = 512 * 1024
 READ_CHUNK_BYTES = 8192
 MAX_STDIN_BYTES = 1024 * 1024
 MAX_MANAGED_PROCESSES = 64
+MAX_LOG_OR_TEMP_BYTES = 1_000_000_000
 
 
 
@@ -90,6 +91,8 @@ class _BoundedTranscript:
     def __init__(self, path: Path, max_bytes: int):
         if max_bytes < 0:
             raise ValueError("max transcript bytes must be non-negative")
+        if max_bytes > MAX_LOG_OR_TEMP_BYTES:
+            raise ValueError(f"max transcript bytes may not exceed task log/temp cap ({MAX_LOG_OR_TEMP_BYTES})")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         self.path = path
         self.handle = os.fdopen(fd, "wb", buffering=0)

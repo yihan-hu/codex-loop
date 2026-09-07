@@ -52,6 +52,9 @@ _TERMINAL_WORKLOAD = {
     WorkloadStatus.CANCELLED,
 }
 
+MAX_LOG_OR_TEMP_BYTES = 1_000_000_000
+MIN_FREE_DISK_BYTES = 50_000_000_000
+
 
 @dataclass(frozen=True)
 class ExecutionObservation:
@@ -207,5 +210,19 @@ def execution_policy(
         "teardown_grace_ms": int(teardown_grace_ms),
         "process_group_cleanup": bool(process_group_cleanup),
         "terminal_evidence_policy": terminal_evidence_policy,
-        "invariant": "workload completion and process termination are independent execution facts",
+        "host_execution_safety": {
+            "external_command_timeout_required": True,
+            "interactive_foreground_required": True,
+            "terminate_immediately_on_detected_input_prompt": True,
+            "terminate_immediately_on_detected_repeated_output_without_progress": True,
+            "terminate_immediately_on_detected_no_progress": True,
+            "max_log_or_temp_bytes": MAX_LOG_OR_TEMP_BYTES,
+            "minimum_free_disk_bytes": MIN_FREE_DISK_BYTES,
+            "docx_integrity_preflight_argv": ["unzip", "-t"],
+            "automatic_docx_zip_ff_forbidden": True,
+            "task_owned_cleanup_required_before_completion": True,
+            "persistent_background_requires_explicit_user_authorization": True,
+            "forbidden_by_default": ["nohup", "disown", "setsid", "shell_background", "daemonization"],
+        },
+        "invariant": "workload completion and process termination are independent execution facts; host execution remains task-owned and bounded",
     }

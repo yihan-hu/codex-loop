@@ -38,7 +38,7 @@ When the canonical workspace is accessed through Remote Desktop Commander, apply
 
 ## Source-only push fast path
 
-In explicit local mode, when the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then call the stable route-aware publication entry:
+In explicit Local mode, when the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then route publication through the bundled Codex Loop controller. The target repository does not need to contain Codex Loop runtime files:
 
 ```bash
 python3 scripts/codex_loop.py publish-enter --cwd REPO \

@@ -394,7 +394,7 @@ python scripts/codex_loop.py external-resolve-failure --cwd REPO --task-id TASK 
 
 ## Stable publication entry contract
 
-Every repository `push` / `publish` continuation enters through one workspace-native ABI, regardless of Web or Local mode:
+Every repository `push` / `publish` continuation enters through one controller-owned ABI, regardless of Web or Local mode:
 
 ```bash
 python3 scripts/codex_loop.py publish-enter --cwd REPO \
@@ -406,7 +406,7 @@ python3 scripts/codex_loop.py publish-enter --cwd REPO \
   --capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging
 ```
 
-`publish-enter` is the only model-facing publication entrypoint and requires an explicit controller ABI. It reads deterministic routing state and delegates to the current workspace's Web or Local planner. Its ABI v1 envelope keeps publication-protocol evolution inside the workspace: before transport, the installed/controller Skill reads the returned `workspace_protocol_reference` from the current workspace; that reference outranks transport prose bundled in the installed Skill or remembered from an older revision. The controller treats `planner_result` as opaque, follows only `next_action` / modeled actions, and never derives an alternate transport. A missing workspace router or `PUBLICATION_ROUTER_ABI_UNSUPPORTED` is a compatibility blocker; do not search for another primitive, inspect GitHub source-object presence, switch Local mode, or reconstruct source through a different data plane. See `publication-router.md`.
+`publish-enter` is the bundled Codex Loop controller's model-facing publication helper and requires an explicit controller ABI. It reads deterministic routing state and selects the mode-specific Web or Local planner while the target repository is passed only through `--cwd`. The target repository does not need to contain `scripts/codex_loop.py`. Before transport, follow the returned `mode_protocol_reference` and modeled actions; never derive an alternate transport from Git terminology or connector availability. `PUBLICATION_ROUTER_ABI_UNSUPPORTED` is a bundled-controller compatibility blocker, while absence of a router file in an ordinary target repo is irrelevant. See `publication-router.md`.
 
 ### Web route
 
@@ -432,7 +432,7 @@ The only automatic data plane is exact self-contained Git bundle -> Google Drive
 
 ### Local route
 
-In Local mode the same `publish-enter` ABI delegates to the native-Git planner. Pass `--workspace-granted`; ordinary source-only publication is the default, while release publication is explicit. The returned planner permits only native Git through the authorized canonical local worktree. Failure remains fail-closed with no transport switch.
+In Local mode the bundled controller selects the native-Git planner. Pass `--workspace-granted`; ordinary source-only publication is the default, while release publication is explicit. Native Git runs from the authorized canonical local worktree and exact remote commit/tree readback proves success. Missing Codex Loop files in the target repo do not matter. Failure remains fail-closed with no transport switch.
 
 ## Codex Loop manual package after update
 
@@ -449,6 +449,8 @@ Codex Loop does not perform or track installation of itself. After a Codex Loop 
 Stop after returning the validated package. Manual installation is a user/product action outside the runtime lifecycle and does not add another Codex Loop stage.
 
 ## Managed process sessions
+
+Interactive/background work should normally stay host-visible and foreground with an explicit finite timeout under `execution-supervision.md`. The local helper is not a license to detach work or let children survive task completion; persistent background execution requires explicit current-task user authorization.
 
 ```bash
 python scripts/codex_loop.py service-start --cwd REPO --task-id TASK
@@ -496,7 +498,7 @@ python scripts/codex_loop.py release-record --cwd REPO --artifact-name skill.zip
 
 `release-plan` fails when tracked/staged source is uncommitted. Untracked paths are reported but excluded because export comes from `git archive` of the exact commit. A release receipt is bound to task generation plus source commit/tree and becomes stale after later observed workspace mutation.
 
-Only when the current conversation is in Local mode does the stable `publish-enter` router select native Git through Remote Desktop Commander on the persistent canonical repo under `LOCAL_ROOT`. A generic `push` in Web mode never selects Local mode. Observe the destination branch with native Git, then call `publish-enter --controller-abi 1 --workspace-granted`; the returned Local planner reuses validation/review/release gates and permits only `git`. If the observed remote head is not an ancestor of the audited local target, integrate the remote change in the same canonical worktree and rerun the gates. Do not force-update around this condition.
+Only when the current conversation is in Local mode does the bundled controller select native Git through Remote Desktop Commander on the persistent canonical repo. A generic `push` in Web mode never selects Local mode. Observe the destination branch with native Git, route the publication through the bundled controller, and execute only the Local native-Git path. If the observed remote head is not an ancestor of the audited local target, integrate the remote change in the same canonical worktree and rerun the gates. Do not force-update around this condition.
 
 Before pushing, record the planned native-Git external action as required, execute only the returned `git push --porcelain ...` through Remote Desktop Commander, then read back the remote ref/tree. Repository source bytes stay in Git's data plane. If native Git fails or is unavailable, stop and report the exact blocker rather than switching transports.
 

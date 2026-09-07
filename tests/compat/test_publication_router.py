@@ -45,7 +45,7 @@ def init_repo(root: Path) -> tuple[str, str, str, str]:
 
 
 def ready_store(root: Path) -> StateStore:
-    store = StateStore(root.parent / (root.name + "-router-state.sqlite3"))
+    store = StateStore(root / ".git" / "codex-loop-test" / "router-state.sqlite3")
     store.configure_task(
         root.name,
         "publication router",
@@ -83,7 +83,7 @@ class PublicationRouterTests(unittest.TestCase):
                 evidence="live test probe",
             )
 
-    def test_web_publish_enter_uses_workspace_router_and_exact_identity_protocol(self):
+    def test_web_publish_enter_uses_controller_router_and_exact_identity_protocol(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             base, base_tree, head, tree = init_repo(root)
@@ -106,10 +106,10 @@ class PublicationRouterTests(unittest.TestCase):
                 self.assertEqual(result["router_abi"], 1)
                 self.assertEqual(result["workspace_mode"], "web")
                 self.assertEqual(result["publication_protocol"], {"name": "web_exact_git_identity", "version": 2})
-                self.assertEqual(result["workspace_protocol_reference"], "references/web-mode-publish.md")
+                self.assertEqual(result["mode_protocol_reference"], "references/web-mode-publish.md")
                 self.assertTrue(result["protocol_reference_required_before_transport"])
-                self.assertTrue(result["controller_contract"]["workspace_protocol_reference_authoritative"])
-                self.assertTrue(result["controller_contract"]["installed_transport_instructions_must_not_override"])
+                self.assertTrue(result["controller_contract"]["mode_protocol_reference_authoritative"])
+                self.assertFalse(result["controller_contract"]["target_repository_runtime_required"])
                 self.assertEqual(result["status"], "FAST_PUBLISH")
                 self.assertEqual(result["planner_result"]["source_commit"], head)
                 self.assertEqual(result["planner_result"]["source_tree"], tree)
@@ -169,9 +169,12 @@ class PublicationRouterTests(unittest.TestCase):
                     controller_abi=1,
                     workspace_granted=True,
                 )
+                self.assertFalse((root / "scripts" / "codex_loop.py").exists())
                 self.assertEqual(result["workspace_mode"], "local")
                 self.assertEqual(result["publication_protocol"], {"name": "local_native_git", "version": 1})
-                self.assertEqual(result["workspace_protocol_reference"], "references/verified-native-git.md")
+                self.assertTrue(result["controller_contract"]["controller_router_authoritative"])
+                self.assertFalse(result["controller_contract"]["target_repository_runtime_required"])
+                self.assertEqual(result["mode_protocol_reference"], "references/verified-native-git.md")
                 self.assertTrue(result["protocol_reference_required_before_transport"])
                 self.assertEqual(result["planner_result"]["target"], {"commit": head, "tree": tree})
                 self.assertEqual(result["planner_result"]["transport_order"], ["git"])

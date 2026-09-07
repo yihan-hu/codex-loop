@@ -56,3 +56,17 @@ For an ordinary functional objective, `PASSED + TEARDOWN_STALLED + cleanup SUCCE
 Generic lifecycle pathology belongs in the execution-supervision layer. Do not default to `os._exit`, `--force-exit`, `System.exit`, self-`kill -9`, or equivalent workload rewrites. Such workarounds may hide leaks or skip coverage/artifact flush and are allowed only when the user objective or a faithful domain reproduction explicitly requires them.
 
 Host capability remains authoritative. Where the host cannot expose process groups, descendants, signals, or teardown grace, record partial supervision (`PROCESS_SUPERVISION_PARTIAL`) instead of pretending full lifecycle control.
+
+## Host/RDC execution safety
+
+This is the single safety policy for host-visible and RDC-launched commands. Do not create a parallel state machine for these rules.
+
+- Interactive work stays foreground/task-owned; do not detach it from the controlling session.
+- Every external command has an explicit finite workload timeout. On detected unexpected input prompt, repeated output without progress, or no-progress/stall, terminate the task-owned process or process group immediately on detection.
+- One task-owned log or temporary file is capped at 1,000,000,000 bytes (1 GB). Stop the writer before the cap is crossed.
+- Before and during file-producing work, require at least 50,000,000,000 bytes (50 GB) free on the destination volume. If the floor is crossed, stop producing files and report the condition.
+- DOCX ZIP-level work begins with `unzip -t`. Automatic `zip -FF` repair of a DOCX is forbidden; failed integrity requires a separately reviewed recovery on a copy.
+- Before completion, stop task-owned processes and remove task-owned temporary files. Unresolved process ownership/termination prevents PASS.
+- `nohup`, `disown`, `setsid`, shell backgrounding, daemonization, or any child intended to outlive task completion is forbidden unless the user explicitly authorizes persistent background execution for the current task.
+
+The bundled `execution_policy()` exposes these constants to host execution. The host still owns actual process dispatch and monitoring; a host tool timeout is not evidence that a still-running child was terminated, so poll/terminate and verify when the host reports a process remains alive.

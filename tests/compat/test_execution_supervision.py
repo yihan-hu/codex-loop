@@ -11,6 +11,7 @@ from scripts.codex_loop_runtime.execution_supervision import (
     ExecutionObservation,
     ProcessStatus,
     WorkloadStatus,
+    execution_policy,
     legacy_observation,
     validate_observation,
 )
@@ -18,6 +19,17 @@ from scripts.codex_loop_runtime.state import create_store
 
 
 class ExecutionObservationTests(unittest.TestCase):
+    def test_host_execution_policy_carries_rdc_safety_invariants(self):
+        safety = execution_policy()["host_execution_safety"]
+        self.assertTrue(safety["external_command_timeout_required"])
+        self.assertTrue(safety["interactive_foreground_required"])
+        self.assertEqual(safety["max_log_or_temp_bytes"], 1_000_000_000)
+        self.assertEqual(safety["minimum_free_disk_bytes"], 50_000_000_000)
+        self.assertEqual(safety["docx_integrity_preflight_argv"], ["unzip", "-t"])
+        self.assertTrue(safety["automatic_docx_zip_ff_forbidden"])
+        self.assertTrue(safety["task_owned_cleanup_required_before_completion"])
+        self.assertTrue(safety["persistent_background_requires_explicit_user_authorization"])
+
     def test_progress_only_evidence_cannot_establish_pass(self):
         with self.assertRaises(ValueError):
             validate_observation(ExecutionObservation(

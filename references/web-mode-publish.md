@@ -1,6 +1,6 @@
 # Verified Web-mode GitHub publication with exact Git identity
 
-Use this low-level workspace-owned contract after the stable route-aware `publish-enter` ABI selects Web publication. This path preserves the audited Git commit object itself: successful publication requires **remote commit == audited source commit** and **remote tree == audited source tree**. Normal model control must enter through `references/publication-router.md`; call `web-publish-*` directly only when debugging the router/protocol implementation.
+Use this low-level controller-selected Web contract after the bundled Codex Loop controller selects Web publication. This path preserves the audited Git commit object itself: successful publication requires **remote commit == audited source commit** and **remote tree == audited source tree**. Normal model control must enter through `references/publication-router.md`; call `web-publish-*` directly only when debugging the router/protocol implementation.
 
 This path is Web mode only. Do not switch to RDC + native Git merely to gain transport; Local mode has its own native-Git contract behind the same stable publication router.
 
@@ -157,7 +157,7 @@ Tree-only equivalence is insufficient. A newly generated importer commit is a co
 
 ### Mandatory push-entry rule
 
-For every Web-mode `push`/`publish` continuation, treat the request as delivery intent rather than a semantic `steer` unless source requirements also changed. **Normal model/controller control calls only `publish-enter --controller-abi <explicit ABI>` before any new validation, permission smoke, bundle construction, Drive staging, production packaging, or import trigger.** The router then performs the low-level continuation/planner sequence inside the current workspace runtime.
+For every Web-mode `push`/`publish` continuation, treat the request as delivery intent rather than a semantic `steer` unless source requirements also changed. **Normal model/controller control calls only `publish-enter --controller-abi <explicit ABI>` before any new validation, permission smoke, bundle construction, Drive staging, production packaging, or import trigger.** The bundled controller then performs the low-level continuation/planner sequence against the current Web workspace state.
 
 Internally, the router calls `web-publish-continuation-begin` and then `web-publish-plan`. If continuation returns `active=true` / `revalidation_forbidden=true`, the current clean generation already has reusable validation/review evidence and the router must not plan redundant validation. The Web planner remains the deterministic performance gate and defaults to FAST_PUBLISH; `--verified-tree-fast-path` is only a compatibility alias and standard publication remains explicit-only through `--standard-web`. Fresh validation/review/capability observations and a matching bundle receipt are reused when valid. A remote short-circuit is allowed only when **both** remote commit and remote tree already equal audited source commit/tree.
 

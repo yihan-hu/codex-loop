@@ -16,15 +16,16 @@ LOCAL_PROTOCOL_REFERENCE = "references/verified-native-git.md"
 
 def _controller_contract() -> dict[str, Any]:
     return {
-        "workspace_router_authoritative": True,
-        "workspace_protocol_reference_authoritative": True,
-        "installed_transport_instructions_must_not_override": True,
+        "controller_router_authoritative": True,
+        "mode_protocol_reference_authoritative": True,
+        "target_repository_runtime_required": False,
+        "mode_selected_transport_only": True,
         "planner_result_is_opaque": True,
         "unmodeled_transport_forbidden": True,
         "rule": (
-            "The installed/controller Skill must call this workspace-native entrypoint, read the returned "
-            "workspace_protocol_reference from the current workspace before transport, and follow only the returned "
-            "next_action / planner_result. Installed or remembered transport prose must not override the current workspace reference."
+            "The installed Codex Loop controller owns publication routing. The target repository is passed as data/workspace "
+            "and never has to contain Codex Loop runtime files. Resolve Web versus Local first, read the returned "
+            "mode_protocol_reference from the controller, and follow only that mode selected next_action / planner_result."
         ),
     }
 
@@ -65,9 +66,9 @@ def publication_enter(
 ) -> dict[str, Any]:
     """Stable model/controller entrypoint for repository publication.
 
-    The installed Skill only needs to know this ABI. Publication protocol details belong
-    to the current workspace runtime so a newer workspace can evolve transport behavior
-    without requiring an older installed controller to rediscover that behavior in prose.
+    The installed Skill owns this routing ABI. The target repository is workspace data,
+    not a publication controller, so an ordinary repository never needs to ship Codex Loop.
+    Mode-specific details remain behind this bundled controller entrypoint.
     """
     try:
         abi = int(controller_abi)
@@ -122,7 +123,7 @@ def publication_enter(
             "controller_abi": abi,
             "workspace_mode": "web",
             "publication_protocol": dict(WEB_PUBLICATION_PROTOCOL),
-            "workspace_protocol_reference": WEB_PROTOCOL_REFERENCE,
+            "mode_protocol_reference": WEB_PROTOCOL_REFERENCE,
             "protocol_reference_required_before_transport": True,
             "identity_contract": "remote commit == audited source commit AND remote tree == audited source tree",
             "controller_contract": _controller_contract(),
@@ -161,7 +162,7 @@ def publication_enter(
             "controller_abi": abi,
             "workspace_mode": "local",
             "publication_protocol": dict(LOCAL_PUBLICATION_PROTOCOL),
-            "workspace_protocol_reference": LOCAL_PROTOCOL_REFERENCE,
+            "mode_protocol_reference": LOCAL_PROTOCOL_REFERENCE,
             "protocol_reference_required_before_transport": True,
             "identity_contract": "remote commit == audited local commit AND remote tree == audited local tree",
             "controller_contract": _controller_contract(),

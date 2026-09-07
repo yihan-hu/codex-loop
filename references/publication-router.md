@@ -1,75 +1,73 @@
-# Stable publication router ABI
+# Controller-owned publication routing
 
-Repository publication is a self-hosting boundary: the installed/controller Skill can be older than the repository workspace it is currently modifying. The controller therefore must not encode the current publication transport. It knows only one stable entrypoint ABI and lets the **current workspace runtime** own protocol selection.
+Repository publication is mode-dependent, but routing authority stays in the installed/bundled Codex Loop controller. The target repository is workspace data, not a publication controller and does **not** need to contain Codex Loop runtime files.
 
-## ABI v1
+## Entry rule
 
-For every `push` / `publish` request in Web or Local mode, call the current workspace's:
+Treat `git push`, `push main`, `publish`, and equivalent wording as publication intent. Intercept that intent before literal transport execution, resolve `workspace_mode`, then use exactly one canonical path:
+
+```text
+publication intent
+  -> Codex Loop routing
+     -> Web   -> verified exact-identity Web publication
+     -> Local -> native Git from the bound worktree + exact remote commit/tree readback
+```
+
+The bundled controller may call its own stable helper:
 
 ```bash
-python3 scripts/codex_loop.py publish-enter --cwd REPO \
+python3 CODEX_LOOP_ROOT/scripts/codex_loop.py publish-enter --cwd REPO \
   --session-id ROUTING_SESSION \
   --repository OWNER/REPO --branch BRANCH \
   --remote-head FULL_REMOTE_HEAD --remote-tree FULL_REMOTE_TREE \
-  --controller-abi 1 \
-  [--capability-scope github_push=repo:OWNER/REPO] \
-  [--capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging]
+  --controller-abi 1
 ```
 
-`publish-enter` is the only model-facing publication entrypoint. Low-level `web-publish-*` and Local `publish-plan` commands are workspace implementation details used by the router or for router debugging.
-
-The CLI requires `--controller-abi` explicitly; omission is invalid rather than silently assuming the workspace's current ABI. This keeps version negotiation observable and prevents a stale controller from being mistaken for a current one.
-
-The v1 envelope is intentionally small and stable:
-
-- `entrypoint=publish-enter`;
-- `router_abi` and `accepted_controller_abis`;
-- deterministic `workspace_mode`;
-- workspace-owned `publication_protocol` metadata;
-- `workspace_protocol_reference`, pointing to the authoritative protocol instructions in the current workspace;
-- `controller_contract`;
-- `status` / `code`;
-- `planner_result` as opaque workspace-owned data;
-- `next_action` as the next model/host action.
-
-The installed/controller Skill does **not** need to understand the current `publication_protocol.version`. That version describes the workspace-owned publication implementation. Forward compatibility comes from the router ABI, not from teaching an older controller every future transport.
-
-## Controller rule
+`CODEX_LOOP_ROOT` is the installed/controller Skill root, not the target repository. Passing `--cwd REPO` binds publication to the target workspace. A missing `REPO/scripts/codex_loop.py` is therefore irrelevant and must never produce a publication blocker.
+## Controller contract
 
 The controller must:
 
-1. call `publish-enter` before any publication transport reasoning;
-2. treat its result as authoritative for Web-vs-Local route and protocol;
-3. read the returned `workspace_protocol_reference` from the **current workspace** before transport; the current-workspace reference outranks transport instructions bundled in the installed controller Skill;
-4. execute only `next_action` and the modeled actions inside `planner_result`;
-5. never infer another transport from Git terminology, connector availability, GitHub object presence, remembered older behavior, or a prior Skill version.
+1. intercept publication intent before literal transport execution;
+2. treat the current routing state as the deterministic projection of the user's explicit Web/Local selection;
+3. return `mode_protocol_reference` for the selected mode;
+4. execute only the selected mode's modeled actions;
+5. require exact remote identity verification after publication;
+6. never require an ordinary target repository to ship `publish-enter` or another Codex Loop runtime file.
 
-If the workspace lacks `publish-enter`, surface `WORKSPACE_PUBLICATION_ROUTER_MISSING`. If it returns `PUBLICATION_ROUTER_ABI_UNSUPPORTED`, surface that exact compatibility blocker. In either case stop before transport. Do **not** search for a replacement Web primitive, silently switch Local mode, reconstruct source through GitHub APIs/model text, or lower Git identity requirements.
+The controller ABI is an internal controller/runtime compatibility check. It is **not** a requirement imposed on target repositories. A future controller ABI may evolve without turning application repositories into Codex Loop extensions.
 
-## Current protocols
+## Web mode
 
-ABI v1 currently routes:
+Web mode uses `references/web-mode-publish.md`. Native local Git is not substituted merely because it is available through RDC. The verified Web path preserves audited Git identity and its existing staging/import integrity rules.
 
-- Web -> `web_exact_git_identity` protocol v2. The verified Git bundle carries the exact audited source commit object. GitHub does not need to contain that object before publication. Success requires exact remote commit + tree equality.
-- Local -> `local_native_git` protocol v1. Native Git runs from the authorized canonical local worktree and exact remote commit + tree readback proves success.
+A Web-path failure is reported as a Web publication blocker or a modeled recovery choice. It never silently selects Local mode.
 
-Protocol fields are descriptive workspace data. They are not controller feature flags.
+## Local mode
 
-## Future protocol / ABI upgrades
+Local mode uses `references/verified-native-git.md`. Once the user explicitly selects Local and repository access is granted, native Git is first-class canonical execution, not a fallback.
 
-Use **expand -> deploy -> switch**, never a one-commit flag day.
+The minimal Local sequence is:
 
-1. **Expand:** a release adds the new protocol or new router ABI while preserving the currently installed controller ABI. For an ABI transition, support both old and new ABIs and keep the old controller path fully functional.
-2. **Deploy:** install/update that compatibility release and obtain host-visible evidence that it is active where publication control will run.
-3. **Switch:** only a later release may start preferring the new ABI/protocol behavior. Keep the previous ABI accepted for at least the migration window needed by the supported upgrade path.
-4. **Retire deliberately:** removing an old ABI requires an explicit compatibility change plus regression updates. It must never happen implicitly while introducing the successor.
+```text
+validate/review current worktree
+  -> fetch/observe remote
+  -> prove fast-forward ancestry or integrate explicitly
+  -> native git push
+  -> fetch/read remote
+  -> require remote commit == local audited commit
+  -> require remote tree == local audited tree
+```
+If native Git fails because of authentication, network, branch protection, divergence, or permissions, report that exact blocker. Do not switch transport or force-push around it.
 
-A repository change that adds a new publication protocol does not authorize the installed controller to improvise support for it. Keep the stable ABI compatible or fail deterministically.
+## Self-update special case
 
-## Self-update rule
+When the target repository is Codex Loop itself, maintainers may test/use the validated workspace copy of the controller during development. That is a self-hosting convenience for Codex Loop source, not a rule that propagates to other repositories.
 
-This contract intentionally does not attempt to rescue a pre-router installed Codex Loop during the same upgrade that introduces ABI v1. Once an ABI-v1-aware Codex Loop is installed, future newer workspaces remain publishable through their own `publish-enter` implementation without requiring the older installed controller to understand newer transport details.
+## Why intent interception remains mandatory
 
-## Web -> local synchronization is separate
+Removing interception would reintroduce the original Web-routing failure class: the model could see `git clone` or `git push` and execute the literal command before knowing whether the authoritative workspace is Web or Local. The invariant is therefore:
 
-Saving/synchronizing a Web workspace to a Mac/local host is not publication and does not choose Local development. Use `web-local-sync-plan`, whose only supported data plane is exact self-contained Git bundle -> Google Drive binary staging -> RDC download to the authorized local path -> local size/SHA-256 + `git bundle verify` -> exact staging cleanup. `workspace_mode` remains Web unless the user separately selects the local repository as the development baseline.
+> **Intent interception is mandatory; transport substitution is mode-dependent.**
+
+In Web mode, Codex Loop substitutes the verified Web semantic equivalent. In Local mode, the canonical transport may be the literal native Git command itself after routing and authorization have been established.

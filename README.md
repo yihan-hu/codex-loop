@@ -82,11 +82,11 @@ Use my local Chrome to verify this signed-in flow.
 
 You do not need Remote Desktop Commander for ordinary Web-mode repository work. However, Web mode may still use RDC for **interaction-only** tasks such as controlling your local Chrome or macOS UI; that does not move the repository source of truth onto the Mac.
 
-If you ask to push, Codex Loop first calls the current workspace's stable `publish-enter --controller-abi 1` router. The router reads deterministic Web/Local state and owns the current publication protocol; the installed Skill does not rediscover transport from prose. In Web mode it selects the verified Google Drive -> GitHub Actions exact-identity path. If Codex Loop was edited, a successful source push is followed by packaging the updated workspace into the official validated `skill.zip` and preparing the byte-identical `codex-loop.zip` chat download.
+If you ask to push, Codex Loop intercepts the publication intent before literal Git, resolves Web versus Local, then uses the selected mode's canonical path. Web mode uses the verified Google Drive -> GitHub Actions exact-identity path. Local mode uses native Git from the bound worktree plus exact remote commit/tree readback. Ordinary target repositories do not need to contain Codex Loop runtime files. If Codex Loop itself was edited, a successful requested source push is followed by packaging the updated workspace into the official validated `skill.zip` and byte-identical `codex-loop.zip`.
 
-**Local mode is a supported backup / escape hatch, not the recommended day-to-day path.** Use it when a task genuinely needs persistent files or tools on an RDC-backed computer, or when you deliberately want that local checkout to be the repository source of truth. macOS is the verified reference host. Windows repository Local mode is also allowed on a best-effort/beta basis: unsupported Windows-specific primitives degrade to host-visible execution or fail only the affected operation. For ordinary development Local mode is usually slower than the Web workspace + GitHub path because each task can add RDC and permission checks, native-host coordination, and extra push/synchronization round trips.
+**Local mode is a first-class mode after explicit user selection.** Use it when a task genuinely needs persistent files or tools on an RDC-backed computer, or when you deliberately want that local checkout to be the repository source of truth. macOS is the verified reference host. Windows repository Local mode is also allowed on a best-effort/beta basis: unsupported Windows-specific primitives degrade to host-visible execution or fail only the affected operation. For ordinary development Local mode is usually slower than the Web workspace + GitHub path because each task can add RDC and permission checks, native-host coordination, and extra push/synchronization round trips.
 
-To use that backup path, explicitly enter **Local mode**:
+To enter **Local mode**, explicitly select it:
 
 ```text
 Use local development for this repository.
@@ -118,7 +118,7 @@ State-only manifests retain their separate TTL/reconciliation rules and always r
 
 Codex Loop tracks not only source lineage but also behavioral/control-plane alignment with upstream Codex. `references/architecture-fidelity.yaml` records watched upstream surfaces and whether Codex Loop is aligned, partial, host-gapped, or intentionally divergent, together with the degradation and upgrade path. Upstream audits review **Source Delta + Control-plane Delta + Concept Delta**; unresolved `NEEDS_REVIEW` entries fail the audit. The governing rule is semantic parity before implementation parity.
 
-## Local mode requirements (backup path)
+## Local mode requirements
 
 Local mode requires a connected **Remote Desktop Commander (RDC)** integration because ChatGPT needs a host-authorized bridge to the persistent filesystem and native Git installation on your computer. The end-to-end verified reference path is macOS + RDC + native Git. Windows + RDC + native Git is explicitly allowed as a best-effort/beta repository host even before full parity testing; Windows-only gaps must be surfaced per operation instead of rejecting Local mode globally.
 
@@ -268,7 +268,7 @@ Preflight is early permission discovery, not a security bypass. A later sensitiv
 
 ## Web mode versus Local mode
 
-Treat the two modes asymmetrically: **Web mode is the recommended primary development route; Local mode is an explicit backup.** A connected RDC integration or an existing local checkout is never, by itself, a reason to recommend Local mode or switch to it.
+Web and Local are distinct first-class execution modes. A new conversation starts in Web mode, but an explicit Local selection immediately makes the local checkout authoritative for that conversation. RDC availability or an existing checkout never selects Local by itself, and neither mode may silently replace the other to escape a blocker.
 
 ```text
 new conversation
@@ -291,7 +291,7 @@ Codex Loop treats repository development-mode selection as a **pre-tool routing 
 
 If you explicitly ask to fix something in the current ChatGPT workspace, push it, **then** save/sync it to your local host, the ordering is fixed: Web edit/validate/review -> verified Web publish -> `web-local-sync-plan` -> exact self-contained Git bundle -> Google Drive staging -> RDC download to the authorized local path -> local hash/bundle verification. The local copy is downstream synchronization state, not the source baseline for that already-audited Web change.
 
-For every push, the model-facing entry is `publish-enter --controller-abi 1`. The installed/controller Skill depends only on that stable ABI; the **current workspace runtime** owns the actual Web or Local protocol. In Web mode the router automatically freezes/reuses publish-only continuation evidence and invokes FAST_PUBLISH by default, so already-fresh validation/review/capability gates are not repeated. Low-level `web-publish-*` commands remain implementation/debugging primitives, not normal transport-selection choices. If the workspace router is missing or reports an unsupported controller ABI, Codex Loop stops with that compatibility blocker instead of searching for another publication primitive.
+For every push, the bundled Codex Loop controller resolves the routing state before transport; `publish-enter --controller-abi 1` is its deterministic helper, not a file required from the target repository. Web mode may reuse fresh publish-only evidence and invoke FAST_PUBLISH; Local mode uses native Git. Low-level `web-publish-*` commands remain implementation/debugging primitives. A missing `scripts/codex_loop.py` in an ordinary target repo is never a blocker; only a failure of the bundled controller/runtime itself can block this entry step.
 
 If FAST_PUBLISH fails closed, Codex Loop still exposes only the router's modeled recovery choices; it never silently jumps modes or invents a transport. GitHub not already containing the audited source commit object is **not** a failure condition: the verified Git bundle carries that exact object to the importer. See `references/publication-router.md` and `references/web-mode-publish.md`.
 
@@ -339,7 +339,7 @@ ChatGPT Web Git workspace
 
 The GitHub Connector remains control plane only; source Git objects travel through the Drive binary bridge. The staging folder is a temporary anyone-with-link trust boundary for the GitHub-hosted runner. If that is unacceptable for the source, stop rather than invent another transport.
 
-`publish-enter --controller-abi 1` is the normal publication entry and delegates to the workspace-native Web planner. `web-publish-bundle` creates the exact bundle. A verified remote base may be supplied as a Git bundle prerequisite when an acquired Web workspace intentionally lacks older history; the prerequisite must be an exact ancestor of audited HEAD. The remote short-circuit is valid only when **both** commit and tree already equal the audited source; the remote does not need to contain the source commit object beforehand because the bundle introduces it.
+`publish-enter --controller-abi 1` is the normal publication entry and delegates to the controller-owned Web planner. `web-publish-bundle` creates the exact bundle. A verified remote base may be supplied as a Git bundle prerequisite when an acquired Web workspace intentionally lacks older history; the prerequisite must be an exact ancestor of audited HEAD. The remote short-circuit is valid only when **both** commit and tree already equal the audited source; the remote does not need to contain the source commit object beforehand because the bundle introduces it.
 
 The importer is allowed one narrowly scoped non-fast-forward action: it may use `force-with-lease` only to remove the single request trigger commit it just received, after proving that trigger's parent equals the previously observed branch base and its only file delta is the request JSON. Any branch concurrency, extra trigger delta, ancestry failure, bundle mismatch, or lease failure stops publication. This is not general force-push permission.
 
@@ -347,9 +347,9 @@ Repository setup therefore needs Actions enabled, `contents: write` for the audi
 
 ## Publishing from Local mode
 
-This section documents the supported backup path. For ordinary work, prefer Web workspace -> GitHub publishing unless you explicitly need the Mac checkout as the development baseline.
+This section documents Local publication after explicit Local selection. Native Git is the canonical Local transport, not a fallback.
 
-For a local repository, the same stable `publish-enter` ABI selects Codex Loop's verified native-Git publication path:
+For a local repository, the bundled controller selects Codex Loop's verified native-Git publication path; the target repository itself does not need Codex Loop runtime files:
 
 ```text
 LOCAL_ROOT repository
@@ -449,7 +449,7 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 ## Safety boundaries
 
 - Preserve pre-existing user changes and untracked files.
-- Keep local filesystem access inside the resolved RDC-authorized `LOCAL_ROOT` unless the user explicitly authorizes another narrow root.
+- Treat RDC host roots as capability ceilings. Once a repository task is bound, keep filesystem/search/process access inside that canonical worktree or an explicitly named task-owned path; sibling repositories remain out of scope unless separately granted.
 - Never read credential files directly.
 - Treat exact commit/tree readback as publication success evidence in both modes: native Git readback in Local mode, and bundle-bound workflow receipt plus independent GitHub branch readback in Web mode.
 - Treat the public-read Google Drive staging folder as a temporary publication trust boundary and delete staged Git bundles after verified success.

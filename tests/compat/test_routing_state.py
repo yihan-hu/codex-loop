@@ -216,6 +216,20 @@ class RoutingStateTests(unittest.TestCase):
         finally:
             self.cleanup(state)
 
+    def test_rdc_host_config_is_a_routed_read_only_action(self):
+        state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
+        try:
+            result = route_check(action="rdc_host_config", session_id=state["session_id"])
+            self.assertTrue(result["allowed"])
+            self.assertEqual(result["config_role"], "codex_loop_bootstrap_read_only")
+            self.assertFalse(result["config_mutation_allowed"])
+            self.assertEqual(result["allowed_config_paths"], [
+                "~/.codex-loop/host.json", "~/.codex-loop/workspace-registry.json",
+            ])
+            self.assertIn("not an authorization bypass", result["rule"])
+        finally:
+            self.cleanup(state)
+
     def test_host_surface_is_immutable_within_session(self):
         state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
         try:

@@ -2,7 +2,7 @@ import tempfile, unittest
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'scripts'))
-from codex_loop_runtime.process_manager import run_one_shot
+from codex_loop_runtime.process_manager import MAX_LOG_OR_TEMP_BYTES, run_one_shot
 
 class ProcessLimitTests(unittest.TestCase):
   def test_one_shot_timeout_is_bounded(self):
@@ -19,6 +19,8 @@ class ProcessLimitTests(unittest.TestCase):
       self.assertFalse(r.timed_out)
       self.assertGreater(r.transcript_stdout_omitted_bytes,0)
       self.assertLessEqual(Path(r.transcript_stdout).stat().st_size,4096)
+      with self.assertRaises(ValueError):
+        run_one_shot(['true'],root,timeout=1.0,transcript_dir=logs,max_transcript_bytes=MAX_LOG_OR_TEMP_BYTES+1)
 if __name__=='__main__': unittest.main()
 
 class ServiceProcessLimitTests(unittest.TestCase):

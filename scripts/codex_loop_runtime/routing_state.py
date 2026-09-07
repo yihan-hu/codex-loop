@@ -20,6 +20,7 @@ ROUTE_ACTIONS = frozenset({
     "repository_mutate",
     "rdc_repository",
     "rdc_transfer",
+    "rdc_host_config",
     "browser_interaction",
     "skill_install",
     "chatgpt_skill_install",
@@ -334,6 +335,16 @@ def route_check(
         "generation": state["generation"],
         "requirements": [],
     }
+
+    if action == "rdc_host_config":
+        result.update({
+            "allowed": True,
+            "config_role": "codex_loop_bootstrap_read_only",
+            "allowed_config_paths": ["~/.codex-loop/host.json", "~/.codex-loop/workspace-registry.json"],
+            "config_mutation_allowed": False,
+            "rule": "RDC host-config reads are routed Codex Loop bootstrap actions, not an authorization bypass; mutation requires a separate explicit host-administration task",
+        })
+        return result
 
     if action == "rdc_transfer":
         missing: list[str] = []

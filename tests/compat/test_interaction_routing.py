@@ -49,6 +49,16 @@ class InteractionRoutingContractTests(unittest.TestCase):
         self.assertIn("New conversations still start in Web mode", readme)
         self.assertIn("Git/OAuth tokens", setup)
 
+    def test_rdc_is_intercepted_and_bound_worktree_is_narrower_than_host_root(self):
+        skill = (ROOT / "SKILL.md").read_text()
+        routing = (ROOT / "references" / "interaction-routing.md").read_text()
+        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
+        self.assertIn("RDC is never a side door around Codex Loop", skill)
+        self.assertIn("Before the first RDC call", routing)
+        self.assertIn("allowedDirectories=[]", routing)
+        self.assertIn("canonical Git worktree becomes the default RDC filesystem/search/process scope", boundary)
+        self.assertIn("Never search sibling repositories", boundary)
+
     def test_rdc_boundary_has_separate_interaction_only_contract(self):
         boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
         self.assertIn("Interaction-only RDC boundary", boundary)

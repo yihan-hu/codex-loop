@@ -60,7 +60,7 @@ For a receipt-bound publication artifact use `--method receipt_bound_git_bundle`
 
 Do not substitute any of the following as the ordinary Web acquisition path:
 
-- container or shell `git clone`/`git pull` from GitHub;
+- in **Web mode**, container or shell `git clone`/`git pull` from GitHub instead of the verified Web path; Local mode uses native Git after routing;
 - GitHub Connector per-file contents/blob/tree reconstruction;
 - generic GitHub archive/download URLs chosen outside the commit-bound workflow;
 - source-only `git archive` when the bundle workflow is available;

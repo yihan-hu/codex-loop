@@ -8,8 +8,8 @@ Interpret common operation words as **user intent**, not as a demand for one lit
 
 Canonical intent translations include:
 
-- `git clone`, `git pull`, `git fetch`, “open this repo”, “refresh from GitHub”, or “sync from GitHub” -> first run the HOT -> WARM -> COLD `repository-enter` contract in `repository-continuity.md`; an existing HOT Git workspace uses incremental synchronization, while only `COLD_ACQUIRE_REQUIRED` enters `source-acquisition.md`;
-- `git push`, “push this branch”, “publish this commit”, or “send these changes to GitHub” -> the verified Web publication contract in `web-mode-publish.md`;
+- `git clone`, `git pull`, `git fetch`, “open this repo”, “refresh from GitHub”, or “sync from GitHub” -> **intercept before literal Git**. In Web mode run HOT -> WARM -> COLD `repository-enter` and use verified Web acquisition/sync semantics. In Local mode, after explicit Local selection and scope checks, native Git clone/fetch/pull is the canonical execution path inside the authorized local scope;
+- `git push`, “push this branch”, “publish this commit”, or “send these changes to GitHub” -> **intercept before literal Git**. Web mode uses verified Web publication; Local mode uses native Git from the bound canonical worktree followed by exact remote commit/tree readback. Ordinary target repositories never need to contain Codex Loop runtime files;
 - `pytest`, `npm test`, build, lint, typecheck, or another ordinary validation command -> Codex Loop plans/binds the exact command, the host executes it visibly, and the runtime records the observed result; a local-runtime `requires_host_visible_execution` response is routing, not a capability failure;
 - “use a subagent/reviewer” -> a native host subagent when available, otherwise the declared logical-isolation/serialized delegation path in `delegation.md`;
 - “save this workspace”, “continue this in another chat”, or equivalent explicit recoverability intent -> the Workspace Cache path in `persistence.md`;
@@ -19,7 +19,13 @@ Canonical intent translations include:
 
 Only **pre-registered semantic equivalents** qualify. Do not substitute a path that changes the user's required identity, authorization boundary, security property, or state semantics. In particular, a task that specifically requires the user's local Chrome profile/session, a local filesystem checkout, or another unique host capability remains blocked when that exact capability is unavailable unless the user explicitly selects a different target.
 
-A negative transport rule such as “do not shell `git clone`” or “the local runtime does not execute pytest” must therefore be read as “use the canonical equivalent path,” not as “stop the objective.”
+### RDC intent interception
+
+RDC capability never authorizes an action by itself. Before the first RDC call, classify the intent and enter the matching Codex Loop route: repository/filesystem/search/process work -> `rdc_repository`; downstream Web-to-local binary delivery -> `rdc_transfer`; local browser/GUI interaction -> `browser_interaction`; narrow reads of Codex Loop host bootstrap/config files -> `rdc_host_config` before reading either exact config file. Establish the exact task root/action class once, then reuse that result only while workspace mode, root, action class, and current-task authorization remain unchanged.
+
+Do not call RDC first and decide scope from what it can see. A permissive host configuration, including `allowedDirectories=[]`, means only that the transport is technically capable of broad access; it is never a semantic grant. Once a durable repository task is bound, the canonical worktree is the default RDC filesystem/search/process scope. Sibling repositories or other directories under the same host root remain out of scope unless separately named or granted for this task.
+
+A negative transport rule such as “do not execute literal `git clone` before routing” means “resolve the mode first, then use that mode's canonical path,” not “stop the objective.” In Local mode the canonical path may be native Git itself. `requires_host_visible_execution` likewise means execute through the host with the declared safety policy, not that the objective is blocked.
 
 ## Conversation-scoped routing state
 
@@ -42,7 +48,7 @@ Use `route-transition` to change an axis and `route-check` before repository, br
 - `web`: the current ChatGPT/Web workspace is authoritative.
 - `local`: one canonical Git worktree under the resolved `LOCAL_ROOT` is authoritative.
 
-Every new conversation starts with `workspace_mode=web`. Enter `local` only after explicit local repository-development intent such as "develop this from my PiWork checkout", "modify the local repository", or another unambiguous request to make the local checkout the source workspace.
+Every new conversation starts with `workspace_mode=web`. Enter `local` only after explicit local repository-development intent such as "develop this from my PiWork checkout", "modify the local repository", or another unambiguous request to make the local checkout the source workspace. Once that selection is observed, update routing state immediately and treat native local tools as first-class canonical execution; the routing file is a deterministic projection of the user's selection, not a competing source of intent.
 
 Remote Desktop Commander availability, a request to control Chrome, a request to use the Mac GUI, or a generic request to use RDC is **not** local-development intent. Those requests change only the interaction target.
 
