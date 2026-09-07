@@ -7,6 +7,8 @@ Codex Loop has two separate recovery layers for Web work:
 
 Neither Drive object is a second mutable truth source. The current bound workspace remains authoritative until a later restore is fully verified and bound.
 
+Repository continuity adds a higher-priority layer before both recovery mechanisms: `repository-enter` first attempts `HOT_REUSE`. Treat path-independent `source_provenance` and path-bound `workspace_lease` as separate concepts. Losing `/mnt/data/...` or restoring the same exact Git lineage into a different path invalidates/reissues the lease; it does not erase source provenance. Workspace Cache is WARM recovery for preserved in-progress state. A verified `published-source-<run_id>` Git bundle from the last successful Web publish is the normal clean WARM recovery object when no explicit Workspace Cache is needed. Cold source acquisition is used only when no HOT or verified WARM state is available. See `repository-continuity.md`.
+
 ## Default and authority
 
 - Persistence is default-off. Workspace Cache is created only when the user explicitly asks to cache/preserve the workspace or when cross-conversation workspace recoverability is an explicit acceptance requirement.

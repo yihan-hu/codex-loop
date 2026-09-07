@@ -89,6 +89,7 @@ from codex_loop_runtime.source_acquisition import (
     source_acquisition_plan,
     verify_restored_git_workspace,
 )
+from codex_loop_runtime.repository_continuity import repository_enter
 from codex_loop_runtime.workspace_cache import (
     authorize_drive_cache_cleanup,
     build_workspace_cache,
@@ -128,6 +129,7 @@ HOST_ADAPTER_COMMANDS = (
     ('permission-observation-record', 'record a scoped expiring host capability observation'),
     ('permission-observation-status', 'check freshness of a scoped current-session host capability observation'),
     ('source-acquisition-verify', 'verify an exact Git-native Web restore before durable bootstrap'),
+    ('repository-enter', 'reuse HOT Git state, restore verified WARM state, or require COLD acquisition'),
     ('web-publish-continuation-begin', 'freeze a publish-only continuation onto fresh validation/review and forbid redundant revalidation'),
     ('web-publish-bundle', 'build and bind a verified exact-identity Web Git bundle'),
     ('web-publish-archive', 'compatibility alias for exact-identity Web Git bundle creation'),
@@ -631,6 +633,56 @@ def _cmd_source_acquisition_verify(argv: list[str]) -> int:
         expected_tree=args.expected_tree,
         branch=args.branch,
         method=args.method,
+    ))
+    return 0
+
+
+def _read_optional_bounded_json(path_text: str | None, *, label: str) -> dict | None:
+    if path_text is None:
+        return None
+    path = Path(path_text).resolve()
+    payload = path.read_bytes()
+    if len(payload) > 128 * 1024:
+        raise ValueError(f'{label} exceeds 128 KiB')
+    try:
+        value = json.loads(payload.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f'{label} must be valid UTF-8 JSON') from exc
+    if not isinstance(value, dict):
+        raise ValueError(f'{label} must be a JSON object')
+    return value
+
+
+def _cmd_repository_enter(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py repository-enter')
+    p.add_argument('--session-id', required=True)
+    p.add_argument('--cwd', required=True)
+    p.add_argument('--repository', required=True)
+    p.add_argument('--branch', required=True)
+    p.add_argument('--remote-head')
+    p.add_argument('--remote-tree')
+    p.add_argument('--source-provenance-json')
+    p.add_argument('--published-source-json')
+    p.add_argument('--workspace-cache-json')
+    a = p.parse_args(argv[1:])
+    gate = route_check(action='repository_observe', session_id=a.session_id)
+    if not gate.get('allowed'):
+        emit_ok({
+            'status': 'BLOCKED',
+            'code': 'REPOSITORY_ROUTE_REQUIREMENTS_UNMET',
+            'requirements': list(gate.get('requirements') or []),
+            'next_action': 'satisfy only the routing requirements and rerun repository-enter',
+        })
+        return 0
+    emit_ok(repository_enter(
+        Path(a.cwd).resolve(strict=False),
+        repository=a.repository,
+        branch=a.branch,
+        remote_head=a.remote_head,
+        remote_tree=a.remote_tree,
+        source_provenance=_read_optional_bounded_json(a.source_provenance_json, label='source provenance'),
+        published_source=_read_optional_bounded_json(a.published_source_json, label='published source receipt'),
+        workspace_cache=_read_optional_bounded_json(a.workspace_cache_json, label='workspace cache metadata'),
     ))
     return 0
 
@@ -1181,6 +1233,8 @@ def main() -> int:
             return _cmd_source_acquisition_plan(argv)
         if argv[0] == 'source-acquisition-verify':
             return _cmd_source_acquisition_verify(argv)
+        if argv[0] == 'repository-enter':
+            return _cmd_repository_enter(argv)
         if argv[0] == 'interaction-route':
             return _cmd_interaction_route(argv)
         if argv[0] == 'validate':

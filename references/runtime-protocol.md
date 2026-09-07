@@ -2,9 +2,27 @@
 
 Use `python scripts/codex_loop.py ...`. Commands emit JSON. Runtime state is task-scoped under a private temp directory; it never writes `.codex-loop` state into the repository. `bootstrap` binds the created task as the workspace's active task, so ordinary task-scoped commands may omit `--task-id`. Pass an explicit `--task-id` when deliberately addressing a non-active task or when low-level audit/debugging requires it. If no active task exists, task-scoped commands fail closed.
 
+### Repository continuity gate
+
+Before source acquisition, classify the cheapest safe continuation:
+
+```bash
+python3 scripts/codex_loop.py repository-enter \
+  --session-id ROUTING_SESSION \
+  --cwd /CURRENT/OR/EXPECTED/REPO \
+  --repository OWNER/REPO \
+  --branch TARGET_BRANCH \
+  [--remote-head FULL_REMOTE_COMMIT --remote-tree FULL_REMOTE_TREE] \
+  [--source-provenance-json provenance.json] \
+  [--workspace-cache-json workspace-cache-metadata.json] \
+  [--published-source-json fast-import-receipt.json]
+```
+
+`HOT_REUSE` is the ordinary path and forbids source reacquisition. WARM states restore a verified Git artifact and then rerun `repository-enter`. Only `COLD_ACQUIRE_REQUIRED` enters `source-acquisition-plan`. Remote movement is reported as incremental synchronization state (`REMOTE_HEAD_UNSEEN`, `REMOTE_AHEAD`, `DIVERGED`, etc.); it never converts a valid HOT workspace into cold acquisition. See `repository-continuity.md`.
+
 ### Source acquisition fallback gate
 
-Direct exact artifacts are preferred and fallback is disabled by default:
+This section is entered only after `repository-enter` returns `COLD_ACQUIRE_REQUIRED`. Direct exact artifacts are preferred and fallback is disabled by default:
 
 ```bash
 python3 scripts/codex_loop.py source-acquisition-plan --exact-commit-bundle-available

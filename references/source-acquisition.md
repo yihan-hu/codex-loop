@@ -1,6 +1,8 @@
 # Source acquisition and bootstrap policy
 
-Use this reference whenever Codex Loop must establish a new mutable workspace from GitHub, Google Drive, or a user-provided source. Source acquisition happens **before** ordinary development; persistence, publication, packaging, and deployment are separate stages.
+Use this reference only when `repository-enter` has already returned `COLD_ACQUIRE_REQUIRED` and Codex Loop must establish a new mutable workspace from GitHub, Google Drive, or a user-provided source. A valid existing Git workspace is `HOT_REUSE`; a verified published-source bundle or Workspace Capsule is WARM restore. Neither should be routed through cold source acquisition. Source acquisition happens **before** ordinary development; persistence, publication, packaging, and deployment are separate stages.
+
+See `repository-continuity.md` for the mandatory HOT -> WARM -> COLD entry gate. Missing `.git` at an old temporary path is not, by itself, a reason to run Workspace Download: first look for verified WARM recovery. Likewise, ordinary remote HEAD movement is incremental synchronization state, not source identity invalidation.
 
 ## Invariants
 
@@ -12,11 +14,11 @@ Use this reference whenever Codex Loop must establish a new mutable workspace fr
 - Never auto-select an installed Skill as a development source merely because it is available, current, convenient, or the GitHub path is blocked.
 - Never infer success or failure from a tool's inability to observe an event it does not support.
 
-## GitHub -> Web workspace: required path
+## GitHub -> Web workspace: COLD required path
 
-Treat `git clone`, `git pull`, `git fetch`, “open this repo”, “refresh from GitHub”, and “sync from GitHub” as **source-acquisition intent**, not as a requirement to execute those literal shell commands. In Web mode, automatically translate that intent into this verified Git-bundle path. Do not report “shell git clone/pull is forbidden” as the blocker when the canonical bundle path is available; block only when the canonical path itself cannot produce, retrieve, or verify the required revision.
+Treat `git clone`, “open this repo”, or another request that needs a repository when `repository-enter` returned `COLD_ACQUIRE_REQUIRED` as **source-acquisition intent**, not as a requirement to execute a literal shell clone. In Web mode, translate that cold intent into this verified Git-bundle path. Do not report “shell git clone/pull is forbidden” as the blocker when the canonical bundle path is available; block only when the canonical path itself cannot produce, retrieve, or verify the required revision.
 
-For an already bound Web repository, interpret `git pull`/`git fetch` as “synchronize the canonical Web repository to the requested remote revision while preserving exact Git identity.” Satisfy that through the verified acquisition/replay mechanisms below rather than network Git from the container.
+`git pull`, `git fetch`, “refresh from GitHub”, and “sync from GitHub” are not automatically source-acquisition intent. Run `repository-enter` first. If it returns `HOT_REUSE`, preserve the existing Git object database and fetch only the missing remote objects needed to classify fast-forward/divergence; then integrate in that same workspace. If HOT is gone, use a verified WARM restore when available. Only a COLD result enters the workflow below.
 
 When the user asks to pull, open, refresh, or synchronize repository source **from GitHub** into the current Web workspace, preserve Git identity through this path:
 

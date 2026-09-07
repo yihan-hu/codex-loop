@@ -315,6 +315,7 @@ def build_workspace_cache(
         "head_commit": head,
         "head_tree": tree,
         "branch": branch,
+        "repository": repository,
         "state_fingerprint": manifest["state_fingerprint"],
         "cache_folder_registration_required": True,
         "next": "register drive_folder_path in host-local Drive cache policy, upload this exact private capsule, and retain the returned Drive object identity in host-private state; do not auto-delete it",

@@ -8,7 +8,7 @@ Interpret common operation words as **user intent**, not as a demand for one lit
 
 Canonical intent translations include:
 
-- `git clone`, `git pull`, `git fetch`, “open this repo”, “refresh from GitHub”, or “sync from GitHub” -> the verified GitHub-to-Web source acquisition contract in `source-acquisition.md`;
+- `git clone`, `git pull`, `git fetch`, “open this repo”, “refresh from GitHub”, or “sync from GitHub” -> first run the HOT -> WARM -> COLD `repository-enter` contract in `repository-continuity.md`; an existing HOT Git workspace uses incremental synchronization, while only `COLD_ACQUIRE_REQUIRED` enters `source-acquisition.md`;
 - `git push`, “push this branch”, “publish this commit”, or “send these changes to GitHub” -> the verified Web publication contract in `web-mode-publish.md`;
 - `pytest`, `npm test`, build, lint, typecheck, or another ordinary validation command -> Codex Loop plans/binds the exact command, the host executes it visibly, and the runtime records the observed result; a local-runtime `requires_host_visible_execution` response is routing, not a capability failure;
 - “use a subagent/reviewer” -> a native host subagent when available, otherwise the declared logical-isolation/serialized delegation path in `delegation.md`;
