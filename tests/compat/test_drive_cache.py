@@ -13,29 +13,25 @@ def call(home, *args, check=True):
     return payload, proc
 
 class DriveCachePolicyTests(unittest.TestCase):
-    def test_switch_and_registry(self):
+    def test_registry(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)/"home"
-            policy,_ = call(home,"drive-delete-policy")
-            self.assertFalse(policy["data"]["delete_enabled"])
             reg,_ = call(home,"drive-cache-register","--folder-path","EpiProse/.runtime/cache")
             self.assertEqual(reg["data"]["folder_paths"],["EpiProse/.runtime/cache"])
             self.assertTrue(reg["data"]["local_only"])
 
-    def test_plan_and_authorize(self):
+    def test_plan_returns_exact_owned_expired_objects_delete_ready(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)/"home"
             call(home,"drive-cache-register","--folder-path","cache")
             env = os.environ.copy(); env["CODEX_LOOP_HOME"] = str(home)
             code = "from datetime import datetime,timezone; from scripts.codex_loop_runtime.workspace_cache import drive_cache_cleanup_plan; import json; print(json.dumps(drive_cache_cleanup_plan([{'id':'old','name':'old','created_at':'2026-09-01T00:00:00Z','folder_path':'cache','bounded_parent_proven':True,'ownership_proven':True},{'id':'new','name':'new','created_at':'2026-09-04T12:00:00Z','folder_path':'cache','bounded_parent_proven':True,'ownership_proven':True}],now=datetime(2026,9,5,18,tzinfo=timezone.utc))))"
             proc = subprocess.run([sys.executable,"-c",code],cwd=ROOT,env=env,text=True,stdout=subprocess.PIPE,check=True)
-            plan=json.loads(proc.stdout); self.assertEqual([x["id"] for x in plan["review_candidates"]],["old"])
-            pp=Path(td)/"plan.json"; pp.write_text(json.dumps(plan))
-            denied,_=call(home,"drive-cache-cleanup-authorize","--plan-json",str(pp),"--llm-review-completed","--llm-confirmed-id","old","--current-user-confirmation-observed","--confirmation-evidence","confirm old")
-            self.assertEqual(denied["data"]["status"],"DRIVE_DELETE_DISABLED")
-            call(home,"host-config","set","drive.delete_enabled","true")
-            ready,_=call(home,"drive-cache-cleanup-authorize","--plan-json",str(pp),"--llm-review-completed","--llm-confirmed-id","old","--current-user-confirmation-observed","--confirmation-evidence","confirm old")
-            self.assertTrue(ready["data"]["delete_authorized"])
-            self.assertEqual([x["id"] for x in ready["data"]["delete_ready"]],["old"])
+            plan=json.loads(proc.stdout)
+            self.assertEqual(plan["status"],"DRIVE_CACHE_DELETE_READY")
+            self.assertEqual([x["id"] for x in plan["delete_ready"]],["old"])
+            self.assertTrue(plan["delete_authorized"])
+            self.assertEqual([x["id"] for x in plan["retained"]],["new"])
+
 
 if __name__ == "__main__": unittest.main()

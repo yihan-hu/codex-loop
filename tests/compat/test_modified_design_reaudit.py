@@ -60,14 +60,12 @@ class ModifiedDesignReauditTests(unittest.TestCase):
                 expected_sha256=digest, allow_protected=True,
                 protected_override_reason="test intentionally changes the protected baseline file",
             )
-            store.mark_reviewed()
             decision = assess(root, store)
             self.assertEqual(decision.status, CompletionStatus.CONTINUE)
             self.assertTrue(any("criterion 0 evidence is stale" in x for x in decision.reasons))
             self.assertTrue(any("steers" in x and "stale" in x for x in decision.reasons))
             store.set_criterion(0, "pass", "a.txt now intentionally contains two")
             store.ack_steer(steer, "steer was re-evaluated after the intentional change")
-            store.mark_reviewed()
             self.assertEqual(assess(root, store).status, CompletionStatus.PASS)
 
     def test_reverted_workspace_change_does_not_require_final_review(self):
@@ -228,18 +226,15 @@ class ModifiedDesignReauditTests(unittest.TestCase):
                     "github_comment", "planned", "issue:1", action_class="external_non_idempotent"
                 )
 
-    def test_git_authorization_is_scope_specific(self):
+    def test_git_state_needs_semantic_recheck_not_authorization_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             (root / "a").write_text("a"); subprocess.run(["git", "add", "a"], cwd=root, check=True)
             store = self.make(root)
             (root / "b").write_text("b"); subprocess.run(["git", "add", "b"], cwd=root, check=True)
-            first = assess(root, store)
-            self.assertEqual(first.status, CompletionStatus.BLOCKED)
-            store.set_criterion(0, "pass", "objective rechecked after index update")
-            store.mark_reviewed()
-            store.authorize_git_mutation("user requested staging this file", index=True)
+            self.assertEqual(assess(root, store).status, CompletionStatus.CONTINUE)
+            store.set_criterion(0, "pass", "objective rechecked against current Git state")
             self.assertEqual(assess(root, store).status, CompletionStatus.PASS)
 
     def test_failed_process_blocks_completion_until_resolved(self):

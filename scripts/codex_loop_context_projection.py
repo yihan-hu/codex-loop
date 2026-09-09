@@ -216,14 +216,6 @@ def _has_substantive_changes(change_state: dict[str, Any]) -> bool:
     )
 
 
-def _review_status(facts: dict[str, Any]) -> str:
-    if not _has_substantive_changes(facts["changes"]):
-        return "not-required"
-    generation = int(facts["generation"])
-    reviewed = int(facts["store"].get_meta("changes_reviewed_generation", -1))
-    return "fresh" if reviewed == generation else "stale"
-
-
 def _guardrails(facts: dict[str, Any]) -> list[str]:
     store: StateStore = facts["store"]
     profile = str(store.get_meta("profile", "regular"))
@@ -241,12 +233,6 @@ def _guardrails(facts: dict[str, Any]) -> list[str]:
     protected_count = len(facts["changes"].get("protected_paths", []))
     if protected_count:
         result.append(f"preserve {protected_count} baseline protected path(s); modifying one requires explicit observed override reasoning")
-    scope = store.get_meta("git_mutation_scope", {}) or {}
-    allowed = [name for name in ("head", "branch", "index") if bool(scope.get(name))]
-    if allowed:
-        result.append("expected Git mutation scope: " + ", ".join(allowed))
-    else:
-        result.append("Git HEAD/branch/index mutations are not expected")
     if bool(store.get_meta("requires_validation", True)):
         result.append("completion requires current-generation validation evidence")
     else:
@@ -254,7 +240,7 @@ def _guardrails(facts: dict[str, Any]) -> list[str]:
     return result
 
 
-def _next_actions(facts: dict[str, Any], validation_status: str, review_status: str) -> list[dict[str, str]]:
+def _next_actions(facts: dict[str, Any], validation_status: str) -> list[dict[str, str]]:
     decision: CompletionDecision = facts["decision"]
     change_state = facts["changes"]
     generation = int(facts["generation"])
@@ -281,11 +267,6 @@ def _next_actions(facts: dict[str, Any], validation_status: str, review_status: 
 
     if change_state.get("unexpected_protected_changes"):
         add("blocker", "reconcile protected user work before further mutation", "protected baseline work changed outside the runtime journal")
-    git = change_state.get("git", {})
-    scope = facts["store"].get_meta("git_mutation_scope", {}) or {}
-    unauthorized = [name for name, changed_key in (("HEAD", "head_changed"), ("branch", "branch_changed"), ("index", "index_changed_from_baseline")) if git.get(changed_key) and not bool(scope.get(name.lower() if name != "HEAD" else "head"))]
-    if unauthorized:
-        add("blocker", "inspect and reconcile unexpected Git mutation", "unexpected Git state changed: " + ", ".join(unauthorized))
     opaque = sorted(str(x) for x in change_state.get("ignored_watch", {}).get("opaque_paths", []))
     waiver = facts["store"].freshness_waiver()
     waiver_ok = bool(
@@ -317,8 +298,6 @@ def _next_actions(facts: dict[str, Any], validation_status: str, review_status: 
         add("required", "reconcile unresolved external-action outcomes from real host observations", "completion requires terminal external state")
     if facts["store"].running_process_count() or facts["store"].unresolved_process_failure_count():
         add("required", "stop or resolve outstanding managed processes", "process ownership is unresolved")
-    if review_status == "stale":
-        add("required", "inspect the current final change set, then mark review freshness", "workspace changed after the last review")
     if decision.status.value == "PASS":
         return [{"kind": "finish", "action": "finish the task", "reason": "all deterministic completion gates pass"}]
     if not actions:
@@ -333,7 +312,6 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
     criteria_view, criteria_truncated = _criterion_working_view(facts["criteria"], facts["generation"])
     changed_paths, paths_truncated = _changed_path_view(facts["changes"])
     validation_status = _validation_status(facts)
-    review_status = _review_status(facts)
     pending_steers = [
         {"text": str(x.get("text", "")), "state": "pending"}
         for x in facts["pending_steers"][:MAX_WORKING_STEERS]
@@ -346,7 +324,6 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
     lifecycle = derive_capability_state(
         generation=int(facts["generation"]),
         validation_status=validation_status,
-        review_status=review_status,
         active_isolation=facts.get("active_isolation") is not None,
         has_external_actions=bool(
             store.unresolved_external_count()
@@ -380,7 +357,6 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
             "completion": decision.status.value,
             "hard_blocked": decision.status.value == "BLOCKED",
             "validation": validation_status,
-            "review": review_status,
             "changed_paths": changed_paths,
             "change_count": len({x["path"] for x in changed_paths}) + paths_truncated,
             "completion_reasons": reasons,
@@ -388,7 +364,7 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
         },
         "lifecycle": lifecycle,
         "warnings": list(facts.get("warnings", []))[-8:],
-        "next_actions": _next_actions(facts, validation_status, review_status),
+        "next_actions": _next_actions(facts, validation_status),
         "evidence_refs": evidence_refs,
         "truncated": {
             "criteria": criteria_truncated,

@@ -171,25 +171,9 @@ The standard probe semantics are:
 
 Probe results remain host observations. By default they remain fresh for four hours within the same unchanged routing session, so iterative publish loops do not repeat identical smoke solely because debugging took longer than 30 minutes. They must never be persisted as permanent authorization or used to bypass a later host-required sensitive-action approval. See `references/capability-preflight.md`.
 
-## Adaptive pre-runtime assessment
+## Lifecycle admission
 
-Before bootstrap, the host/Skill may deterministically record whether durable runtime is needed from concrete capability signals:
-
-```bash
-python scripts/codex_loop.py lifecycle-assess \
-  --workspace-observation \
-  --workspace-mutation \
-  --executable-validation \
-  --multiple-dependent-steps \
-  --durable-evidence \
-  --delegation \
-  --external-actions \
-  --managed-processes
-```
-
-All flags are optional. With no signals the result is `mode: direct` and no task state is created. Any supplied signal yields `mode: durable` plus the concrete activation reasons. This is deliberately not a task-complexity classifier. The host may reason about the signals directly and skip this command when no deterministic record is useful.
-
-For durable tasks, `next` exposes a bounded `lifecycle` view derived from authoritative generation, validation/review freshness, isolation, external-action, and process state. It does not persist a parallel capability FSM.
+Codex Loop selection by the host Skill router is the lifecycle admission. Do not run a second direct-vs-durable classifier. Bootstrap task state when the selected objective needs repository/durable state; keep optional capabilities lazy.
 
 ## Bootstrap and world state
 
@@ -211,7 +195,7 @@ Profiles: `regular`, `bug_fix`, `feature`, `refactor`, `test_repair`, `ci_repair
 `next` is the normal agent-facing state view. It is generated from the same context projector that backs full world-state/checkpoint data, but it intentionally omits low-level task/generation/plan bookkeeping and caps criteria, changed paths, completion reasons, steers, and suggested actions. It returns:
 
 - effective task objective/criteria plus runtime guardrails and unresolved user deltas;
-- derived validation/review freshness and current completion status;
+- derived validation status and current completion status;
 - bounded changed-path ownership (`agent`, `mixed`, `user`, or unexpected/unattributed);
 - legal/required next actions;
 - evidence references for explicit drill-down.
@@ -239,7 +223,7 @@ python scripts/codex_loop.py changes --cwd REPO --task-id TASK
 python scripts/codex_loop.py changes --cwd REPO --task-id TASK --review
 ```
 
-`hash` only reads workspace paths and refuses symlink-parent escape. `write` accepts stdin or a `--content-file` only inside the workspace; runtime-private files are never accepted as hidden content sources. Existing files require a latest preimage SHA. On supported POSIX filesystems the commit uses atomic pathname exchange and verifies the displaced preimage at the commit instant; concurrent changes are rolled back, and if rollback itself fails the displaced user preimage is preserved at a recovery path. Unsupported atomic-CAS platforms stay host-visible. Local writes are capped at 16 MiB; larger operations stay host-visible. `changes --review` records review freshness only; call it after actually inspecting the current change set.
+`hash` only reads workspace paths and refuses symlink-parent escape. `write` accepts stdin or a `--content-file` only inside the workspace; runtime-private files are never accepted as hidden content sources. Existing files require a latest preimage SHA. On supported POSIX filesystems the commit uses atomic pathname exchange and verifies the displaced preimage at the commit instant; concurrent changes are rolled back, and if rollback itself fails the displaced user preimage is preserved at a recovery path. Unsupported atomic-CAS platforms stay host-visible. Local writes are capped at 16 MiB; larger operations stay host-visible. Inspect the final change set semantically; the runtime does not store a review receipt.
 
 
 ### Opaque ignored inputs
@@ -362,7 +346,7 @@ python3 scripts/codex_loop.py persistence-cleanup-plan --manifest /PRIVATE/TEMP/
   --ownership-proven --bounded-runtime-scope-proven --recoverable-delete-supported
 ```
 
-When the user explicitly wants the **Web workspace itself** recoverable across conversations, create the separate 7-day immutable Workspace Capsule:
+When the user explicitly wants the **Web workspace itself** recoverable across conversations, create the separate 3-day immutable Workspace Capsule:
 
 ```bash
 python3 scripts/codex_loop.py workspace-cache-create --cwd REPO --repository OWNER/REPO --output /PRIVATE/TEMP/workspace-cache.tar.gz
@@ -371,7 +355,7 @@ python3 scripts/codex_loop.py workspace-cache-restore --capsule /PRIVATE/TEMP/wo
 python3 scripts/codex_loop.py workspace-cache-cleanup-plan --objects-json /PRIVATE/TEMP/cache-objects.json
 ```
 
-The capsule preserves exact Git HEAD commit/tree plus staged, unstaged, and non-ignored untracked state while excluding ignored files, Git config/hooks, and credentials. Restore verifies exact identity/state before binding the fresh workspace. Upload the consumed receipt before deleting the restored Drive capsule; deletion failure becomes `CACHE_CLEANUP_PENDING` and never invalidates `WORKSPACE_RESTORED`. Every cache create/list/restore operation opportunistically scans only `Codex Loop/.runtime/workspace-cache` and plans cleanup for consumed or >=7-day exact owned objects, with at most one refreshed retry per failed delete in that operation. State-only resume still creates a new freshness domain and never makes historical PASS/validation/review/audit evidence current. See `persistence.md` and `persistence-resume.md`.
+The capsule preserves exact Git HEAD commit/tree plus staged, unstaged, and non-ignored untracked state while excluding ignored files, Git config/hooks, and credentials. Restore verifies exact identity/state before binding the fresh workspace. Upload the consumed receipt before deleting the restored Drive capsule; deletion failure becomes `CACHE_CLEANUP_PENDING` and never invalidates `WORKSPACE_RESTORED`. Every cache create/list/restore operation opportunistically scans only `Codex Loop/.runtime/workspace-cache` and plans cleanup for consumed or >=3-day exact owned objects, with at most one refreshed retry per failed delete in that operation. State-only resume still creates a new freshness domain and never makes historical PASS/validation/audit evidence current. See `persistence.md` and `persistence-resume.md`.
 
 ## External/host actions
 
@@ -410,7 +394,7 @@ python3 scripts/codex_loop.py publish-enter --cwd REPO \
 
 ### Web route
 
-In Web mode the router automatically begins/reuses the publish-only continuation before calling the Web planner. If the current clean generation already has fresh validation/review, redundant validation remains forbidden. FAST_PUBLISH is the default; standard Web publication is explicit-only. The planner still returns the deterministic outcomes `FAST_PUBLISH`, `FAST_PUBLISH_REFRESH_REQUIRED`, `FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED`, `ALREADY_PUBLISHED`, `FAIL_CLOSED`, or explicitly selected `FULL_VERIFIED_PUBLISH`.
+In Web mode the router automatically begins/reuses the publish-only continuation before calling the Web planner. If the current clean generation already has fresh validation, redundant validation remains forbidden. FAST_PUBLISH is the default; standard Web publication is explicit-only. The planner still returns the deterministic outcomes `FAST_PUBLISH`, `FAST_PUBLISH_REFRESH_REQUIRED`, `FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED`, `ALREADY_PUBLISHED`, `FAIL_CLOSED`, or explicitly selected `FULL_VERIFIED_PUBLISH`.
 
 The Web exact-identity protocol intentionally does **not** require GitHub to already contain the audited source commit object. `remote_source_object_presence_required=false`: the verified Git bundle carries that exact commit object into the importer. Object absence must never be used as a transport-selection gate. Success still requires exact remote commit and tree equality.
 
@@ -464,17 +448,9 @@ python scripts/codex_loop.py service-stop --cwd REPO --task-id TASK
 
 The helper contains no model. It is task-private, token-authenticated, protected by single-owner/start locks, limited to 64 active processes, and only spawns commands accepted by the same narrow local policy. A lost helper turns owned process records into `orphaned`. Orphaned or internally `failed` process records block completion and cleanup until `process-resolve --evidence "..."` records a host-observed resolution.
 
-## Git bookkeeping
+## Git state
 
-Ordinary Git commands remain host-visible. When the user task intentionally changes HEAD/branch/index, record that expectation:
-
-```bash
-python scripts/codex_loop.py git-authorize --cwd REPO --task-id TASK \
-  --head --branch \
-  --reason "user requested creation of a commit on a task branch"
-```
-
-Specify only the dimensions the task is expected to mutate: `--head`, `--branch`, and/or `--index`. This is completion bookkeeping, not permission. Host approval/sandbox policy remains authoritative.
+Git commands remain host-visible. Observe actual HEAD/branch/index/worktree state and judge it against the user objective; do not maintain a separate `git-authorize` bookkeeping model.
 
 ## Canonical workspace, release, and publish
 
@@ -555,4 +531,4 @@ The local runtime exposes no custom hook configuration. It enforces built-in det
 
 ## Drive cache and deletion commands
 
-`drive-cache-cleanup-plan` considers only objects at least three days old whose exact parent path is in the host-local registry and whose bounded parent/ownership are proven. Candidates are LLM-review-only, never delete authorization. `drive-cache-cleanup-authorize` requires completed LLM review, explicit current-turn human confirmation, an untampered plan digest, and `drive.delete_enabled=true` before returning an exact delete-ready set.
+`drive-cache-cleanup-plan` considers only objects at least three days old whose exact parent path is in the host-local registry and whose bounded parent/ownership are proven. Exact owned registered cache objects at least three days old are returned as delete-ready automatically after identity/parent/ownership checks. Exact Codex Loop-created permission sentinels and publish/transfer staging objects are deleted automatically after verified consumption; there is no global Drive-delete switch or extra review/confirmation gate for these temporary objects.

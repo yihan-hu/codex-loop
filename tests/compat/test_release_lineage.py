@@ -295,7 +295,6 @@ class ReleaseLineageTests(unittest.TestCase):
             git(root, "add", "-A")
             git(root, "commit", "-qm", "model dispatcher payloads")
             sync_generation(root, store)
-            store.mark_reviewed()
             receipt = record_release_receipt(
                 root, store, artifact_name="skill.zip", artifact_sha256="8" * 64, evidence="verified",
             )
@@ -360,7 +359,6 @@ class ReleaseLineageTests(unittest.TestCase):
             (root / "tracked.txt").write_text("target\n", encoding="utf-8")
             git(root, "add", "tracked.txt"); git(root, "commit", "-qm", "target")
             sync_generation(root, store)
-            store.mark_reviewed()
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="7" * 64, evidence="verified")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
             dispatch_publish(store, action_id=plan["action_id"], transport="git")
@@ -377,7 +375,6 @@ class ReleaseLineageTests(unittest.TestCase):
             git(root, "add", "tracked.txt")
             git(root, "commit", "-qm", "target")
             sync_generation(root, store)
-            store.mark_reviewed()
             receipt = record_release_receipt(
                 root, store, artifact_name="skill.zip", artifact_sha256="b" * 64, evidence="verified artifact",
             )
@@ -406,7 +403,6 @@ class ReleaseLineageTests(unittest.TestCase):
             git(root, "add", "tracked.txt"); git(root, "commit", "-qm", "target")
             target = git(root, "rev-parse", "HEAD")
             sync_generation(root, store)
-            store.mark_reviewed()
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="c" * 64, evidence="verified")
             git(root, "checkout", "-qb", "remote", base)
             (root / "remote.txt").write_text("remote\n", encoding="utf-8")
@@ -427,7 +423,6 @@ class ReleaseLineageTests(unittest.TestCase):
             (root / "tracked.txt").write_text("target\n", encoding="utf-8")
             git(root, "add", "tracked.txt"); git(root, "commit", "-qm", "target")
             sync_generation(root, store)
-            store.mark_reviewed()
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="d" * 64, evidence="verified")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
             dispatch_publish(store, action_id=plan["action_id"], transport="git")
@@ -443,7 +438,7 @@ class ReleaseLineageTests(unittest.TestCase):
             self.assertEqual(result["state"], "terminal_success")
             self.assertEqual(store.unresolved_external_count(), 0)
 
-    def test_publish_requires_existing_validation_review_gates_without_new_parallel_audit_state(self):
+    def test_publish_requires_validation_without_review_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base = init_repo(root)
@@ -459,9 +454,6 @@ class ReleaseLineageTests(unittest.TestCase):
                 publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
             plan = store.create_validation_plan(store.generation(), ["pytest", "-q"], cwd=root)
             store.record_host_validation(plan["plan_id"], store.generation(), ["pytest", "-q"], 0, cwd=root, evidence="host pytest passed")
-            with self.assertRaisesRegex(RuntimeError, "reviewed"):
-                publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
-            store.mark_reviewed()
             out = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
             self.assertTrue(out["ready"])
 
@@ -488,7 +480,6 @@ class ReleaseLineageTests(unittest.TestCase):
         git(root, "add", "tracked.txt", "new.txt")
         git(root, "commit", "-qm", "stable target")
         sync_generation(root, store)
-        store.mark_reviewed()
         receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="8" * 64, evidence="verified")
         plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
         dispatch_publish(store, action_id=plan["action_id"], transport="github_object_api")
@@ -827,7 +818,6 @@ class ReleaseLineageTests(unittest.TestCase):
             (root / "tracked.txt").write_text("target\n", encoding="utf-8")
             git(root, "add", "tracked.txt"); git(root, "commit", "-qm", "target")
             sync_generation(root, store)
-            store.mark_reviewed()
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="f" * 64, evidence="verified")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
             with self.assertRaisesRegex(ValueError, "native git only"):
@@ -841,7 +831,6 @@ class ReleaseLineageTests(unittest.TestCase):
             (root / "tracked.txt").write_text("target\n", encoding="utf-8")
             git(root, "add", "tracked.txt"); git(root, "commit", "-qm", "target")
             sync_generation(root, store)
-            store.mark_reviewed()
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="1" * 64, evidence="verified")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
             self.assertEqual(plan["transport_order"], ["git"])
@@ -857,7 +846,6 @@ class ReleaseLineageTests(unittest.TestCase):
             first_commit = git(root, "rev-parse", "HEAD")
             first_tree = git(root, "rev-parse", "HEAD^{tree}")
             sync_generation(root, store)
-            store.mark_reviewed()
             first_receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="2" * 64, evidence="verified first")
             first_plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=first_receipt["release_id"])
 
@@ -866,7 +854,6 @@ class ReleaseLineageTests(unittest.TestCase):
             self.assertNotEqual(first_commit, second_commit)
             self.assertEqual(first_tree, git(root, "rev-parse", "HEAD^{tree}"))
             sync_generation(root, store)
-            store.mark_reviewed()
             second_receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="3" * 64, evidence="verified second")
             second_plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=second_receipt["release_id"])
 
@@ -902,7 +889,6 @@ class ReleaseLineageTests(unittest.TestCase):
             git(root, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(subrepo), "vendor/sub")
             git(root, "commit", "-qm", "add gitlink")
             sync_generation(root, store)
-            store.mark_reviewed()
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="5" * 64, evidence="verified")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
             self.assertEqual(plan["transport_order"], ["git"])

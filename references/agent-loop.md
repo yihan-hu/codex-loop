@@ -32,11 +32,11 @@ Run the smallest validation that demonstrates the requested behavior from the in
 
 ## Resume after persistence
 
-When recovering across conversations, do not manually reconstruct an old task as current truth. Run `persistence-resume-plan`, observe the required current facts, then `persistence-resume`. Treat old criterion PASS/validation/review/audit as historical; current source and external-action reality always wins. Never retry a persisted dispatched/outcome-unknown non-idempotent action before reconciliation.
+When recovering across conversations, do not manually reconstruct an old task as current truth. Run `persistence-resume-plan`, observe the required current facts, then `persistence-resume`. Treat old criterion PASS/validation/audit as historical; current source and external-action reality always wins. Never retry a persisted dispatched/outcome-unknown non-idempotent action before reconciliation.
 
 ## Review
 
-Inspect the final change set for accidental edits, stale comments, debug code, incomplete TODOs, generated churn, and mismatch with repository conventions. Mark review freshness only after this inspection.
+Inspect the final change set for accidental edits, stale comments, debug code, incomplete TODOs, generated churn, and mismatch with repository conventions. Review is semantic model work over the current diff; do not replace it with a stored boolean receipt.
 
 ## Release and publish when requested
 

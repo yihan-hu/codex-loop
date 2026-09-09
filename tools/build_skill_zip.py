@@ -48,7 +48,7 @@ def _validate_chatgpt_metadata(source: Path) -> None:
     metadata = (source / "agents" / "openai.yaml").read_text(encoding="utf-8")
     required = (
         'display_name: "Codex Loop"',
-        'short_description: "Adaptive lifecycle for multi-step objectives"',
+        'short_description: "Objective lifecycle for multi-step work"',
         'icon_small: "./assets/icon.svg"',
         'icon_large: "./assets/icon.svg"',
         'default_prompt: "Use $codex-loop ',

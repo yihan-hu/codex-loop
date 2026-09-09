@@ -38,7 +38,6 @@ def ready_store(root):
     store = StateStore(root / ".git" / "codex-loop-test" / "state.sqlite3")
     store.configure_task(root.name, "publish", ["publish"], requires_validation=False, no_validation_reason="test fixture uses no executable workload")
     store.set_meta("workspace_binding", capture_workspace_binding(root))
-    store.set_meta("changes_reviewed_generation", 0)
     return store
 
 
@@ -173,7 +172,6 @@ class FastPublishTests(unittest.TestCase):
                 )
                 self.assertTrue(continuation["active"])
                 self.assertTrue(continuation["validation_reused"])
-                self.assertTrue(continuation["review_reused"])
                 self.assertTrue(continuation["revalidation_forbidden"])
                 self.assertFalse(continuation["semantic_plan_change"])
                 self.assertTrue(publish_continuation_state(store)["active"])
@@ -348,7 +346,6 @@ class FastPublishTests(unittest.TestCase):
                 self.assertTrue(plan["remote_head_is_local_ancestor"])
                 self.assertEqual(plan["fast_path_budget"]["permission_smoke_probes"], 0)
                 self.assertEqual(plan["fast_path_budget"]["validation_commands"], 0)
-                self.assertEqual(plan["fast_path_budget"]["change_review_repeats"], 0)
                 self.assertEqual(plan["fast_path_budget"]["full_bundle_attempts"], 0)
                 self.assertEqual(plan["fast_path_budget"]["production_packaging_steps"], 0)
                 self.assertEqual(plan["fast_path_budget"]["bundle_build_attempts"], 1)

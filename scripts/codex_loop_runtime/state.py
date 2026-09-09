@@ -450,7 +450,6 @@ class StateStore:
     def bump_generation(self) -> int:
         value = self.generation() + 1
         self.set_meta("generation", value)
-        self.set_meta("changes_reviewed_generation", -1)
         return value
 
     def configure_task(
@@ -461,8 +460,6 @@ class StateStore:
         *,
         profile: str = "regular",
         requires_validation: bool = True,
-        git_mutation_reason: str | None = None,
-        git_mutation_scope: dict[str, bool] | None = None,
         no_validation_reason: str | None = None,
         requires_clean_process_exit: bool = False,
     ) -> None:
@@ -477,12 +474,6 @@ class StateStore:
         auto_criterion = not clean_criteria
         if auto_criterion:
             clean_criteria = [objective]
-        reason = scrub_persisted_text(git_mutation_reason, limit=4096)
-        scope = {"head": False, "branch": False, "index": False}
-        if git_mutation_scope is not None:
-            scope.update({k: bool(git_mutation_scope.get(k, False)) for k in scope})
-        if any(scope.values()) and not (reason and reason.strip()):
-            raise ValueError("Git mutation authorization requires a concise reason")
         no_validation_reason = scrub_persisted_text(no_validation_reason, limit=4096)
         if not requires_validation and not (no_validation_reason and no_validation_reason.strip()):
             raise ValueError("disabling validation requires a concise reason")
@@ -501,11 +492,7 @@ class StateStore:
         self.set_meta("requires_validation", bool(requires_validation))
         self.set_meta("no_validation_reason", no_validation_reason)
         self.set_meta("requires_clean_process_exit", bool(requires_clean_process_exit))
-        self.set_meta("allow_git_mutation", any(scope.values()))
-        self.set_meta("git_mutation_reason", reason)
-        self.set_meta("git_mutation_scope", scope)
         self.set_meta("generation", 0)
-        self.set_meta("changes_reviewed_generation", -1)
         self.set_meta("plan_revision", 0)
         self.set_meta("task_status", "active")
 
@@ -1039,21 +1026,6 @@ class StateStore:
                 "UPDATE external_actions SET failure_resolved=1,failure_resolution_evidence=?,updated_at=CURRENT_TIMESTAMP WHERE action_id=?",
                 (clean, action_id),
             )
-
-    def authorize_git_mutation(self, reason: str, *, head: bool = False, branch: bool = False, index: bool = False) -> None:
-        self.ensure_active()
-        clean = (scrub_persisted_text(reason, limit=4096) or "").strip()
-        if not clean:
-            raise ValueError("Git mutation authorization requires a concise reason")
-        scope = {"head": bool(head), "branch": bool(branch), "index": bool(index)}
-        if not any(scope.values()):
-            raise ValueError("Git mutation authorization requires at least one explicit scope: head, branch, or index")
-        self.set_meta("allow_git_mutation", True)
-        self.set_meta("git_mutation_reason", clean)
-        self.set_meta("git_mutation_scope", scope)
-
-    def mark_reviewed(self) -> None:
-        self.set_meta("changes_reviewed_generation", self.generation())
 
     def record_checkpoint(self, summary: Any) -> int:
         encoded = json.dumps(summary, ensure_ascii=True, sort_keys=True)

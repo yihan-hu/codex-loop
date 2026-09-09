@@ -64,7 +64,6 @@ This is the single safety policy for host-visible and RDC-launched commands. Do 
 - Interactive work stays foreground/task-owned; do not detach it from the controlling session.
 - Every external command has an explicit finite workload timeout. On detected unexpected input prompt, repeated output without progress, or no-progress/stall, terminate the task-owned process or process group immediately on detection.
 - One task-owned log or temporary file is capped at 1,000,000,000 bytes (1 GB). Stop the writer before the cap is crossed.
-- Before and during file-producing work, require at least 50,000,000,000 bytes (50 GB) free on the destination volume. If the floor is crossed, stop producing files and report the condition.
 - DOCX ZIP-level work begins with `unzip -t`. Automatic `zip -FF` repair of a DOCX is forbidden; failed integrity requires a separately reviewed recovery on a copy.
 - Before completion, stop task-owned processes and remove task-owned temporary files. Unresolved process ownership/termination prevents PASS.
 - `nohup`, `disown`, `setsid`, shell backgrounding, daemonization, or any child intended to outlive task completion is forbidden unless the user explicitly authorizes persistent background execution for the current task.

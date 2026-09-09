@@ -15,7 +15,7 @@ class CompletionTests(unittest.TestCase):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); s=self.make(root,requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation'); self.assertEqual(len(s.criteria()),1)
       with self.assertRaises(ValueError): s.set_criterion(0,'pass')
-  def test_host_validation_evidence_and_review_gate(self):
+  def test_host_validation_evidence_gate(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); s=self.make(root,requires_validation=True); s.set_criterion(0,'pass','observed objective satisfied')
       host_validation(s,['pytest'],0,cwd=root,evidence='host pytest exit 0')
@@ -46,9 +46,9 @@ class CompletionTests(unittest.TestCase):
   def test_readonly_profile_host_change_blocks(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a').write_text('a'); s=self.make(root,profile='code_review',requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation'); s.set_criterion(0,'pass','review complete'); (root/'a').write_text('b'); self.assertEqual(assess(root,s).status,CompletionStatus.BLOCKED)
-  def test_git_index_mutation_requires_authorization(self):
+  def test_git_index_mutation_is_observed_without_bookkeeping_authorization(self):
     with tempfile.TemporaryDirectory() as tmp:
-      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a').write_text('a'); subprocess.run(['git','add','a'],cwd=root,check=True); s=self.make(root,requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation'); s.set_criterion(0,'pass','ok'); (root/'b').write_text('b'); subprocess.run(['git','add','b'],cwd=root,check=True); self.assertEqual(assess(root,s).status,CompletionStatus.BLOCKED)
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a').write_text('a'); subprocess.run(['git','add','a'],cwd=root,check=True); s=self.make(root,requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation'); s.set_criterion(0,'pass','ok'); (root/'b').write_text('b'); subprocess.run(['git','add','b'],cwd=root,check=True); self.assertEqual(assess(root,s).status,CompletionStatus.CONTINUE)
   def test_task_id_isolation_and_unknown_does_not_create(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); a=create_store(root,task_id='task_a'); a.configure_task('task_a','a',[]); b=create_store(root,task_id='task_b'); b.configure_task('task_b','b',[]); self.assertEqual(open_store(root,'task_a').get_meta('objective'),'a');

@@ -54,7 +54,6 @@ def ready_store(root: Path) -> StateStore:
         no_validation_reason="test fixture exercises deterministic publication routing",
     )
     store.set_meta("workspace_binding", capture_workspace_binding(root))
-    store.set_meta("changes_reviewed_generation", 0)
     return store
 
 

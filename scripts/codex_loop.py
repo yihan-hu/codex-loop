@@ -45,7 +45,6 @@ from codex_loop_runtime.routing_state import (
     route_show,
     route_transition,
 )
-from codex_loop_runtime.lifecycle import BINDING_LIFECYCLE_REQUIREMENTS, DURABLE_SIGNAL_KEYS, assess_runtime_need
 from codex_loop_runtime.host_config import (
     PROGRESS_MODES,
     effective_progress_config,
@@ -91,10 +90,8 @@ from codex_loop_runtime.source_acquisition import (
 )
 from codex_loop_runtime.repository_continuity import repository_enter
 from codex_loop_runtime.workspace_cache import (
-    authorize_drive_cache_cleanup,
     build_workspace_cache,
     drive_cache_cleanup_plan,
-    drive_delete_policy,
     register_drive_cache_folder,
     registered_drive_cache_folders,
     restore_workspace_cache,
@@ -116,7 +113,6 @@ from codex_loop_runtime.workspace_registry import (
 
 
 HOST_ADAPTER_COMMANDS = (
-    ('lifecycle-assess', 'decide direct vs durable execution and expose effective progress policy'),
     ('next', 'project the bounded working set for the active durable task'),
     ('host-config', 'show or update the unified private Host Profile'),
     ('progress-config', 'compatibility facade for private progress-visibility preferences'),
@@ -130,7 +126,7 @@ HOST_ADAPTER_COMMANDS = (
     ('permission-observation-status', 'check freshness of a scoped current-session host capability observation'),
     ('source-acquisition-verify', 'verify an exact Git-native Web restore before durable bootstrap'),
     ('repository-enter', 'reuse HOT Git state, restore verified WARM state, or require COLD acquisition'),
-    ('web-publish-continuation-begin', 'freeze a publish-only continuation onto fresh validation/review and forbid redundant revalidation'),
+    ('web-publish-continuation-begin', 'freeze a publish-only continuation onto fresh validation and forbid redundant revalidation'),
     ('web-publish-bundle', 'build and bind a verified exact-identity Web Git bundle'),
     ('web-publish-archive', 'compatibility alias for exact-identity Web Git bundle creation'),
     ('publish-enter', 'stable route-aware publication ABI; the only model-facing publication entrypoint'),
@@ -142,16 +138,14 @@ HOST_ADAPTER_COMMANDS = (
     ('persistence-resume-plan', 'plan deterministic recovery observations'),
     ('persistence-resume', 'reconcile current reality and create a fresh resumed task'),
     ('persistence-cleanup-plan', 'plan recovery-manifest cleanup'),
-    ('workspace-cache-create', 'create an immutable 7-day Git/worktree Workspace Capsule for private Drive staging'),
+    ('workspace-cache-create', 'create an immutable 3-day Git/worktree Workspace Capsule for private Drive staging'),
     ('workspace-cache-validate', 'validate a Workspace Capsule and its exact Git/worktree identity'),
     ('workspace-cache-restore', 'restore a Workspace Capsule into a fresh Git workspace and emit a consumption receipt'),
     ('workspace-cache-cleanup-plan', 'plan bounded consumed/expired Drive Workspace Capsule cleanup'),
-    ('drive-delete-policy', 'show the host-local global Drive deletion switch before any Drive delete'),
     ('drive-cache-register', 'remember a Codex Loop cache folder path in host-local non-uploaded config'),
     ('drive-cache-unregister', 'remove a cache folder path from host-local config'),
     ('drive-cache-list', 'list host-local registered Codex Loop Drive cache folders'),
-    ('drive-cache-cleanup-plan', 'nominate >=3-day registered cache objects for one LLM review; never delete'),
-    ('drive-cache-cleanup-authorize', 'after LLM review and explicit human confirmation, gate exact Drive cache deletes'),
+    ('drive-cache-cleanup-plan', 'return exact owned >=3-day registered cache objects ready for automatic cleanup'),
     ('objective-audit', 'record requirement-by-requirement completion evidence'),
     ('workspace-register', 'register a private host workspace alias'),
     ('workspace-registry-list', 'list private host workspace aliases'),
@@ -217,19 +211,6 @@ def _resolve_plan(store, generation: int, command: list[str], cwd: Path) -> dict
     if len(rows) > 1:
         raise RuntimeError('multiple unconsumed validation plans match the current generation/cwd/command; use an explicit plan id for low-level recovery')
     return {'plan_id': str(rows[0]['plan_id']), 'generation': int(generation), 'cwd': cwd_norm, 'identity': rec['sha256']}
-
-
-def _cmd_lifecycle_assess(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(add_help=False)
-    for key in DURABLE_SIGNAL_KEYS:
-        p.add_argument("--" + key.replace("_", "-"), action="store_true")
-    p.add_argument("--binding-lifecycle-requirement", choices=sorted(BINDING_LIFECYCLE_REQUIREMENTS))
-    args = p.parse_args(argv[1:])
-    signals = {key: bool(getattr(args, key)) for key in DURABLE_SIGNAL_KEYS}
-    result = assess_runtime_need(signals, binding_lifecycle_requirement=args.binding_lifecycle_requirement)
-    result["progress"] = progress_policy(str(result["mode"]))
-    emit_ok(result)
-    return 0
 
 
 def _cmd_next(argv: list[str]) -> int:
@@ -323,7 +304,7 @@ def _cmd_validate(argv: list[str]) -> int:
     if continuation.get('active') and continuation.get('revalidation_forbidden'):
         raise RuntimeError(
             'redundant validation is forbidden during a fresh publish-only continuation; '
-            'reuse the current validation/review evidence and run web-publish-plan. '
+            'reuse the current validation evidence and run web-publish-plan. '
             'Content mutation automatically invalidates this continuation.'
         )
     safety = assess_command(command)
@@ -1011,12 +992,6 @@ def _load_bounded_json_file(path_text: str, max_bytes: int, label: str):
     return json.loads(payload.decode("utf-8"))
 
 
-def _cmd_drive_delete_policy(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="codex_loop.py drive-delete-policy").parse_args(argv[1:])
-    emit_ok(drive_delete_policy())
-    return 0
-
-
 def _cmd_drive_cache_register(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="codex_loop.py drive-cache-register")
     p.add_argument("--folder-path", required=True)
@@ -1047,19 +1022,6 @@ def _cmd_drive_cache_cleanup_plan(argv: list[str]) -> int:
     if isinstance(objects, dict) and set(objects) == {"objects"}:
         objects = objects["objects"]
     emit_ok(drive_cache_cleanup_plan(objects))
-    return 0
-
-
-def _cmd_drive_cache_cleanup_authorize(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="codex_loop.py drive-cache-cleanup-authorize")
-    p.add_argument("--plan-json", required=True)
-    p.add_argument("--llm-confirmed-id", action="append", default=[])
-    p.add_argument("--llm-review-completed", action="store_true")
-    p.add_argument("--current-user-confirmation-observed", action="store_true")
-    p.add_argument("--confirmation-evidence")
-    a = p.parse_args(argv[1:])
-    plan = _load_bounded_json_file(a.plan_json, 1024 * 1024, "Drive cache cleanup plan")
-    emit_ok(authorize_drive_cache_cleanup(plan, llm_confirmed_ids=a.llm_confirmed_id, llm_review_completed=a.llm_review_completed, human_confirmation_observed=a.current_user_confirmation_observed, confirmation_evidence=a.confirmation_evidence))
     return 0
 
 
@@ -1176,7 +1138,7 @@ def _cmd_workspace_remove(argv: list[str]) -> int:
 def _delegate(argv: list[str]) -> int:
     args = list(argv)
     command = args[0] if args else ''
-    task_scoped = command not in {'bootstrap', 'lifecycle-assess', 'command-check', 'source-verify', '_serve'}
+    task_scoped = command not in {'bootstrap', 'command-check', 'source-verify', '_serve'}
     if task_scoped and '--task-id' not in args and '--use-active-task' not in args:
         insert = args.index('--') if '--' in args else len(args)
         args.insert(insert, '--use-active-task')
@@ -1195,8 +1157,6 @@ def main() -> int:
             return _delegate(argv)
         if argv[0] in {'-h', '--help'}:
             return _print_top_level_help()
-        if argv[0] == 'lifecycle-assess':
-            return _cmd_lifecycle_assess(argv)
         if argv[0] == 'next':
             return _cmd_next(argv)
         if argv[0] == 'host-config':
@@ -1261,8 +1221,6 @@ def main() -> int:
             return _cmd_workspace_cache_restore(argv)
         if argv[0] == 'workspace-cache-cleanup-plan':
             return _cmd_workspace_cache_cleanup_plan(argv)
-        if argv[0] == 'drive-delete-policy':
-            return _cmd_drive_delete_policy(argv)
         if argv[0] == 'drive-cache-register':
             return _cmd_drive_cache_register(argv)
         if argv[0] == 'drive-cache-unregister':
@@ -1271,8 +1229,6 @@ def main() -> int:
             return _cmd_drive_cache_list(argv)
         if argv[0] == 'drive-cache-cleanup-plan':
             return _cmd_drive_cache_cleanup_plan(argv)
-        if argv[0] == 'drive-cache-cleanup-authorize':
-            return _cmd_drive_cache_cleanup_authorize(argv)
         if argv[0] == 'objective-audit':
             return _cmd_objective_audit(argv)
         if argv[0] == 'workspace-register':

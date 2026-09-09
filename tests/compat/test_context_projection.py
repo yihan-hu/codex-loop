@@ -56,29 +56,10 @@ class ContextProjectionTests(unittest.TestCase):
             self.assertEqual(criterion['status'], 'stale')
             self.assertNotIn('evidence_generation', criterion)
             self.assertEqual(after['state']['validation'], 'stale')
-            self.assertEqual(after['state']['review'], 'stale')
             self.assertEqual(after['lifecycle']['mode'], 'durable')
             self.assertIn('mutation_tracking', after['lifecycle']['active_capabilities'])
             self.assertEqual(after['lifecycle']['requirements']['validation'], 'required')
-            self.assertEqual(after['lifecycle']['requirements']['change_review'], 'required')
 
-
-    def test_reverted_mutation_uses_current_reality_and_drops_review_obligation(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
-            target = root / 'a.txt'
-            target.write_text('base')
-            store = self.make(root, criteria=['a is back to base'])
-            target.write_text('changed')
-            changed = build_working(root, root, store)
-            self.assertEqual(changed['state']['review'], 'stale')
-            self.assertIn('change_review', changed['lifecycle']['active_capabilities'])
-            target.write_text('base')
-            reverted = build_working(root, root, store)
-            self.assertEqual(reverted['state']['review'], 'not-required')
-            self.assertNotIn('change_review', reverted['lifecycle']['active_capabilities'])
-            self.assertNotIn('change_review', reverted['lifecycle']['requirements'])
 
     def test_next_actions_include_pending_criteria_beyond_projection_cap(self):
         with tempfile.TemporaryDirectory() as tmp:

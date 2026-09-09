@@ -53,4 +53,4 @@ validate capsule -> restore fresh Git workspace -> verify exact HEAD/tree + stat
   -> observe current workspace/external reality -> persistence-resume-plan -> persistence-resume
 ```
 
-A successful workspace restore creates current source reality; it does not make prior state-only PASS/validation/review/audit evidence fresh. If Drive deletion of the consumed capsule fails, keep `WORKSPACE_RESTORED` and record `CACHE_CLEANUP_PENDING`; later bounded cache operations retry cleanup opportunistically. Never re-select a cache ID that has a matching consumption receipt as an automatic restore candidate.
+A successful workspace restore creates current source reality; it does not make prior state-only PASS/validation/audit evidence fresh. If Drive deletion of the consumed capsule fails, keep `WORKSPACE_RESTORED` and record `CACHE_CLEANUP_PENDING`; later bounded cache operations retry cleanup opportunistically. Never re-select a cache ID that has a matching consumption receipt as an automatic restore candidate.

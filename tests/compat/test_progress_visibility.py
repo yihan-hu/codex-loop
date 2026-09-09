@@ -55,10 +55,6 @@ class ProgressVisibilityTests(unittest.TestCase):
             self.assertFalse(direct["data"]["periodic_updates"])
             self.assertFalse(direct["data"]["emit_upfront_plan"])
 
-            assessed, _ = call(home, "lifecycle-assess", "--multiple-dependent-steps")
-            self.assertEqual(assessed["data"]["mode"], "durable")
-            self.assertEqual(assessed["data"]["progress"]["visibility_mode"], "enhanced")
-            self.assertEqual(assessed["data"]["progress"]["tool_call_interval"], 3)
 
 
     def test_overrides_are_private_and_preserve_unrelated_host_config(self):

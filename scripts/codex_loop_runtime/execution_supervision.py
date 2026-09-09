@@ -53,7 +53,6 @@ _TERMINAL_WORKLOAD = {
 }
 
 MAX_LOG_OR_TEMP_BYTES = 1_000_000_000
-MIN_FREE_DISK_BYTES = 50_000_000_000
 
 
 @dataclass(frozen=True)
@@ -217,7 +216,6 @@ def execution_policy(
             "terminate_immediately_on_detected_repeated_output_without_progress": True,
             "terminate_immediately_on_detected_no_progress": True,
             "max_log_or_temp_bytes": MAX_LOG_OR_TEMP_BYTES,
-            "minimum_free_disk_bytes": MIN_FREE_DISK_BYTES,
             "docx_integrity_preflight_argv": ["unzip", "-t"],
             "automatic_docx_zip_ff_forbidden": True,
             "task_owned_cleanup_required_before_completion": True,

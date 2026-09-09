@@ -29,7 +29,7 @@ MAIN --isolate-enter--> ISOLATED_ACTIVE --isolate-finish--> MAIN
 
 `isolate-enter` creates a normal checkpoint, records `parent_generation`, executor capability metadata, the explicit projected context, and warnings. The checkpoint is remembered working state, never restored workspace reality.
 
-`isolate-finish` validates and scrubs the structured result, reconciles current workspace generation, records workspace-change/limitation warnings, closes the isolation atomically, and returns a fresh Main working projection. Any generation change naturally stales old validation/review/criterion evidence under existing rules.
+`isolate-finish` validates and scrubs the structured result, reconciles current workspace generation, records workspace-change/limitation warnings, closes the isolation atomically, and returns a fresh Main working projection. Any generation change naturally stales old validation/criterion evidence under existing rules.
 
 `isolate-abort` closes only the isolation; it does not cancel the parent. Parent cancellation atomically aborts any active isolation before continuing the normal cancellation flow.
 

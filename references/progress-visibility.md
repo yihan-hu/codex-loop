@@ -19,7 +19,7 @@ The cadence is approximate because message timing belongs to the ChatGPT host. H
 
 ## Effective policy
 
-After `lifecycle-assess`, consult the effective policy when the runtime is available:
+For a Codex Loop objective, consult the effective policy when the runtime is available:
 
 ```bash
 python3 scripts/codex_loop.py progress-policy --lifecycle-mode durable

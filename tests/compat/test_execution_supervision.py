@@ -24,7 +24,7 @@ class ExecutionObservationTests(unittest.TestCase):
         self.assertTrue(safety["external_command_timeout_required"])
         self.assertTrue(safety["interactive_foreground_required"])
         self.assertEqual(safety["max_log_or_temp_bytes"], 1_000_000_000)
-        self.assertEqual(safety["minimum_free_disk_bytes"], 50_000_000_000)
+        self.assertNotIn("minimum_free_disk_bytes", safety)
         self.assertEqual(safety["docx_integrity_preflight_argv"], ["unzip", "-t"])
         self.assertTrue(safety["automatic_docx_zip_ff_forbidden"])
         self.assertTrue(safety["task_owned_cleanup_required_before_completion"])
@@ -97,7 +97,6 @@ class CompletionSeparationTests(unittest.TestCase):
         )
         capture_baseline(root, store)
         store.set_criterion(0, "pass", "authoritative test outcome recorded")
-        store.mark_reviewed()
         return store
 
     def record(self, root: Path, store, observation: ExecutionObservation):

@@ -24,7 +24,7 @@ A later conversation downloads the manifest, runs `persistence-validate`, then `
 
 ## Workspace Cache (`state_and_workspace` recovery)
 
-Workspace Cache is a separate artifact class with a fixed **7-day TTL** and one-shot consumption semantics.
+Workspace Cache is a separate artifact class with a fixed **3-day TTL** and one-shot consumption semantics.
 
 Create it from the current real Git workspace:
 
@@ -46,7 +46,7 @@ The capsule contains only:
 
 It deliberately excludes ignored files, `.git/config`, hooks, credentials, environment caches, virtual environments, `node_modules`, and other ignored build/runtime material. Unsupported/special untracked filesystem entries fail closed instead of being silently omitted.
 
-`workspace-cache-create` returns the capsule SHA-256/size, cache ID, exact HEAD commit/tree, state fingerprint, suggested Drive filename, private bounded folder path `Codex Loop/.runtime/workspace-cache`, and 7-day expiry. The host uploads the exact binary file privately and retains the Drive object identity only in host-private state.
+`workspace-cache-create` returns the capsule SHA-256/size, cache ID, exact HEAD commit/tree, state fingerprint, suggested Drive filename, private bounded folder path `Codex Loop/.runtime/workspace-cache`, and 3-day expiry. The host uploads the exact binary file privately and retains the Drive object identity only in host-private state.
 
 ### Restore
 

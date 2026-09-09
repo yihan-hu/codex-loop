@@ -253,7 +253,6 @@ class CancelledTaskBoundaryTests(unittest.TestCase):
             for args in [
                 ('criterion','--index','0','--status','pass','--evidence','late'),
                 ('steer','--text','late steer'),
-                ('git-authorize','--reason','late auth'),
             ]:
                 out, proc=call(root,*args,check=False)
                 self.assertNotEqual(proc.returncode,0, args)
@@ -275,7 +274,6 @@ class CancelledTaskBoundaryTests(unittest.TestCase):
             call(root,'bootstrap','--objective','cancel progress boundary','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation')
             call(root,'cancel','--reason','stop')
             for args in [
-                ('changes','--review'),
                 ('checkpoint','--next-action','late work'),
                 ('checkpoint-restore',),
                 ('shell-snapshot',),

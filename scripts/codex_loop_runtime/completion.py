@@ -275,22 +275,6 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
     git = change_state["git"]
     if git.get("probe_degraded"):
         reasons.append("Git state observation is degraded; refresh Git probes before completion")
-    scope = store.get_meta("git_mutation_scope", {}) or {}
-    if not isinstance(scope, dict):
-        scope = {}
-    if git.get("head_changed") and not bool(scope.get("head")):
-        blockers.append("Git HEAD changed without explicit HEAD authorization")
-    if git.get("branch_changed") and not bool(scope.get("branch")):
-        blockers.append("Git branch changed without explicit branch authorization")
-    if git.get("index_changed_from_baseline") and not bool(scope.get("index")):
-        blockers.append("Git index changed without explicit index authorization")
-    if any(bool(scope.get(k)) for k in ("head", "branch", "index")) and not str(store.get_meta("git_mutation_reason", "") or "").strip():
-        blockers.append("Git mutation authorization is missing its reason")
-
-    reviewed_generation = int(store.get_meta("changes_reviewed_generation", -1))
-    if changed_any and reviewed_generation != generation:
-        reasons.append("final changes have not been reviewed at the current generation")
-
     if blockers:
         result = CompletionStatus.BLOCKED
     elif reasons:
@@ -305,7 +289,6 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
             "criteria": criteria,
             "objective_audit": objective_audit,
             "validation": validation_state,
-            "reviewed_generation": reviewed_generation,
             "unresolved_external": unresolved_external,
             "unresolved_external_failures": unresolved_external_failures,
             "ambiguous_external_identities": ambiguous_external_identities,

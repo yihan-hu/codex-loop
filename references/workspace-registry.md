@@ -104,7 +104,7 @@ The nonce may alternatively be supplied through `CODEX_LOOP_SESSION_ID` by a hos
 
 The runtime stores only the workspace fingerprint and a SHA-256 digest of the authorization evidence; it does not persist the raw authorization phrase or the registered path in session-grant state.
 
-The bookkeeping command does not manufacture permission. The required `--authorization-evidence` is a record of host-observed user consent, analogous to `git-authorize`: the host remains responsible for deciding whether the user's words are explicit authorization.
+The bookkeeping command does not manufacture permission. The required `--authorization-evidence` is a record of host-observed user consent: the host remains responsible for deciding whether the user's words are explicit authorization.
 
 Examples that count as explicit grants include:
 

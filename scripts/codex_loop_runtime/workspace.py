@@ -599,7 +599,7 @@ def workspace_fingerprint(root: Path) -> str:
         else:
             # Freshness is content-addressed, not commit-addressed. The index state is
             # identical immediately before and after a commit that merely records the
-            # already-reviewed content, so that commit does not stale validation/review.
+            # already-inspected content, so that commit does not stale validation.
             # A checkout/reset/content change still changes index_state/worktree and
             # therefore advances the generation.
             h.update(b"\0INDEX_STATE\0"); h.update(index_state.encode())

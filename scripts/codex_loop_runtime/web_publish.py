@@ -109,18 +109,6 @@ def _validation_fresh(store: Any) -> tuple[bool, dict[str, Any]]:
     return ok, {"generation": generation, **state}
 
 
-def _review_fresh(store: Any) -> tuple[bool, dict[str, Any]]:
-    generation = store.generation()
-    if generation == 0:
-        return True, {"generation": generation, "required": False}
-    reviewed = int(store.get_meta("changes_reviewed_generation", -1)) == generation
-    return reviewed, {
-        "generation": generation,
-        "required": True,
-        "reviewed_generation": store.get_meta("changes_reviewed_generation", -1),
-    }
-
-
 def publish_continuation_state(store: Any) -> dict[str, Any]:
     generation = store.generation()
     raw = store.get_meta(_PUBLISH_CONTINUATION_META)
@@ -150,7 +138,7 @@ def begin_web_publish_continuation(
     """Freeze a publish-only continuation onto fresh content evidence.
 
     A terse push/publish request after source work is delivery intent, not a semantic
-    objective steer. If the workspace is clean and validation/review are already fresh,
+    objective steer. If the workspace is clean and validation is already fresh,
     later validation planning is rejected until content changes.
     """
     root = root.resolve()
@@ -158,9 +146,8 @@ def begin_web_publish_continuation(
     sync_generation(root, store)
     clean = _workspace_clean(root)
     validation_ok, validation = _validation_fresh(store)
-    review_ok, review = _review_fresh(store)
     generation = store.generation()
-    ready = bool(clean and validation_ok and review_ok)
+    ready = bool(clean and validation_ok)
     state = {
         "version": 1,
         "kind": "publish_only",
@@ -170,7 +157,6 @@ def begin_web_publish_continuation(
         "ready": ready,
         "workspace_clean": clean,
         "validation_reused": bool(validation_ok and clean),
-        "review_reused": bool(review_ok and clean),
         "revalidation_forbidden": ready,
         "semantic_plan_change": False,
     }
@@ -179,7 +165,6 @@ def begin_web_publish_continuation(
         **state,
         "active": ready,
         "validation": validation,
-        "review": review,
         "next": (
             "observe the exact remote head/tree and scoped capability freshness, then run web-publish-plan; do not run validation again"
             if ready
@@ -227,11 +212,8 @@ def build_web_publish_bundle(
     if not _workspace_clean(root):
         raise RuntimeError("publish-ready Git bundle requires a clean workspace")
     validation_ok, validation = _validation_fresh(store)
-    review_ok, review = _review_fresh(store)
     if not validation_ok:
         raise RuntimeError("publish-ready Git bundle requires fresh current-generation validation")
-    if not review_ok:
-        raise RuntimeError("publish-ready Git bundle requires current-generation final change review")
     head, tree = _head_tree(root)
     prerequisite = None
     if prerequisite_commit is not None:
@@ -287,7 +269,6 @@ def build_web_publish_bundle(
         "size": output.stat().st_size,
         "sha256": _sha256_file(output),
         "validation_generation": int(validation["generation"]),
-        "review_generation": int(review["generation"]),
     }
     store.set_meta("web_publish_bundle_receipt", receipt)
     return receipt
@@ -328,7 +309,6 @@ def web_publish_plan(
     clean = _workspace_clean(root)
     head, tree = _head_tree(root)
     validation_ok, validation = _validation_fresh(store)
-    review_ok, review = _review_fresh(store)
     continuation = publish_continuation_state(store)
     cap_status: dict[str, Any] = {}
     fresh: list[str] = []
@@ -354,8 +334,6 @@ def web_publish_plan(
         reasons.append("workspace_not_clean")
     if not validation_ok:
         reasons.append("validation_not_fresh")
-    if not review_ok:
-        reasons.append("change_review_not_fresh")
     if not all_fresh:
         reasons.append("capability_observations_not_fresh")
     remote_head_normalized = str(remote_head).lower()
@@ -387,7 +365,6 @@ def web_publish_plan(
         and workflow_updates
         and clean
         and validation_ok
-        and review_ok
         and all_fresh
         and remote_is_local_ancestor
         and not reasons
@@ -395,7 +372,6 @@ def web_publish_plan(
     fast = not reasons and not control_plane_refresh_required
     refreshable_reasons = {
         "validation_not_fresh",
-        "change_review_not_fresh",
         "capability_observations_not_fresh",
     }
     surprise_reasons = [
@@ -466,8 +442,6 @@ def web_publish_plan(
     required_refresh_actions: list[str] = []
     if "validation_not_fresh" in reasons:
         required_refresh_actions.append("refresh_validation_only")
-    if "change_review_not_fresh" in reasons:
-        required_refresh_actions.append("refresh_change_review_only")
     if "capability_observations_not_fresh" in reasons:
         required_refresh_actions.extend(
             f"refresh_capability:{capability}" for capability in stale_capabilities
@@ -476,7 +450,7 @@ def web_publish_plan(
     recovery_options: list[dict[str, Any]] = []
     recommended_recovery = "retry_fast" if refresh_required else None
     if fail_closed:
-        standard_ready_now = bool(clean and validation_ok and review_ok and all_fresh and remote_has_standard_workflow)
+        standard_ready_now = bool(clean and validation_ok and all_fresh and remote_has_standard_workflow)
         recovery_options = [
             {
                 "id": "retry_fast",
@@ -492,7 +466,7 @@ def web_publish_plan(
                 "requires_explicit_user_selection": True,
                 "ready_now": standard_ready_now,
                 "requirements": (["remote audited .github/workflows/workspace-import.yml"] if not remote_has_standard_workflow else [])
-                + ([] if clean and validation_ok and review_ok and all_fresh else ["clean workspace and fresh validation/review/capability gates"]),
+                + ([] if clean and validation_ok and all_fresh else ["clean workspace and fresh validation/capability gates"]),
                 "next": "re-run web-publish-plan with --standard-web after explicit user selection",
                 "transport": "full_verified_git_bundle_via_google_drive",
             },
@@ -558,7 +532,6 @@ def web_publish_plan(
                 "workspace-import.yml",
                 "production_skill_packaging",
                 "repeat_fresh_validation",
-                "repeat_fresh_change_review",
                 "repeat_fresh_permission_probe",
             ]
             if refresh_required
@@ -581,7 +554,6 @@ def web_publish_plan(
         "source_tree": tree,
         "validated_tree": tree if validation_ok and clean else None,
         "validation_reused": bool(validation_ok and clean),
-        "review_reused": bool(review_ok and clean),
         "publish_continuation": continuation,
         "redundant_validation_forbidden": bool(continuation.get("revalidation_forbidden", False)),
         "workspace_clean": clean,
@@ -609,7 +581,6 @@ def web_publish_plan(
         "fast_path_budget": {
             "permission_smoke_probes": 0 if fast else None,
             "validation_commands": 0 if fast else None,
-            "change_review_repeats": 0 if fast else None,
             "full_bundle_attempts": 0 if fast and desired_prerequisite else None,
             "production_packaging_steps": 0 if fast else None,
             "bundle_build_attempts": 0 if bundle else (1 if fast else None),
@@ -662,15 +633,12 @@ def web_local_sync_plan(
 
     clean = _workspace_clean(root)
     validation_ok, validation = _validation_fresh(store)
-    review_ok, review = _review_fresh(store)
     head, tree = _head_tree(root)
     reasons: list[str] = []
     if not clean:
         reasons.append("workspace_not_clean")
     if not validation_ok:
         reasons.append("validation_not_fresh")
-    if not review_ok:
-        reasons.append("change_review_not_fresh")
 
     transfer_gate = route_check(
         action="rdc_transfer",
@@ -692,7 +660,6 @@ def web_local_sync_plan(
         "source_tree": tree,
         "workspace_clean": clean,
         "validation": validation,
-        "review": review,
         "destination_path": destination,
         "requirements": reasons,
         "bundle": bundle,

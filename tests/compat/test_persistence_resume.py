@@ -24,7 +24,6 @@ class PersistenceResumeTests(unittest.TestCase):
             no_validation_reason="fixture does not execute validation",
         )
         state.set_criterion(0, "pass", "historical proof")
-        state.set_meta("changes_reviewed_generation", 0)
         state.set_meta("objective_completion_audit", {"generation": 0, "requirements": [{"status": "proven"}]})
         state.set_meta("workspace_binding", {"base_commit": "1" * 40, "base_tree": "2" * 40})
         return state

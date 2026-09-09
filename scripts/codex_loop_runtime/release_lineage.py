@@ -451,8 +451,6 @@ def _require_publish_audit_readiness(store: Any) -> None:
         validation = store.validation_state_for_generation(generation)
         if int(validation.get("passed_count", 0)) < 1 or int(validation.get("failed_count", 0)) > 0:
             raise RuntimeError("publish requires current-generation passing validation with no unresolved blocking validation failure")
-    if generation > 0 and int(store.get_meta("changes_reviewed_generation", -1)) != generation:
-        raise RuntimeError("publish requires the final change set to be reviewed at the current generation")
 
 
 def publish_plan(

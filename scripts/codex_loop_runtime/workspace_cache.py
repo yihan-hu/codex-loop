@@ -286,8 +286,8 @@ def build_workspace_cache(
                 "visibility": "private",
                 "one_shot": True,
                 "cleanup_on_successful_restore": False,
-                "cleanup_requires_llm_review": True,
-                "cleanup_requires_human_confirmation": True,
+                "cleanup_requires_llm_review": False,
+                "cleanup_requires_human_confirmation": False,
                 "cleanup_failure_invalidates_restore": False,
             },
         }
@@ -596,7 +596,7 @@ def restore_workspace_cache(
             "consumption_receipt_path": None if receipt_path is None else str(receipt_path),
             "cleanup_status": "CACHE_CLEANUP_PENDING",
             "cleanup_failure_invalidates_restore": False,
-            "next": "bind this restored workspace as the sole mutable authority; keep the consumption receipt as restore-exclusion evidence and defer Drive deletion to the registered >3-day cache cleanup flow with LLM review and explicit user confirmation",
+            "next": "bind this restored workspace as the sole mutable authority; keep the consumption receipt as restore-exclusion evidence and defer Drive deletion to the registered >3-day exact-owned cache cleanup flow; no extra review/confirmation gate is required",
         }
     except Exception:
         shutil.rmtree(destination, ignore_errors=True)
@@ -668,7 +668,7 @@ def workspace_cache_cleanup_plan(
             delete_candidates.append({
                 **capsule,
                 "reason": "expired_3d_consumed" if consumed else "expired_3d",
-                "candidate_semantics": "llm_review_only_not_delete_authorization",
+                "candidate_semantics": "exact_owned_ttl_delete_ready",
                 "retry_policy": "fresh exact-id/title/parent readback then at most one retry in this cache operation",
             })
         elif eligible:
@@ -687,7 +687,7 @@ def workspace_cache_cleanup_plan(
             receipt_deletes.append({
                 **receipt,
                 "reason": "expired_3d_consumption_receipt_housekeeping",
-                "candidate_semantics": "llm_review_only_not_delete_authorization",
+                "candidate_semantics": "exact_owned_ttl_delete_ready",
                 "delete_after_capsule": capsule is not None,
             })
         elif receipt_expired and not scope_proven:
@@ -704,11 +704,11 @@ def workspace_cache_cleanup_plan(
         "ignored_non_cache_objects": ignored,
         "auto_restore_excluded_cache_ids": sorted(receipts),
         "preserved_cache_ids": sorted(preserved),
-        "requires_llm_cache_confirmation": True,
-        "requires_human_confirmation": True,
-        "requires_drive_delete_switch": True,
-        "candidate_semantics": "review_only_not_delete_authorization",
-        "rule": "workspace-cache cleanup only nominates exact owned >=3-day objects for the generic Drive cache review flow; consumed state excludes auto-restore but never authorizes immediate deletion; one failed cleanup never invalidates a successful restore",
+        "requires_llm_cache_confirmation": False,
+        "requires_human_confirmation": False,
+        "delete_ready": [*delete_candidates, *receipt_deletes],
+        "candidate_semantics": "exact_owned_ttl_delete_ready",
+        "rule": "exact owned >=3-day workspace-cache objects are cleanup-ready automatically; failed deletion remains cleanup_pending and never invalidates a successful restore",
     }
 
 DRIVE_CACHE_CLEANUP_DAYS = 3
@@ -724,21 +724,6 @@ def _normalize_drive_cache_folder_path(raw: str) -> str:
     if len(value) > 1024 or any(ord(ch) < 32 for ch in value):
         raise ValueError("Drive cache folder path must be bounded printable text")
     return value
-
-
-def drive_delete_policy() -> dict[str, Any]:
-    profile = effective_host_profile()
-    enabled = bool(profile["drive"]["delete_enabled"])
-    return {
-        "status": "DRIVE_DELETE_ENABLED" if enabled else "DRIVE_DELETE_DISABLED",
-        "delete_enabled": enabled,
-        "may_call_drive_delete": enabled,
-        "config_path": profile["config_path"],
-        "config_field": "drive.delete_enabled",
-        "local_only": True,
-        "uploaded_to_drive": False,
-        "rule": "Drive delete actions may be called only when this host-local switch is enabled; the switch never substitutes for operation-specific review or human confirmation",
-    }
 
 
 def registered_drive_cache_folders() -> dict[str, Any]:
@@ -783,7 +768,7 @@ def drive_cache_cleanup_plan(objects: list[dict[str, Any]], *, now: datetime | N
         raise ValueError("Drive cache cleanup objects must be a list")
     current = _utc_now(now)
     registered = set(registered_drive_cache_folders()["folder_paths"])
-    review_candidates = []
+    delete_ready = []
     retained = []
     cleanup_pending = []
     ignored_unregistered = []
@@ -814,34 +799,6 @@ def drive_cache_cleanup_plan(objects: list[dict[str, Any]], *, now: datetime | N
         elif not (item["bounded_parent_proven"] and item["ownership_proven"]):
             cleanup_pending.append({**item, "reason": "ownership_or_registered_parent_scope_unproven"})
         else:
-            review_candidates.append({**item, "reason": "older_than_3d_in_registered_cache_folder", "candidate_semantics": "llm_review_only_not_delete_authorization"})
-    payload = {"kind": DRIVE_CACHE_PLAN_KIND, "generated_at": _iso(current), "retention_days": DRIVE_CACHE_CLEANUP_DAYS, "registered_folder_paths": sorted(registered), "review_candidates": review_candidates, "retained": retained, "cleanup_pending": cleanup_pending, "ignored_unregistered": ignored_unregistered}
-    return {"status": "DRIVE_CACHE_LLM_REVIEW_REQUIRED" if review_candidates else "DRIVE_CACHE_NOTHING_TO_REVIEW", **payload, "plan_digest": _drive_cache_plan_digest(payload), "requires_llm_cache_confirmation": bool(review_candidates), "requires_human_confirmation_after_llm_review": bool(review_candidates), "delete_authorized": False}
-
-
-def authorize_drive_cache_cleanup(plan: dict[str, Any], *, llm_confirmed_ids: list[str], llm_review_completed: bool, human_confirmation_observed: bool, confirmation_evidence: str | None) -> dict[str, Any]:
-    if plan.get("kind") != DRIVE_CACHE_PLAN_KIND:
-        raise ValueError("invalid Drive cache cleanup plan")
-    payload = {key: plan.get(key) for key in ("kind", "generated_at", "retention_days", "registered_folder_paths", "review_candidates", "retained", "cleanup_pending", "ignored_unregistered")}
-    expected_digest = _drive_cache_plan_digest(payload)
-    if plan.get("plan_digest") != expected_digest:
-        raise ValueError("Drive cache cleanup plan digest mismatch")
-    if not llm_review_completed:
-        raise ValueError("LLM cache review must complete exactly once before human confirmation")
-    candidates = {str(item["id"]): item for item in plan.get("review_candidates") or []}
-    confirmed = []
-    for raw_id in llm_confirmed_ids:
-        object_id = str(raw_id).strip()
-        if object_id not in candidates:
-            raise ValueError(f"LLM-confirmed object is not in the reviewed candidate set: {object_id}")
-        if candidates[object_id] not in confirmed:
-            confirmed.append(candidates[object_id])
-    if not confirmed:
-        return {"status": "DRIVE_CACHE_NO_LLM_CONFIRMED_OBJECTS", "plan_digest": expected_digest, "delete_ready": [], "delete_authorized": False}
-    evidence = str(confirmation_evidence or "").strip()
-    if not human_confirmation_observed or not evidence:
-        raise ValueError("explicit current-turn human confirmation is required after LLM cache review")
-    policy = drive_delete_policy()
-    if not policy["delete_enabled"]:
-        return {"status": "DRIVE_DELETE_DISABLED", "plan_digest": expected_digest, "llm_confirmed": confirmed, "delete_ready": [], "delete_authorized": False, "delete_policy": policy}
-    return {"status": "DRIVE_CACHE_DELETE_READY", "plan_digest": expected_digest, "llm_confirmed": confirmed, "delete_ready": confirmed, "delete_authorized": True, "human_confirmation_sha256": hashlib.sha256(evidence.encode("utf-8")).hexdigest(), "delete_policy": policy}
+            delete_ready.append({**item, "reason": "older_than_3d_in_registered_cache_folder", "candidate_semantics": "exact_owned_ttl_delete_ready"})
+    payload = {"kind": DRIVE_CACHE_PLAN_KIND, "generated_at": _iso(current), "retention_days": DRIVE_CACHE_CLEANUP_DAYS, "registered_folder_paths": sorted(registered), "delete_ready": delete_ready, "retained": retained, "cleanup_pending": cleanup_pending, "ignored_unregistered": ignored_unregistered}
+    return {"status": "DRIVE_CACHE_DELETE_READY" if delete_ready else "DRIVE_CACHE_NOTHING_TO_CLEAN", **payload, "plan_digest": _drive_cache_plan_digest(payload), "delete_authorized": bool(delete_ready), "rule": "delete only the exact returned owned objects; refresh exact identity/parent before deletion and leave failures as cleanup_pending"}

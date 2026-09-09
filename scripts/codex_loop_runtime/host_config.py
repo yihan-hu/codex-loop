@@ -40,7 +40,6 @@ DEFAULT_HOST_PROFILE: dict[str, Any] = {
         "default_local_workspace": None,
     },
     "drive": {
-        "delete_enabled": False,
         "cache_folder_paths": [],
     },
     "persistence": {
@@ -179,8 +178,6 @@ def _validate_section(section: str, raw: Any) -> dict[str, Any]:
         if alias is not None and (not isinstance(alias, str) or not alias.strip() or len(alias) > 128):
             raise ValueError("workspace.default_local_workspace must be null or a bounded non-empty alias")
     elif section == "drive":
-        if not isinstance(result["delete_enabled"], bool):
-            raise ValueError("drive.delete_enabled must be boolean")
         paths = result["cache_folder_paths"]
         if not isinstance(paths, list):
             raise ValueError("drive.cache_folder_paths must be a JSON array")

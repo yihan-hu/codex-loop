@@ -76,7 +76,6 @@ def _historical_summary(store: StateStore) -> dict[str, Any]:
     return {
         "validation_count": int(row["n"]),
         "latest_validation_generation": None if row["max_generation"] is None else int(row["max_generation"]),
-        "reviewed_generation": int(store.get_meta("changes_reviewed_generation", -1)),
         "objective_audit_present": isinstance(audit, dict),
         "freshness_on_resume": "HISTORICAL",
     }
@@ -206,7 +205,6 @@ def _migrate_v1(manifest: dict[str, Any]) -> dict[str, Any]:
     migrated.setdefault("historical", {
         "validation_count": None,
         "latest_validation_generation": None,
-        "reviewed_generation": None,
         "objective_audit_present": None,
         "freshness_on_resume": "HISTORICAL",
     })
@@ -261,7 +259,7 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "task": {"task_id", "status", "objective", "profile", "generation", "plan_revision", "requires_validation", "no_validation_reason", "requires_clean_process_exit"},
         "resume": {"checkpoint_present", "checkpoint_generation", "next_action", "completion_status", "lineage_policy"},
         "workspace": {"repository", "base_commit", "base_tree", "source_commit", "source_tree"},
-        "historical": {"validation_count", "latest_validation_generation", "reviewed_generation", "objective_audit_present", "freshness_on_resume"},
+        "historical": {"validation_count", "latest_validation_generation", "objective_audit_present", "freshness_on_resume"},
         "privacy": {"contains_chain_of_thought", "contains_credentials", "contains_hidden_instructions", "contains_tool_transcript", "external_action_identity_is_hashed"},
     }
     for section, allowed in allowed_nested.items():
@@ -423,7 +421,6 @@ def build_resume_plan(manifest: dict[str, Any], *, now: datetime | None = None) 
         "freshness_rules": {
             "criterion_pass": "STALE",
             "validation": "HISTORICAL",
-            "change_review": "HISTORICAL",
             "objective_audit": "HISTORICAL",
             "capability_and_permission_state": "REOBSERVE",
         },
@@ -588,7 +585,6 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
             "criteria_statuses": [str(item.get("status")) for item in manifest["criteria"]],
             "historical": manifest["historical"],
             "validation": "HISTORICAL",
-            "change_review": "HISTORICAL",
             "objective_audit": "HISTORICAL",
         })
         store.set_meta("resume_source_observation", {

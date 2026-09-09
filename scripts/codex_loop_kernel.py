@@ -104,8 +104,6 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
         store.configure_task(
             task_id, args.objective, args.criterion or [], profile=args.profile,
             requires_validation=not args.no_validation,
-            git_mutation_reason=args.git_mutation_reason,
-            git_mutation_scope={"head": args.allow_git_head, "branch": args.allow_git_branch, "index": args.allow_git_index},
             no_validation_reason=args.no_validation_reason,
             requires_clean_process_exit=args.require_clean_process_exit,
         )
@@ -265,10 +263,6 @@ def cmd_changes(args: argparse.Namespace) -> None:
     _cwd_path, root, store = _store(args)
     sync_generation(root, store)
     result = changes(root, store)
-    if args.review:
-        store.ensure_active()
-        store.mark_reviewed()
-        result["reviewed_generation"] = store.generation()
     emit_ok(result)
 
 
@@ -425,18 +419,6 @@ def cmd_publish_stable_reconcile(args: argparse.Namespace) -> None:
         root, store, action_id=args.action_id, observed_staging_head=args.observed_staging_head,
         observed_staging_tree=args.observed_staging_tree, observed_target_head=args.observed_target_head,
     ))
-
-
-def cmd_git_authorize(args: argparse.Namespace) -> None:
-    _cwd_path, _root_path, store = _store(args)
-    store.authorize_git_mutation(
-        args.reason, head=args.head, branch=args.branch, index=args.index
-    )
-    emit_ok({
-        "allow_git_mutation": True,
-        "scope": store.get_meta("git_mutation_scope"),
-        "reason": store.get_meta("git_mutation_reason"),
-    })
 
 
 def cmd_service_start(args: argparse.Namespace) -> None:
@@ -673,11 +655,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex_loop.py")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--objective", required=True); p.add_argument("--criterion", action="append"); p.add_argument("--profile", default="regular"); p.add_argument("--no-validation", action="store_true"); p.add_argument("--no-validation-reason"); p.add_argument("--require-clean-process-exit", action="store_true"); p.add_argument("--allow-git-head", action="store_true"); p.add_argument("--allow-git-branch", action="store_true"); p.add_argument("--allow-git-index", action="store_true"); p.add_argument("--git-mutation-reason"); p.set_defaults(func=cmd_bootstrap)
+    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--objective", required=True); p.add_argument("--criterion", action="append"); p.add_argument("--profile", default="regular"); p.add_argument("--no-validation", action="store_true"); p.add_argument("--no-validation-reason"); p.add_argument("--require-clean-process-exit", action="store_true"); p.set_defaults(func=cmd_bootstrap)
     for name, func in [("snapshot", cmd_snapshot), ("instructions", cmd_instructions), ("changes", cmd_changes), ("completion", cmd_completion), ("checkpoint-restore", cmd_checkpoint_restore), ("service-start", cmd_service_start), ("service-stop", cmd_service_stop), ("shell-snapshot", cmd_shell_snapshot), ("cleanup", cmd_cleanup)]:
         p = sub.add_parser(name); _add_scope(p); p.set_defaults(func=func)
         if name == "instructions": p.add_argument("--fallback", action="append")
-        if name == "changes": p.add_argument("--review", action="store_true")
     p = sub.add_parser("command-check"); p.add_argument("--cwd"); p.add_argument("command", nargs=argparse.REMAINDER); p.set_defaults(func=cmd_command_check)
     for name, func in [("exec", cmd_exec), ("validate", cmd_validate), ("spawn", cmd_spawn)]:
         p = sub.add_parser(name); _add_scope(p); p.add_argument("--timeout", type=float); p.add_argument("command", nargs=argparse.REMAINDER); p.set_defaults(func=func)
@@ -691,7 +672,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("steer"); _add_scope(p); p.add_argument("--text", required=True); p.set_defaults(func=cmd_steer)
     p = sub.add_parser("steer-ack"); _add_scope(p); p.add_argument("--steer-id", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_steer_ack)
     p = sub.add_parser("external"); _add_scope(p); p.add_argument("--kind", required=True); p.add_argument("--state", required=True, choices=["planned","dispatched","terminal_success","terminal_failure","outcome_unknown","cancelled_before_dispatch"]); p.add_argument("--identity"); p.add_argument("--action-class", default="recheckable", choices=["read_only","recheckable","external_non_idempotent"]); p.add_argument("--action-id"); p.add_argument("--details-json"); p.set_defaults(func=cmd_external)
-    p = sub.add_parser("git-authorize"); _add_scope(p); p.add_argument("--reason", required=True); p.add_argument("--head", action="store_true"); p.add_argument("--branch", action="store_true"); p.add_argument("--index", action="store_true"); p.set_defaults(func=cmd_git_authorize)
     p = sub.add_parser("workspace-binding"); _add_scope(p); p.set_defaults(func=cmd_workspace_binding)
     p = sub.add_parser("release-plan"); _add_scope(p); p.add_argument("--artifact-name", required=True); p.add_argument("--archive-prefix"); p.set_defaults(func=cmd_release_plan)
     p = sub.add_parser("release-record"); _add_scope(p); p.add_argument("--artifact-name", required=True); p.add_argument("--artifact-sha256", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_release_record)

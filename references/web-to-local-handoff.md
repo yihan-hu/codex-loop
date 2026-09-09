@@ -53,7 +53,7 @@ python3 scripts/codex_loop.py web-local-sync-plan --cwd REPO \
   --local-computer-authorized
 ```
 
-The planner requires a clean audited Web commit, fresh validation/review when required, current Web routing, and the dedicated `rdc_transfer` gate. `rdc_transfer` means **downstream binary destination only**. It is intentionally distinct from `rdc_repository`, which remains unavailable in Web mode because repository authority has not moved.
+The planner requires a clean audited Web commit, fresh validation when required, current Web routing, and the dedicated `rdc_transfer` gate. `rdc_transfer` means **downstream binary destination only**. It is intentionally distinct from `rdc_repository`, which remains unavailable in Web mode because repository authority has not moved.
 
 If the planner returns `WEB_LOCAL_SYNC_REQUIREMENTS_UNMET`, satisfy only the named requirements and rerun it. Do not change transport.
 

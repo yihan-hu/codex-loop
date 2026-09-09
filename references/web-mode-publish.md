@@ -36,7 +36,7 @@ Before staging:
 1. `workspace_mode=web` and `route-check --action github_publish` passes.
 2. The canonical Web workspace is a real Git repository and clean.
 3. Current-generation executable validation is fresh when required.
-4. Current-generation final change review is fresh.
+4. The agent has semantically inspected the actual final diff after the last substantive mutation; this is not a runtime freshness receipt.
 5. Exact target branch remote HEAD/tree is observed.
 6. Fresh scoped permission observations exist for `github_push` and `google_drive_write`. The publication transport does not call a host Actions write API; Actions readiness is verified after the request push by observing the matching import run and its receipt/log evidence.
 7. `.github/workflows/workspace-import.yml` matches the audited exact-identity importer contract below.
@@ -69,9 +69,9 @@ The bundle builder creates a temporary `refs/heads/codex-loop-publish-<nonce>` p
 - bundle ref;
 - bundle byte size;
 - bundle SHA-256;
-- current lifecycle generation + validation/review generation.
+- current lifecycle generation + validation generation.
 
-A dirty workspace, stale validation, or stale final review blocks bundle creation. The Drive file is transport only and never becomes a development baseline.
+A dirty workspace or stale validation blocks bundle creation. The agent still performs semantic review of the final diff before publication; no review receipt is stored. The Drive file is transport only and never becomes a development baseline.
 
 ## Workflow-changing publication control plane
 
@@ -159,7 +159,7 @@ Tree-only equivalence is insufficient. A newly generated importer commit is a co
 
 For every Web-mode `push`/`publish` continuation, treat the request as delivery intent rather than a semantic `steer` unless source requirements also changed. **Normal model/controller control calls only `publish-enter --controller-abi <explicit ABI>` before any new validation, permission smoke, bundle construction, Drive staging, production packaging, or import trigger.** The bundled controller then performs the low-level continuation/planner sequence against the current Web workspace state.
 
-Internally, the router calls `web-publish-continuation-begin` and then `web-publish-plan`. If continuation returns `active=true` / `revalidation_forbidden=true`, the current clean generation already has reusable validation/review evidence and the router must not plan redundant validation. The Web planner remains the deterministic performance gate and defaults to FAST_PUBLISH; `--verified-tree-fast-path` is only a compatibility alias and standard publication remains explicit-only through `--standard-web`. Fresh validation/review/capability observations and a matching bundle receipt are reused when valid. A remote short-circuit is allowed only when **both** remote commit and remote tree already equal audited source commit/tree.
+Internally, the router calls `web-publish-continuation-begin` and then `web-publish-plan`. If continuation returns `active=true` / `revalidation_forbidden=true`, the current clean generation already has reusable validation evidence and the router must not plan redundant validation. The Web planner remains the deterministic performance gate and defaults to FAST_PUBLISH; `--verified-tree-fast-path` is only a compatibility alias and standard publication remains explicit-only through `--standard-web`. Fresh validation/capability observations and a matching bundle receipt are reused when valid. A remote short-circuit is allowed only when **both** remote commit and remote tree already equal audited source commit/tree.
 
 Do not reinterpret this internal sequence as a second model-facing publication entry. Direct `web-publish-continuation-begin` / `web-publish-plan` calls are reserved for router/protocol debugging.
 
@@ -167,8 +167,8 @@ Every successful FAST_PUBLISH must also close the **published-revision acquisiti
 
 For an unpublished audited HEAD whose observed remote head is a locally provable ancestor, the plan must return `bundle_strategy=thin_from_remote_head` and `bundle_build_prerequisite_commit=<remote_head>`. Build exactly that one thin bundle. **Do not attempt a full-history bundle first.** A full bundle belongs only to an explicitly selected standard `FULL_VERIFIED_PUBLISH` operation. Because FAST_PUBLISH is the default, failure to prove the thin direct path never permits an implicit downgrade into the standard path. A reusable bundle receipt is valid for FAST_PUBLISH only when its prerequisite exactly matches the plan; do not reuse a larger full bundle when the plan requires a thin one.
 
-A successful FAST_PUBLISH plan carries a zero-waste budget for gates already proven in this task/session: `permission_smoke_probes=0`, `validation_commands=0`, `change_review_repeats=0`, `full_bundle_attempts=0`, `production_packaging_steps=0`, and `workflow_artifact_uploads=0`. It selects `.github/workflows/workspace-import-fast.yml`, writes the request under `.github/fast-import-requests/`, and uses a structured log receipt. The only local transport build may be one thin bundle when an exact matching receipt does not already exist. During iterative performance tuning, keep each intermediate cycle source-only and measure the real publish segment; package/deploy the Skill only after the fast-path acceptance target is met. When only ordinary freshness gates are stale, the planner returns `FAST_PUBLISH_REFRESH_REQUIRED` with exact `required_refresh_actions`; execute only those actions and retry the same default planner. It must not offer or execute a standard importer merely because validation/review/capability evidence is stale. When a structural fast-path invariant is broken, it returns fail-closed state with no workflow/request path and a **modeled recovery menu** rather than silently choosing a fallback: `retry_fast`, `standard_web`, and `local_handoff`. Ordinary stale gates may be refreshed for `retry_fast`. A structural fast-path defect still remains evidence that should be repaired before another fast retry, but it does not force the user to repair performance infrastructure before completing the underlying publication objective. `standard_web` requires explicit user selection and re-plans with `--standard-web`; it keeps `workspace_mode=web` and uses the audited full verified Web importer. `local_handoff` also requires explicit user selection and follows `references/web-to-local-handoff.md`. When the audited source already lives in Web mode, recommend `standard_web` over `local_handoff` unless a local-only requirement makes the host transition worthwhile. Never silently switch FAST_PUBLISH into either fallback.
-For a push-bound change set, perform the authorized `git add`/index update **before** the final validation and final change review. The workspace freshness model is content-addressed across the subsequent commit when the staged content is unchanged, so that commit must not trigger another validation/review. Staging after validation is a real content-state transition and is therefore intentionally not fast-pathed.
+A successful FAST_PUBLISH plan carries a zero-waste budget for gates already proven in this task/session: `permission_smoke_probes=0`, `validation_commands=0`, `full_bundle_attempts=0`, `production_packaging_steps=0`, and `workflow_artifact_uploads=0`. It selects `.github/workflows/workspace-import-fast.yml`, writes the request under `.github/fast-import-requests/`, and uses a structured log receipt. The only local transport build may be one thin bundle when an exact matching receipt does not already exist. During iterative performance tuning, keep each intermediate cycle source-only and measure the real publish segment; package/deploy the Skill only after the fast-path acceptance target is met. When only ordinary freshness gates are stale, the planner returns `FAST_PUBLISH_REFRESH_REQUIRED` with exact `required_refresh_actions`; execute only those actions and retry the same default planner. It must not offer or execute a standard importer merely because validation/capability evidence is stale. When a structural fast-path invariant is broken, it returns fail-closed state with no workflow/request path and a **modeled recovery menu** rather than silently choosing a fallback: `retry_fast`, `standard_web`, and `local_handoff`. Ordinary stale gates may be refreshed for `retry_fast`. A structural fast-path defect still remains evidence that should be repaired before another fast retry, but it does not force the user to repair performance infrastructure before completing the underlying publication objective. `standard_web` requires explicit user selection and re-plans with `--standard-web`; it keeps `workspace_mode=web` and uses the audited full verified Web importer. `local_handoff` also requires explicit user selection and follows `references/web-to-local-handoff.md`. When the audited source already lives in Web mode, recommend `standard_web` over `local_handoff` unless a local-only requirement makes the host transition worthwhile. Never silently switch FAST_PUBLISH into either fallback.
+For a push-bound change set, perform the authorized `git add`/index update **before** the final validation and final change review. The workspace freshness model is content-addressed across the subsequent commit when the staged content is unchanged, so that commit must not trigger another validation. Staging after validation is a real content-state transition and is therefore intentionally not fast-pathed.
 
 ## Cleanup
 
@@ -179,7 +179,7 @@ After exact remote readback succeeds:
 3. report any residue explicitly; never broaden deletion scope or touch Workspace Cache/private persistence folders;
 4. tiny request trigger history should already be absent because the branch was lease-replaced by the audited source commit.
 
-`ChatGPT-GitHub-Staging` is public transport, not durable persistence. The 7-day Workspace Cache retention/consumption rules in `persistence.md` do not apply here.
+`ChatGPT-GitHub-Staging` is public transport, not durable persistence. The Workspace Cache retention/consumption rules in `persistence.md` do not apply here.
 
 ## Failure classifications
 
@@ -187,7 +187,6 @@ Fail closed with a precise blocker, for example:
 
 - `WEB_PUBLISH_WORKSPACE_NOT_CLEAN`
 - `WEB_PUBLISH_VALIDATION_STALE`
-- `WEB_PUBLISH_REVIEW_STALE`
 - `WEB_PUBLISH_CAPABILITY_NOT_PREWARMED`
 - `WEB_PUBLISH_BUNDLE_INTEGRITY_FAILED`
 - `WEB_PUBLISH_SOURCE_IDENTITY_MISMATCH`
