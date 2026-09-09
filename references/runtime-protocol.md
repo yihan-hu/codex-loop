@@ -427,10 +427,11 @@ Codex Loop does not perform or track installation of itself. After a Codex Loop 
 3. build a repository-neutral consumer Skill package from the updated workspace;
 4. validate/package it through Skill Creator so the canonical package is exactly `skill.zip`;
 5. copy `skill.zip` byte-for-byte to `codex-loop.zip` with `scripts/prepare_codex_loop_download.py` and require identical SHA-256 values;
-6. return only `codex-loop.zip` (and its SHA-256 when useful) to the user as the normal chat download artifact;
-7. treat package delivery as the terminal state of the Codex Loop update objective.
+6. expose only that exact `codex-loop.zip` through the host's fresh current-conversation artifact/file mechanism and require the actual current host-returned reference;
+7. direct manual installation through `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`;
+8. treat fresh artifact exposure as the terminal Codex Loop delivery state.
 
-Stop after returning the validated package. Manual installation is a user/product action outside the runtime lifecycle and does not add another Codex Loop stage.
+Do not synthesize or reuse a Library/file reference for the generated package. Manual installation is a user/product action outside the runtime lifecycle and does not add another Codex Loop stage.
 
 ## Managed process sessions
 

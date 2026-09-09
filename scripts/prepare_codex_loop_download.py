@@ -49,7 +49,7 @@ def prepare(source: Path, output: Path) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Copy official skill.zip byte-for-byte to codex-loop.zip for normal chat download delivery."
+        description="Copy official skill.zip byte-for-byte to codex-loop.zip for fresh current-conversation artifact delivery."
     )
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)

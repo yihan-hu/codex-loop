@@ -53,6 +53,7 @@ _TERMINAL_WORKLOAD = {
 }
 
 MAX_LOG_OR_TEMP_BYTES = 1_000_000_000
+DEFAULT_MAX_TASK_OWNED_GENERATED_FILE_BYTES = 1_000_000_000
 
 
 @dataclass(frozen=True)
@@ -216,6 +217,13 @@ def execution_policy(
             "terminate_immediately_on_detected_repeated_output_without_progress": True,
             "terminate_immediately_on_detected_no_progress": True,
             "max_log_or_temp_bytes": MAX_LOG_OR_TEMP_BYTES,
+            "default_max_task_owned_generated_file_bytes": DEFAULT_MAX_TASK_OWNED_GENERATED_FILE_BYTES,
+            "monitor_task_owned_generated_file_growth": True,
+            "generated_output_paths_must_be_identified_before_unbounded_write": True,
+            "file_producing_process_must_remain_observable_and_terminable": True,
+            "stop_writer_on_generated_file_limit": True,
+            "oversized_generated_file_requires_explicit_task_need_and_finite_cap": True,
+            "free_disk_space_admission_required": False,
             "docx_integrity_preflight_argv": ["unzip", "-t"],
             "automatic_docx_zip_ff_forbidden": True,
             "task_owned_cleanup_required_before_completion": True,

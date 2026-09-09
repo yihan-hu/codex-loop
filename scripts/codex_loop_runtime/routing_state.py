@@ -15,6 +15,7 @@ HOST_SURFACES = frozenset({"unknown", "chatgpt_web", "codex_local"})
 WORKSPACE_MODES = frozenset({"web", "local"})
 INTERACTION_TARGETS = frozenset({"none", "cloud_browser", "local_chrome", "local_mac_gui"})
 DEPLOYMENT_TARGETS = frozenset({"artifact_only", "chatgpt_web_skill", "local_codex_skill"})
+CHATGPT_WEB_MANUAL_SKILL_INSTALL_PATH = ("Plugins", "Plugin Directory", "Skills", "Create", "Upload from your computer")
 ROUTE_ACTIONS = frozenset({
     "repository_observe",
     "repository_mutate",
@@ -424,6 +425,17 @@ def route_check(
         result["rule"] = "a local Skill target never turns prior context or RDC availability into current-task install authorization"
         return result
     result["allowed"] = True
+    if target == "chatgpt_web_skill":
+        result.update({
+            "delivery_mode": "fresh_current_conversation_artifact",
+            "manual_install_path": list(CHATGPT_WEB_MANUAL_SKILL_INSTALL_PATH),
+            "library_deep_link_allowed": False,
+            "installation_rule": (
+                "validate the exact Skill ZIP, expose those exact bytes as a fresh host-provided artifact in the current "
+                "conversation, then let the user upload that file through the manual install path; package creation, artifact "
+                "exposure, and product installation are separate stages"
+            ),
+        })
     result["local_codex_auto_selected"] = False if state["host_surface"] == "chatgpt_web" else target == "local_codex_skill" and source == "host_surface_native_default"
     return result
 
@@ -563,14 +575,22 @@ def permission_preflight_plan(
                 side_effect_budget = "none"
             else:
                 preferred = (
-                    "Read live permissions for the exact target repository and require push-capable access, then invoke a "
-                    "GitHub Git-database blob/write-object primitive with fixed empty content. The probe object must remain "
-                    "unreferenced: do not create a tree, commit, tag, branch, or ref. This reaches repository contents-write "
-                    "scope without moving refs or changing source. If the host exposes no isolated unreferenced object-write "
-                    "primitive, do not manufacture a source/ref mutation; report the safe probe as unavailable."
+                    "Read live permissions for the exact target repository and require push-capable access. Then invoke a "
+                    "GitHub Git-database blob/write-object primitive with fixed empty content and leave that blob unreferenced. "
+                    "Finally read the exact current target-branch ref and invoke the host's ref-update primitive with that same "
+                    "current SHA and force=false. The same-SHA ref write must not move the branch; its purpose is only to cross "
+                    "the persistent-ref write approval boundary that the later Web publish path will use. Do not create a tree, "
+                    "commit, tag, throwaway branch, or source mutation for preflight. If either bounded primitive is unavailable, "
+                    "report the corresponding push permission class as not prewarmed rather than substituting a real ref move."
                 )
-                evidence = "push-capable repository access is observed and the host accepts an unreferenced empty-blob write without any tree/commit/ref mutation"
-                side_effect_budget = "one unreferenced empty Git blob object; no tree/commit/ref or source mutation"
+                evidence = (
+                    "push-capable repository access is observed, the host accepts an unreferenced empty-blob write, and an "
+                    "idempotent same-SHA target-ref update is accepted without moving the ref"
+                )
+                side_effect_budget = (
+                    "one unreferenced empty Git blob plus one idempotent same-SHA target-ref update; no tree/commit/ref movement "
+                    "or source mutation"
+                )
             probes.append({
                 "capability": capability,
                 "probe_kind": "live_host_permission_probe",
@@ -619,7 +639,7 @@ def permission_preflight_plan(
             })
 
     return {
-        "phase": "post_task_review_pre_execution",
+        "phase": "skill_admission_pre_execution",
         "required_capabilities": requested,
         "reused_capabilities": [item["capability"] for item in reused],
         "reused_observations": reused,

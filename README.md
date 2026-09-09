@@ -38,10 +38,10 @@ Use Codex Loop for objectives such as:
 - remembering stable local workspace aliases without turning remembered paths into standing access permission;
 - keeping repository `workspace_mode` independent from browser/computer `interaction_target`;
 - controlling a user's local Chrome through a supported Browser/Chrome bridge attached to the current conversation, with separate host-health and session-capability recovery;
-- preflighting required RDC, GitHub, Google Drive, browser, and host permissions before substantive multi-step execution;
+- prewarming predictable GitHub/Drive host permission boundaries at Skill admission, including Git-object and persistent-ref writes for Web publication;
 - publishing Web-mode workspace source through verified Drive staging + GitHub Actions, or Local-mode source through native Git;
 - packaging ChatGPT Skills;
-- packaging an updated Codex Loop workspace into an official validated `skill.zip`, then exposing the same bytes as `codex-loop.zip` for normal chat download;
+- packaging an updated Codex Loop workspace into an official validated `skill.zip`, then exposing the same bytes as `codex-loop.zip` through a fresh current-conversation artifact;
 - synchronizing a verified local GitHub commit back into the current ChatGPT workspace;
 - degrading requested reviewer/researcher/tester delegation to a bounded logical isolation when native subagents are unavailable.
 
@@ -51,15 +51,15 @@ Codex Loop is not Codex CLI and does not contain a model runtime. ChatGPT remain
 
 This repository is the Skill source. Codex Loop does not install or update itself.
 
-After any Codex Loop source update, finish validation/review and produce a complete official validated `skill.zip`. If the user also requested publication, prove the source push first, then package the updated workspace. Copy the finished `skill.zip` byte-for-byte to `codex-loop.zip`, verify the SHA-256 is unchanged, and return only `codex-loop.zip` as the normal chat download artifact. The user installs or replaces the Skill manually through the ChatGPT Skills/Library interface.
+After any Codex Loop source update, finish validation/review and produce a complete official validated `skill.zip`. If the user also requested publication, prove the source push first, then package the updated workspace. Copy the finished `skill.zip` byte-for-byte to `codex-loop.zip`, verify the SHA-256 is unchanged, and expose that exact `codex-loop.zip` as a **fresh current-conversation download artifact**. Do not use a presumed Library object or reuse an old attachment/reference.
 
-Packaging success means `SKILL_PACKAGED`: the validated archive is ready for the user to install manually.
+The user installs or replaces the Skill manually through `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`. `SKILL_PACKAGED` proves the archive bytes; a downloadable artifact requires a current host-provided file reference, and neither one proves installation.
 
 ## Quick start
 
-Codex Loop is designed for **implicit invocation**. In normal use, you should not need to type `@Codex Loop` or name the Skill. ChatGPT should select it broadly for non-trivial objectives that plausibly contain multiple dependent steps or need durable evidence/state, iterative review, delegation, external-action bookkeeping, managed processes, or cross-tool coordination. That includes research, analysis, writing, scientific work, artifact creation, operations, repository/software development, Git lifecycle work, Skill maintenance, and Computer Use. The bundled lifecycle assessment then decides whether execution stays direct or bootstraps durable state.
+Codex Loop is designed for **implicit invocation**. In normal use, you should not need to type `@Codex Loop` or name the Skill. ChatGPT should select it broadly for non-trivial objectives that plausibly contain multiple dependent steps or need durable evidence/state, iterative review, delegation, external-action bookkeeping, managed processes, or cross-tool coordination. That includes research, analysis, writing, scientific work, artifact creation, operations, repository/software development, Git lifecycle work, Skill maintenance, and Computer Use. Skill admission enters the objective lifecycle directly; planning, durable workspace state, validation, delegation, persistence, and managed-process machinery remain lazy and activate only when the objective needs them.
 
-Short follow-ups such as `revise`, `verify`, `export`, `push`, `sync`, or `open this in Chrome` should continue through Codex Loop when the active objective is clear from context. Automatic invocation does **not** bypass permissions: local source mutation and actual Computer Use remain explicitly authorized per task under the existing safety gates.
+Short follow-ups such as `revise`, `verify`, `export`, `push`, `sync`, or `open this in Chrome` should continue through Codex Loop when the active objective is clear from context. Automatic invocation does **not** bypass permissions: predictable GitHub/Drive permission prompts are deliberately surfaced at Skill admission, while local source mutation and actual Computer Use remain explicitly authorized per task under the existing safety gates.
 
 For repository or Skill-development requests, **Web mode** is the default development location in every new conversation. Pure research, writing, analysis, artifact, or operations objectives do not need Web/Local repository routing unless a later step actually becomes development-location-sensitive.
 
@@ -246,7 +246,7 @@ This path is **not Browser Control** and does not satisfy Browser capability che
 
 ## Capability and permission preflight
 
-For multi-step work, Codex Loop reviews the intended workflow early, resolves routing, and then runs a **real permission smoke test before substantive execution**. This early task review is separate from the final code/change review. The goal is to surface predictable GitHub/Actions/Drive/RDC/browser permission prompts before the task has already spent most of its work budget.
+At Skill admission, Codex Loop reads the explicit request just far enough to identify predictable external capability classes, resolves only the routing needed to choose the representative probe, and runs the **real permission smoke before repository acquisition or substantive execution**. A Web `push` prewarms both Git-object write and the later persistent-ref `update_ref` boundary; Drive write/delete uses an exact create/read/delete sentinel. Full task review can happen afterward.
 
 When the bundled runtime is available, the host can make that stage explicit:
 
@@ -417,7 +417,7 @@ The default build is a **consumer** package: its build-generated manifest uses `
 
 The builder emits exactly one top-level `codex-loop/` directory and includes only runtime Skill files (`SKILL.md`, `agents/`, `assets/`, `references/`, `scripts/`, plus license/attribution files). It excludes `.github/`, `tests/`, `README.md`, repository tooling, `__pycache__`, and compiled Python caches. This separation matters because a repository-valid ZIP is not necessarily a ChatGPT-installable Skill package.
 
-For every Codex Loop update, validate the resulting Skill with Skill Creator so the canonical package is `skill.zip`. Then run `python3 scripts/prepare_codex_loop_download.py --source /path/to/skill.zip --output /path/to/codex-loop.zip`, which copies the file without recompression and verifies byte identity. Return only `codex-loop.zip` in chat; its SHA-256 must equal the official `skill.zip` SHA-256. That renamed file is the terminal deliverable. Installation is manual and outside Codex Loop; do not wait for or record product UI or activation state. Manual installation is the only supported Codex Loop installation path.
+For every Codex Loop update, validate the resulting Skill with Skill Creator so the canonical package is `skill.zip`. Then run `python3 scripts/prepare_codex_loop_download.py --source /path/to/skill.zip --output /path/to/codex-loop.zip`, which copies the file without recompression and verifies byte identity. Expose only that exact `codex-loop.zip` as a fresh current-conversation artifact; its SHA-256 must equal the official `skill.zip` SHA-256. Never synthesize or reuse a Library URL/reference for the generated package. The user then installs it manually through `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`.
 
 ## Useful prompts
 
@@ -473,7 +473,7 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 
 **GitHub source cannot be materialized into the Web workspace.** Confirm the repository has the audited `workspace-download.yml`, locate or produce a run bound to the exact target `head_sha`, and verify the artifact can be downloaded through the GitHub Connector. If one query surface cannot observe a push-triggered run, classify that as an observability limitation and continue through a compatible read-only Actions-runs endpoint within the same GitHub authority; also inspect successful import-run receipts for an exact receipt-bound published-source artifact. Do not conclude that the workflow failed or the direct artifact is absent merely from an empty incompatible query.
 
-**A new Codex Loop version is not active after an update.** Use the `codex-loop.zip` returned by the update workflow and install/replace the Skill manually through the ChatGPT Skills/Library interface. `codex-loop.zip` is byte-identical to the official Skill Creator `skill.zip`; only the filename differs for normal chat download delivery. Codex Loop does not automate or reconcile its own installation.
+**Installing a returned Codex Loop package.** Download the fresh `codex-loop.zip` artifact from the current conversation, then use `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`. `codex-loop.zip` is byte-identical to the official Skill Creator `skill.zip`; package generation and artifact delivery are not installation. Do not route the generated package through a presumed Library deep link.
 
 **Local mode disappeared in a new chat.** This is expected. Development mode is conversation-scoped; each new conversation starts in Web mode.
 

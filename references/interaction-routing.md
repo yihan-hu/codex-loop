@@ -81,12 +81,12 @@ The built-in preference is `cloud_browser`; read `host-profile.md` for the priva
 
 - unresolved: no explicit deployment target has been persisted.
 - `artifact_only`: package/export only; do not install.
-- `chatgpt_web_skill`: use the native ChatGPT Web Skill installation/update surface.
+- `chatgpt_web_skill`: validate the exact Skill ZIP, expose those exact bytes as a fresh current-conversation artifact, then use the manual product path `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`.
 - `local_codex_skill`: install/update the Skill in a local Codex environment.
 
 A Web development workspace may legitimately deploy to ChatGPT Web or, after explicit user selection, to local Codex. Likewise Local repository development does not force local deployment.
 
-For a generic `install` action with unresolved deployment state, `route-check` resolves to the native deployment surface declared by `host_surface`. Therefore `host_surface=chatgpt_web` resolves to `chatgpt_web_skill`; RDC availability, a Mac checkout, or a previously installed local Skill cannot change that result. `local_codex_skill` becomes valid from ChatGPT Web only after an explicit `route-transition --deployment-target local_codex_skill --current-user-selection-observed --selection-evidence ...`, and the actual local install still requires current-task local-install authorization at `route-check`.
+For a generic `install` action with unresolved deployment state, `route-check` resolves to the native deployment target declared by `host_surface`. Therefore `host_surface=chatgpt_web` resolves to `chatgpt_web_skill`; the returned route also fixes the delivery mode to a fresh current-conversation artifact and the manual upload path above. RDC availability, a Mac checkout, a previously installed local Skill, or a remembered Library/file reference cannot change that result. `local_codex_skill` becomes valid from ChatGPT Web only after an explicit `route-transition --deployment-target local_codex_skill --current-user-selection-observed --selection-evidence ...`, and the actual local install still requires current-task local-install authorization at `route-check`.
 
 If `host_surface=unknown`, a generic install remains unresolved and fails closed rather than guessing.
 

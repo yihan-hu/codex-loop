@@ -68,7 +68,7 @@ class CodexLoopDownloadHandoffTests(unittest.TestCase):
         for text in (skill, readme, deployment, runtime):
             self.assertIn("skill.zip", text)
             self.assertIn("codex-loop.zip", text)
-        self.assertIn("return only `codex-loop.zip`", skill)
+        self.assertIn("expose only that exact `codex-loop.zip`", skill)
         self.assertIn("byte-for-byte", readme)
         self.assertIn("never recompress", deployment)
         self.assertIn("identical SHA-256", runtime)

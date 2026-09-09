@@ -49,8 +49,8 @@ class SemanticCompatibilityRoutingTests(unittest.TestCase):
         self.assertIn("Drive staging -> RDC", skill)
         self.assertIn("update/package **Codex Loop**", skill)
         self.assertIn("official Skill Creator `skill.zip`", skill)
-        self.assertIn("return only `codex-loop.zip`", skill)
-        self.assertIn("Installation is manual", skill)
+        self.assertIn("expose only that exact `codex-loop.zip`", skill)
+        self.assertIn("Manual installation", skill)
 
 
     def test_equivalence_rule_does_not_weaken_unique_capability_boundaries(self):

@@ -4,7 +4,7 @@ Keep development location, source lineage, workspace synchronization, and ChatGP
 
 ## Development modes
 
-- **A new conversation starts in web mode.** The current ChatGPT/web workspace is the mutable source baseline. Make edits and validations there and return generated files with normal workspace download links. Do not enter Local mode or use Remote Desktop Commander merely because those capabilities are available.
+- **A new conversation starts in web mode.** The current ChatGPT/web workspace is the mutable source baseline. Make edits and validations there. When a generated file is part of the deliverable, expose the exact current bytes through the host's current-conversation artifact/file mechanism; do not infer a Library object from the workspace path. Do not enter Local mode or use Remote Desktop Commander merely because those capabilities are available.
 - **Development mode is a pre-tool gate.** Initialize the conversation routing file and run `route-check` before the first repository/filesystem discovery, mutation, packaging, Git, install/deploy, transfer/synchronization, or repository-affecting RDC action. Until an explicit Local-mode transition exists, the authoritative state is `workspace_mode=web` and the current ChatGPT workspace remains authoritative. Interaction-only RDC/computer use and Skill deployment are routed on separate axes and never select the repository workspace. Domain-specific Skills do not get to bypass this deterministic gate.
 - **Web mode fails closed.** RDC availability, a visible Mac checkout, an installed Skill copy, or failure to find an obvious Web write/publish bridge does not authorize a Local-mode fallback. Preserve the Web source and report the exact missing capability instead of searching or mutating local files. Installed Skills are not normal source acquisition and are never auto-selected; only explicit current-turn user authorization may invoke the narrow read-only copy exception in `source-acquisition.md`, and that exception does not select Local mode.
 - **Local mode is explicit once per conversation.** Enter it only when the user explicitly asks to make a local/PiWork checkout the repository-development baseline. A request to use RDC, Chrome, computer use, or native macOS interaction by itself does not select Local mode. Once selected, keep local mode for later repository tasks in that same conversation unless the user explicitly switches back to web mode. In local mode `LOCAL_ROOT/<repo>` is the authoritative mutable source workspace and GitHub is its durable remote.
@@ -38,6 +38,24 @@ If the user explicitly asks to pull/materialize source **from GitHub**, use the 
 
 When Codex Loop itself is packaged, read `deployment-provenance.md`. The normal end-user artifact is the repository-neutral `consumer` profile: it packages the current validated runtime working tree, emits a build-generated manifest with `repository_binding=none`, and does not carry maintainer repository/commit/tree fields. Use the explicit `maintainer` profile only when exact source lineage is itself required evidence; that path requires a clean tracked source and verified repository/commit/tree and marks the binding `provenance_only`. Never commit the generated manifest or copy private Host Profile values into the package.
 
+## ChatGPT Web artifact exposure and manual installation
+
+Treat package bytes, conversation artifact exposure, and product installation as three separate boundaries:
+
+```text
+PACKAGE
+  validated Skill ZIP bytes
+  -> EXPOSE
+  host returns a fresh current-conversation artifact/file reference for those exact bytes
+  -> INSTALL
+  user uploads that downloaded ZIP through:
+  Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer
+```
+
+The default ChatGPT Web delivery path is always the fresh current-conversation artifact. Never synthesize, reconstruct, deep-link, or reuse a presumed Library object/reference for a generated Skill package. A prior attachment/reference is not current delivery evidence. If the exact package bytes are already valid, expose those same bytes freshly; rebuilding is unnecessary unless package identity or integrity is uncertain.
+
+`SKILL_PACKAGED` proves the ZIP contents/structure and digest. It does not prove that a user-facing download reference exists or works. When the objective includes giving the user a downloadable package, final delivery additionally requires the actual host-returned current-conversation artifact/file reference. Returning or downloading the ZIP is still not installation; installation occurs only at the product boundary after the user uploads it through the path above.
+
 ## Stage separation
 
 Use these conceptual flows:
@@ -51,7 +69,8 @@ Web mode (default at conversation start)
   -> if Codex Loop itself was updated: build + validate repository-neutral consumer skill.zip
   -> copy bytes unchanged to codex-loop.zip and verify equal SHA-256
   -> SKILL_PACKAGED
-  -> return codex-loop.zip; user installs manually
+  -> expose exact codex-loop.zip as a fresh current-conversation artifact
+  -> user downloads it and installs manually through Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer
 
 Local mode (after explicit selection; persists for this conversation)
   LOCAL_ROOT canonical repo
@@ -63,7 +82,8 @@ Local mode (after explicit selection; persists for this conversation)
   -> if Codex Loop itself was updated: build + validate repository-neutral consumer skill.zip
   -> copy bytes unchanged to codex-loop.zip and verify equal SHA-256
   -> SKILL_PACKAGED
-  -> return codex-loop.zip; user installs manually
+  -> expose exact codex-loop.zip as a fresh current-conversation artifact
+  -> user downloads it and installs manually through Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer
 ```
 
 Report these stages independently:
@@ -72,7 +92,7 @@ Report these stages independently:
 - `WORKSPACE_SYNCED`: the exact pushed commit was materialized into the current ChatGPT workspace and passed integrity checks.
 - `SKILL_PACKAGED`: a verified `skill.zip` exists, its embedded deployment manifest verifies the runtime allowlist, and the external package SHA-256 receipt is known.
 
-For Codex Loop, packaging is the terminal update stage. Manual installation is outside Codex Loop and is not represented as a runtime deployment state.
+For Codex Loop, source/package work ends after validated package bytes and fresh current-conversation artifact exposure. Manual installation is outside Codex Loop and is not represented as a runtime deployment state.
 
 ## Web-mode GitHub publishing
 
@@ -95,9 +115,10 @@ When Codex Loop source changes, finish the source work, validation, review, and 
 3. Repackage with Skill Creator's official `package_skill.py` when needed so the canonical package filename is exactly `skill.zip`.
 4. Verify the official ZIP contains one top-level `codex-loop/` Skill and no development-only files or Python caches.
 5. Run `python3 scripts/prepare_codex_loop_download.py --source /path/to/skill.zip --output /path/to/codex-loop.zip`. This must copy bytes only, never recompress, and must report identical SHA-256 values.
-6. Return only `codex-loop.zip` and its SHA-256 to the user as the normal chat download artifact.
+6. Expose only that exact `codex-loop.zip` through the host's current-conversation artifact/file mechanism. Use the actual host-returned reference; never invent or reuse a Library/file reference.
+7. Return the fresh `codex-loop.zip` artifact and its SHA-256, and direct manual installation through `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`.
 
-Stop there and return `codex-loop.zip` plus its SHA-256. The user performs installation manually through the product's supported Skills/Library interface.
+Stop after fresh artifact exposure. Do not claim installation and do not route the generated ZIP through a presumed Library object.
 
 For other Skills, packaging/install behavior follows the user's request and the relevant Skill Creator/host workflow; this manual-package rule is specifically the Codex Loop maintenance policy.
 

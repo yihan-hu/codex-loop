@@ -1,27 +1,28 @@
 # Capability and permission preflight
 
-Use one bounded permission-smoke stage when the reviewed workflow depends on external integrations, host permissions, or local interaction capabilities.
+Use one bounded permission-smoke stage when the user's request already makes external integrations, host permissions, or local interaction capabilities predictable.
 
-The purpose is to make predictable permission prompts happen **before** substantive execution, instead of discovering them at push/deploy/cleanup time. Preflight does not weaken host security, grant itself permissions, or replace a later host-required per-action approval.
+The purpose is to make predictable permission prompts happen at **Skill admission**, before repository acquisition, substantive observation, mutation, or long execution. Do not wait for a full task review when the request already says `push`, names Google Drive, or otherwise makes the downstream capability obvious. Preflight does not weaken host security, grant itself permissions, or replace a later host-required per-action approval.
 
 ## Mandatory sequencing
 
-Distinguish **task review** from the final code/change review. Task review means the objective, route, intended downstream external actions, and reasonably required capabilities have been understood well enough to execute. It happens near the beginning of the objective. Final change review still happens near completion.
-
-For a multi-step task with predictable external capabilities, use this order:
+Do only the minimum interpretation and routing needed to identify the real permission boundary, then prewarm it immediately:
 
 ```text
-understand/review task and intended workflow
-  -> resolve deterministic routing
+Skill admission
+  -> parse explicit request for predictable external capabilities
+  -> resolve only the route needed to choose the representative probe
   -> plan required permission probes
   -> execute live host permission smoke tests
   -> satisfy any permission/setup prompts
-  -> substantive observe/act/validate work
+  -> repository acquisition / substantive observe / act / validate
   -> final change review
   -> completion audit
 ```
 
-After task review and route resolution, call:
+If a capability becomes predictable only later, prewarm it immediately when discovered. Do not defer it to the eventual external action.
+
+After this minimal admission/routing step, call:
 
 ```bash
 python3 scripts/codex_loop.py permission-preflight-plan \
@@ -33,7 +34,7 @@ python3 scripts/codex_loop.py permission-preflight-plan \
 
 Use only capabilities actually implied by the reviewed workflow. A Drive-only task may omit `--session-id` when no routing-sensitive repository/browser/deployment action exists.
 
-The plan is advisory host-execution structure, not permission state. It intentionally writes no runtime permission record. Its returned phase is `post_task_review_pre_execution`.
+The plan is advisory host-execution structure, not permission state. It intentionally writes no runtime permission record. Its returned phase is `skill_admission_pre_execution`.
 
 ## Real-probe contract
 
@@ -61,15 +62,17 @@ git push --dry-run <intended-remote> <intended-refspec>
 
 Run it through the normal host-visible Git path. Success must show that the remote was reached and the dry run was push-capable without moving a ref. Do not create a throwaway branch merely to test permission.
 
-For **Web mode**, do not stop at a repository permission readback: it can prove the account/app has push-capable repository access, but it may never cross the host's write-approval boundary. Use two bounded observations on the exact target repository:
+For **Web mode**, a repository permission readback plus empty-blob write is still insufficient when the eventual publish path moves a persistent Git ref. Use three bounded observations on the exact target repository and target branch:
 
 ```text
 live repository permission readback -> require push-capable access
-  -> host GitHub Git-database create-blob/write-object with fixed empty content
-  -> do not attach that blob to any tree, commit, tag, branch, or ref
+  -> create fixed empty Git blob and leave it unreferenced
+  -> read exact current target ref SHA
+  -> call the host ref-update primitive with that same SHA and force=false
+  -> require the ref to remain unchanged
 ```
 
-The empty blob is a write-scoped sentinel object, not repository source. It must remain unreferenced, so the probe cannot move a ref or change a checked-out tree. Use only fixed empty/non-sensitive probe content; never put task or repository bytes into the object. Never create a commit, branch, issue, PR, or comment just to smoke-test push permission. If the host exposes no isolated unreferenced Git-object write primitive, classify the early write approval as `GITHUB_PUSH_SAFE_PROBE_UNAVAILABLE` rather than substituting a source/ref mutation.
+The empty blob reaches the Git-object write boundary. The idempotent same-SHA ref update reaches the persistent-ref write boundary without moving the branch. Use only the already-observed current target SHA; never create a throwaway branch, commit, tag, issue, PR, or source mutation just to obtain approval. If the host lacks either bounded primitive, classify that permission class as not prewarmed rather than substituting a real ref move.
 
 Repository push capability does not prove GitHub Actions write capability; probe Actions separately when the workflow depends on it.
 
@@ -104,9 +107,9 @@ Never overwrite, rename, move, or delete a pre-existing user file as a permissio
 
 A successful live probe may be recorded with `permission-observation-record` as an exact-scope, expiring, route-generation-bound hint. On later same-session continuations, `permission-preflight-plan --reuse-fresh-observations --observation-scope CAPABILITY=SCOPE` may skip only fresh exact-scope probes. This never grants permission or bypasses host approval.
 
-1. Complete task review: understand the objective, route, intended external actions, and reasonably required capabilities. Do not confuse this with the final diff/change review.
-2. Initialize/read the conversation routing session when routing-sensitive work is involved. Resolve `workspace_mode`, `interaction_target`, and, for install/deploy work, `deployment_target`; run the applicable `route-check`. Capability probing must never create or mutate routing state.
-3. Run `permission-preflight-plan` for the capability set implied by the reviewed workflow.
+1. At Skill admission, extract predictable external capabilities directly from the explicit request. Do not wait for repository inspection when the request already names the external action.
+2. Initialize/read only the routing state needed to select the representative probe. Capability probing must never create or mutate routing state beyond that ordinary route initialization.
+3. Run `permission-preflight-plan` for the immediately predictable capability set.
 4. Execute every returned probe through the real host path. Prefer independent read-only probes in parallel when safe; serialize probe actions that create temporary objects or workflow runs.
 5. If a probe triggers connection/permission UI, satisfy that host flow before substantive work. Batch missing connection/setup requests when the host supports it, and re-run only the failed probe after the host reports that access changed.
 6. Keep concise successful observations in current task/session context so the same live capability is not needlessly re-probed.

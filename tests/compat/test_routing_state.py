@@ -144,6 +144,9 @@ class RoutingStateTests(unittest.TestCase):
             generic = route_check(action="skill_install", session_id=sid)
             self.assertTrue(generic["allowed"])
             self.assertEqual(generic["effective_deployment_target"], "chatgpt_web_skill")
+            self.assertEqual(generic["delivery_mode"], "fresh_current_conversation_artifact")
+            self.assertEqual(generic["manual_install_path"], ["Plugins", "Plugin Directory", "Skills", "Create", "Upload from your computer"])
+            self.assertFalse(generic["library_deep_link_allowed"])
             self.assertFalse(route_check(action="local_skill_install", session_id=sid)["allowed"])
 
             route_transition(
@@ -247,14 +250,16 @@ class RoutingStateTests(unittest.TestCase):
                 session_id=state["session_id"],
                 capabilities=["github_push", "github_actions", "google_drive_write", "github_push"],
             )
-            self.assertEqual(plan["phase"], "post_task_review_pre_execution")
+            self.assertEqual(plan["phase"], "skill_admission_pre_execution")
             self.assertEqual(plan["required_capabilities"], ["github_push", "github_actions", "google_drive_write"])
             self.assertFalse(plan["runtime_state_written"])
             self.assertIn("current live host observation", plan["completion_rule"])
             probes = {item["capability"]: item for item in plan["probes"]}
             self.assertIn("unreferenced empty-blob write", probes["github_push"]["success_evidence"])
-            self.assertIn("no tree/commit/ref", probes["github_push"]["side_effect_budget"])
+            self.assertIn("same-SHA target-ref update", probes["github_push"]["success_evidence"])
+            self.assertIn("no tree/commit/ref movement", probes["github_push"]["side_effect_budget"])
             self.assertIn("fixed empty content", probes["github_push"]["preferred_probe"])
+            self.assertIn("force=false", probes["github_push"]["preferred_probe"])
             self.assertIn("audited", probes["github_actions"]["preferred_probe"])
             self.assertTrue(probes["google_drive_write"]["cleanup_required"])
             shown = route_show(session_id=state["session_id"])
