@@ -7,7 +7,7 @@ from codex_loop_runtime.workspace import hash_file
 from codex_loop_runtime.write_transaction import guarded_write
 class WriteTests(unittest.TestCase):
   def setup(self,root,profile='regular'):
-    store=create_store(root); store.configure_task(store.path.parent.name,'change',[],profile=profile); capture_baseline(root,store); return store
+    store=create_store(root); store.configure_task(store.path.parent.name,'change',[], request_anchor='change',profile=profile); capture_baseline(root,store); return store
   def test_existing_requires_expected_preimage(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); t=root/'a'; t.write_text('a'); s=self.setup(root)

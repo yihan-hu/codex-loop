@@ -1055,7 +1055,7 @@ def _cmd_objective_audit(argv: list[str]) -> int:
     emit_ok({
         'status': 'PASS' if not unresolved else 'CONTINUE',
         'generation': audit['generation'],
-        'plan_revision': audit['plan_revision'],
+        'effective_request_sha256': audit['effective_request_sha256'],
         'requirements_count': len(audit['requirements']),
         'unresolved_count': len(unresolved),
         'upstream_blob': audit['upstream_blob'],

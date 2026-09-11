@@ -49,7 +49,7 @@ class DelegationTests(unittest.TestCase):
         store.configure_task(
             store.path.parent.name,
             "parent objective",
-            ["parent acceptance"],
+            ["parent acceptance"], request_anchor="parent objective",
             requires_validation=validation,
             no_validation_reason=None if validation else "delegation fixture has no executable validation",
         )
@@ -290,7 +290,7 @@ class DelegationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-            call(root, "bootstrap", "--objective", "parent", "--criterion", "review complete", "--no-validation", "--no-validation-reason", "CLI delegation fixture")
+            call(root, "bootstrap", "--objective", "parent", '--request-anchor', "parent", "--criterion", "review complete", "--no-validation", "--no-validation-reason", "CLI delegation fixture")
             entered, _ = call(root, "isolate-enter", "--role", "reviewer", "--objective", "independent review", "--fact", "observed failure")
             isolation_id = entered["data"]["isolation_id"]
             status, _ = call(root, "isolate-status")

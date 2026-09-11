@@ -37,7 +37,7 @@ class ModifiedDesignReauditTests(unittest.TestCase):
         store.configure_task(
             store.path.parent.name,
             "objective",
-            [],
+            [], request_anchor="objective",
             requires_validation=requires_validation,
             no_validation_reason=None if requires_validation else NO_VALIDATION,
         )
@@ -110,7 +110,7 @@ class ModifiedDesignReauditTests(unittest.TestCase):
             root = Path(tmp)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             sub = root / "package"; sub.mkdir()
-            boot, _ = call("bootstrap", "--cwd", root, "--objective", "validate cwd")
+            boot, _ = call("bootstrap", "--cwd", root, "--objective", "validate cwd", '--request-anchor', "validate cwd")
             tid = boot["data"]["task_id"]
             out, _ = call("validate", "--cwd", sub, "--task-id", tid, "--", "pwd")
             self.assertTrue(out["data"]["executed"])
@@ -138,7 +138,7 @@ class ModifiedDesignReauditTests(unittest.TestCase):
             root = Path(tmp)
             store = create_store(root)
             with self.assertRaisesRegex(ValueError, "disabling validation requires"):
-                store.configure_task(store.path.parent.name, "objective", [], requires_validation=False)
+                store.configure_task(store.path.parent.name, "objective", [], request_anchor="objective", requires_validation=False)
 
     def test_protected_override_requires_reason(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -171,7 +171,7 @@ class ModifiedDesignReauditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             boot, _ = call(
-                "bootstrap", "--cwd", root, "--objective", "external bookkeeping",
+                "bootstrap", "--cwd", root, "--objective", "external bookkeeping", '--request-anchor', "external bookkeeping",
                 "--no-validation", "--no-validation-reason", NO_VALIDATION,
             )
             tid = boot["data"]["task_id"]

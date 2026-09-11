@@ -11,10 +11,10 @@ from typing import Any
 
 from .change_tracker import capture_baseline
 from .release_lineage import capture_workspace_binding
-from .state import StateStore, create_store, scrub_persisted_text, set_active_task
+from .state import MAX_REQUEST_AUTHORITY_CHARS, StateStore, create_store, scrub_persisted_text, set_active_task
 
-SCHEMA_VERSION = 2
-LEGACY_SCHEMA_VERSIONS = {1}
+SCHEMA_VERSION = 3
+LEGACY_SCHEMA_VERSIONS = {1, 2}
 BACKENDS = {"off", "google_drive"}
 DEFAULT_TTL_DAYS = {
     "active": 30,
@@ -77,6 +77,7 @@ def _historical_summary(store: StateStore) -> dict[str, Any]:
         "validation_count": int(row["n"]),
         "latest_validation_generation": None if row["max_generation"] is None else int(row["max_generation"]),
         "objective_audit_present": isinstance(audit, dict),
+        "request_authority": "CURRENT",
         "freshness_on_resume": "HISTORICAL",
     }
 
@@ -141,6 +142,7 @@ def build_state_manifest(
         "task": {
             "task_id": store.task_id,
             "status": status,
+            "request_anchor": scrub_persisted_text(store.request_anchor(), limit=MAX_REQUEST_AUTHORITY_CHARS) or "",
             "objective": scrub_persisted_text(str(store.get_meta("objective", "")), limit=8192) or "",
             "profile": str(store.get_meta("profile", "regular")),
             "generation": store.generation(),
@@ -150,6 +152,13 @@ def build_state_manifest(
             "requires_clean_process_exit": bool(store.get_meta("requires_clean_process_exit", False)),
         },
         "criteria": criteria,
+        "steers": [
+            {
+                "text": scrub_persisted_text(str(item.get("text", "")), limit=MAX_REQUEST_AUTHORITY_CHARS) or "",
+                "state": str(item.get("state", "pending")),
+            }
+            for item in store.request_steers()
+        ],
         "external_actions": external_actions,
         "resume": {
             "checkpoint_present": checkpoint is not None,
@@ -190,13 +199,15 @@ def write_state_manifest(store: StateStore, manifest: dict[str, Any]) -> Path:
     return path
 
 
-def _migrate_v1(manifest: dict[str, Any]) -> dict[str, Any]:
+def _migrate_legacy(manifest: dict[str, Any]) -> dict[str, Any]:
     migrated = deepcopy(manifest)
     migrated["schema_version"] = SCHEMA_VERSION
     task = migrated.setdefault("task", {})
     task.setdefault("requires_validation", True)
     task.setdefault("no_validation_reason", None)
     task.setdefault("requires_clean_process_exit", False)
+    task.setdefault("request_anchor", None)
+    migrated.setdefault("steers", [])
     resume = migrated.setdefault("resume", {})
     resume.setdefault("lineage_policy", "fork_historical_state_under_current_reality")
     workspace = migrated.setdefault("workspace", {})
@@ -206,8 +217,10 @@ def _migrate_v1(manifest: dict[str, Any]) -> dict[str, Any]:
         "validation_count": None,
         "latest_validation_generation": None,
         "objective_audit_present": None,
+        "request_authority": "MISSING",
         "freshness_on_resume": "HISTORICAL",
     })
+    migrated["historical"].setdefault("request_authority", "MISSING")
     return migrated
 
 
@@ -216,7 +229,7 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("persistence manifest must be a JSON object")
     version = manifest.get("schema_version")
     if version in LEGACY_SCHEMA_VERSIONS:
-        manifest = _migrate_v1(manifest)
+        manifest = _migrate_legacy(manifest)
     elif version != SCHEMA_VERSION:
         raise ValueError("unsupported persistence schema_version")
     else:
@@ -224,7 +237,7 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
 
     allowed_top = {
         "schema_version", "kind", "created_at", "expires_at", "persistence", "task",
-        "criteria", "external_actions", "resume", "workspace", "historical", "privacy",
+        "criteria", "steers", "external_actions", "resume", "workspace", "historical", "privacy",
     }
     extra_top = sorted(set(manifest) - allowed_top)
     if extra_top:
@@ -251,15 +264,17 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         datetime.fromisoformat(value.replace("Z", "+00:00"))
     if not isinstance(manifest.get("criteria"), list):
         raise ValueError("criteria must be a list")
+    if not isinstance(manifest.get("steers"), list):
+        raise ValueError("steers must be a list")
     if not isinstance(manifest.get("external_actions"), list):
         raise ValueError("external_actions must be a list")
 
     allowed_nested = {
         "persistence": {"backend", "enabled", "default_backend", "credentials_owner", "source_repository_contains_credentials", "mode", "workspace_snapshot", "cleanup"},
-        "task": {"task_id", "status", "objective", "profile", "generation", "plan_revision", "requires_validation", "no_validation_reason", "requires_clean_process_exit"},
+        "task": {"task_id", "status", "request_anchor", "objective", "profile", "generation", "plan_revision", "requires_validation", "no_validation_reason", "requires_clean_process_exit"},
         "resume": {"checkpoint_present", "checkpoint_generation", "next_action", "completion_status", "lineage_policy"},
         "workspace": {"repository", "base_commit", "base_tree", "source_commit", "source_tree"},
-        "historical": {"validation_count", "latest_validation_generation", "objective_audit_present", "freshness_on_resume"},
+        "historical": {"validation_count", "latest_validation_generation", "objective_audit_present", "request_authority", "freshness_on_resume"},
         "privacy": {"contains_chain_of_thought", "contains_credentials", "contains_hidden_instructions", "contains_tool_transcript", "external_action_identity_is_hashed"},
     }
     for section, allowed in allowed_nested.items():
@@ -271,6 +286,15 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{section} contains unsupported fields: {extra}")
 
     task = manifest["task"]
+    request_anchor = task.get("request_anchor")
+    authority_state = str(manifest["historical"].get("request_authority") or "")
+    if request_anchor is None:
+        if authority_state != "MISSING":
+            raise ValueError("missing request_anchor must be labeled as legacy missing authority")
+    elif not str(request_anchor).strip():
+        raise ValueError("manifest task request_anchor must not be empty")
+    elif authority_state != "CURRENT":
+        raise ValueError("present request_anchor must be labeled as current request authority")
     if not str(task.get("objective") or "").strip():
         raise ValueError("manifest task objective must not be empty")
     if not isinstance(task.get("requires_validation"), bool):
@@ -281,14 +305,22 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("no-validation task requires no_validation_reason")
 
     criterion_keys = {"ordinal", "text", "status"}
+    steer_keys = {"text", "state"}
     action_keys = {"kind", "action_class", "state", "identity_sha256", "failure_resolved"}
     if any(not isinstance(item, dict) or set(item) - criterion_keys for item in manifest["criteria"]):
         raise ValueError("criteria contains unsupported fields")
+    if any(not isinstance(item, dict) or set(item) - steer_keys for item in manifest["steers"]):
+        raise ValueError("steers contains unsupported fields")
     if any(not isinstance(item, dict) or set(item) - action_keys for item in manifest["external_actions"]):
         raise ValueError("external_actions contains unsupported fields")
     for item in manifest["criteria"]:
         if not str(item.get("text") or "").strip():
             raise ValueError("criteria text must not be empty")
+    for item in manifest["steers"]:
+        if not str(item.get("text") or "").strip():
+            raise ValueError("steer text must not be empty")
+        if item.get("state") not in {"pending", "acked"}:
+            raise ValueError("steer state must be pending or acked")
     for item in manifest["external_actions"]:
         if not str(item.get("kind") or "").strip():
             raise ValueError("external action kind must not be empty")
@@ -480,6 +512,12 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
     manifest = validate_state_manifest(manifest)
     observations = _validate_observations(observations)
     root = root.resolve()
+    if manifest["task"].get("request_anchor") is None:
+        return {
+            "status": "NEEDS_RECONCILIATION",
+            "created_task": False,
+            "reason": "legacy recovery state lacks the original request anchor; refusing to promote a summarized objective into task authority",
+        }
     if not observations["workspace_presence"]:
         return {
             "status": "NEEDS_RECONCILIATION",
@@ -495,6 +533,7 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
             store.path.parent.name,
             str(task["objective"]),
             criteria,
+            request_anchor=str(task["request_anchor"]),
             profile=str(task.get("profile") or "regular"),
             requires_validation=bool(task.get("requires_validation", True)),
             no_validation_reason=task.get("no_validation_reason"),
@@ -503,6 +542,8 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
         store.set_meta("requires_objective_completion_audit", True)
         store.set_meta("workspace_binding", capture_workspace_binding(root))
         baseline_files = capture_baseline(root, store)
+        for steer in manifest["steers"]:
+            store.record_steer(str(steer["text"]))
 
         expected_commit = manifest["workspace"].get("source_commit") or manifest["workspace"].get("base_commit")
         expected_tree = manifest["workspace"].get("source_tree") or manifest["workspace"].get("base_tree")
@@ -624,6 +665,7 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
         "unresolved_external_actions": unresolved_external,
         "reconciled_external_actions": reconciled_external,
         "criteria_restored_as": "pending",
+        "steers_restored_as": "pending",
         "historical_evidence_restored_as": "HISTORICAL",
         "rule": "current reality wins; no persisted PASS/review/validation/audit becomes fresh automatically",
     }

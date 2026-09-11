@@ -178,7 +178,9 @@ Codex Loop selection by the host Skill router is the lifecycle admission. Do not
 ## Bootstrap and world state
 
 ```bash
-python scripts/codex_loop.py bootstrap --cwd REPO --objective "..." \
+python scripts/codex_loop.py bootstrap --cwd REPO \
+  --request-anchor "authoritative host-visible user request copied without paraphrase" \
+  --objective "concise working summary" \
   --criterion "..." --profile bug_fix
 python scripts/codex_loop.py next --cwd REPO
 # Drill down only when needed:
@@ -186,21 +188,35 @@ python scripts/codex_loop.py snapshot --cwd REPO
 python scripts/codex_loop.py instructions --cwd REPO
 ```
 
-If no criterion is supplied, bootstrap creates one from the objective; it still cannot pass without evidence. Use `--no-validation` only when the task genuinely has no meaningful executable validation, and always pair it with `--no-validation-reason "..."`. The waiver is task state and is surfaced by completion.
+`--request-anchor` is required and is immutable after task configuration. Pass the authoritative host-visible user request itself, not a model-written summary. It is privacy-scrubbed before task-private persistence, but it is never silently replaced by the working objective. Later `steer` records append to the effective request in order; if applicable corrections already occurred before bootstrap, record those corrections as ordered steers immediately afterward. If the authoritative request cannot be recovered from host-visible conversation/history, stop for reconciliation rather than deriving it from the objective. If request-authority text exceeds the bounded runtime limit, bootstrap/steer fails rather than silently truncating the user's requirements. If no criterion is supplied, bootstrap creates one from the objective; it still cannot pass without evidence. Use `--no-validation` only when the task genuinely has no meaningful executable validation, and always pair it with `--no-validation-reason "..."`. The waiver is task state and is surfaced by completion.
 
 Profiles: `regular`, `bug_fix`, `feature`, `refactor`, `test_repair`, `ci_repair`, `code_review`, `review_fix`, `command_only`, `investigation`.
 
 ## Bounded working context
 
-`next` is the normal agent-facing state view. It is generated from the same context projector that backs full world-state/checkpoint data, but it intentionally omits low-level task/generation/plan bookkeeping and caps criteria, changed paths, completion reasons, steers, and suggested actions. It returns:
+`next` is the normal agent-facing state view. It is generated from the same context projector that backs full world-state/checkpoint data, but it intentionally omits low-level task/generation/plan bookkeeping and caps criteria, changed paths, completion reasons, request-authority text, steers, and suggested actions. The complete request anchor and effective request remain intact in private task state and `snapshot`; if `next` truncates any authoritative request text or ordered steer, it exposes the omitted counts and requires a `snapshot` drill-down before further mutation rather than silently treating the projection as complete. It returns:
 
-- effective task objective/criteria plus runtime guardrails and unresolved user deltas;
+- request anchor plus ordered user steers, one current working focus, working objective/criteria, runtime guardrails, and unresolved user deltas;
 - derived validation status and current completion status;
-- bounded changed-path ownership (`agent`, `mixed`, `user`, or unexpected/unattributed);
+- bounded changed-path ownership (`agent`, `mixed`, `user`, or unexpected/unattributed) plus `expected`/`drift` scope classification when an expected change surface is set;
 - legal/required next actions;
 - evidence references for explicit drill-down.
 
 Use `snapshot` as the full debug/audit view rather than as the default prompt payload. The local runtime does not compact or own ChatGPT conversation context.
+
+### Working focus
+
+Use one current focus for non-trivial repository work:
+
+```bash
+python scripts/codex_loop.py focus --cwd REPO \
+  --subgoal "fix parser null handling" \
+  --non-goal "do not refactor tokenizer" \
+  --expected-path parser.py \
+  --expected-path tests/parser/
+```
+
+The runtime stores one `status=in_progress` subgoal, optional non-goals, and a workspace-relative expected change surface. A trailing `/` means a directory prefix. Absolute paths and traversal are rejected. `scope_drift` appears when the observed changed-file set extends beyond a non-empty expected surface. It is a semantic review signal only: inspect the diff, then narrow/revert the accidental edit or update focus only if the effective request justifies the wider surface.
 
 ## Command preflight and execution
 
@@ -262,12 +278,16 @@ python scripts/codex_loop.py validation-record --cwd REPO/package-a \
 
 For an ordinary command that exits normally, `--exit-code 0 --evidence ...` remains the compatibility path. Do not use progress-only output such as `100%` to create `PASSED`; framework evidence requires a named adapter and explicit-protocol evidence requires capture-layer token verification. See `execution-supervision.md`.
 
-The facade resolves the unique unconsumed plan matching the current generation, cwd, and exact argv identity, then consumes it through the original safety-kernel checks. Repeated planning of the same current generation/cwd/exact command reuses the existing unconsumed plan, so ordinary retries do not manufacture agent-visible ambiguity. Zero matches (no valid plan) and legacy/corrupt multiple matches both fail closed. The underlying `plan_id` remains a one-time host-validation capability bound to generation, cwd, and exact argv; workspace mutation still makes the result stale. For compatibility/audit debugging, `validate --debug-bookkeeping` exposes `plan_id`/generation and `validation-record` still accepts explicit `--plan-id`/`--generation`. Approval-cache shell canonicalization is deliberately not used for validation equivalence. A failing validation may be made non-blocking only when it was actually observed at generation 0:
+The facade resolves the unique unconsumed plan matching the current generation, cwd, and exact argv identity, then consumes it through the original safety-kernel checks. Repeated planning of the same current generation/cwd/exact command reuses the existing unconsumed plan, so ordinary retries do not manufacture agent-visible ambiguity. Zero matches (no valid plan) and legacy/corrupt multiple matches both fail closed. The underlying `plan_id` remains a one-time host-validation capability bound to generation, cwd, and exact argv; workspace mutation still makes the result stale. For compatibility/audit debugging, `validate --debug-bookkeeping` exposes `plan_id`/generation and `validation-record` still accepts explicit `--plan-id`/`--generation`. Approval-cache shell canonicalization is deliberately not used for validation equivalence.
+
+Follow Codex's validation direction: start with the most specific check that demonstrates the requested behavior, then broaden only when useful. A failing check may be made non-blocking at any generation only after semantic review establishes that the failure is unrelated to the effective request and concise observable evidence is recorded:
 
 ```bash
 python scripts/codex_loop.py validation-resolve --cwd REPO --task-id TASK \
-  --validation-id ID --evidence "same baseline failure reproduced before edits"
+  --validation-id ID --evidence "failure is in an untouched unrelated module and does not exercise the requested change"
 ```
+
+The stored disposition is `unrelated_to_request` and is bound to the current `effective_request_sha256`. A later user steer invalidates the old relevance judgment and makes that failure blocking again until it is semantically re-evaluated. Passing validations cannot receive that disposition, and unrelated failures do not satisfy the requirement for at least one current authoritative passing validation. Do not use the disposition as a shortcut around a relevant regression.
 
 ## Criteria and steering
 
@@ -279,11 +299,11 @@ python scripts/codex_loop.py steer-ack --cwd REPO --task-id TASK --steer-id ID \
   --evidence "replanned and verified the API surface is unchanged"
 ```
 
-Passing criteria and acknowledging steers require evidence at the current workspace generation. Any later workspace mutation makes prior pass/ack evidence stale; re-check the condition, then repeat `criterion --status pass` or `steer-ack` with fresh evidence. Working criteria guide execution but do not independently prove completion of the original objective.
+The request anchor plus every ordered steer text is the effective request. Recording a steer changes `effective_request_sha256` immediately; steer state tracks integration evidence, not whether the user instruction is authoritative. Passing criteria and acknowledging steers require evidence at the current workspace generation. Any later workspace mutation makes prior pass/ack evidence stale; re-check the condition, re-anchor `focus` when necessary, then repeat `criterion --status pass` or `steer-ack` with fresh evidence. Working objective/criteria guide execution but do not independently define or prove the effective request.
 
 ## Objective completion audit
 
-New tasks created through the Codex Loop CLI require a separate upstream-style objective audit before `completion` may return `PASS`. Re-derive the requirements from the original objective and referenced current files/plans/specifications/issues/user instructions; do not merely restate the bootstrap criteria. Read `upstream-codex-goal-continuation.md` and `upstream-adaptation.md` before changing this behavior.
+New tasks created through the Codex Loop CLI require a separate upstream-style objective audit before `completion` may return `PASS`. Re-derive the requirements from the effective request—request anchor plus ordered steers—and referenced current files/plans/specifications/issues/instructions; do not merely restate the bootstrap objective or criteria. Read `upstream-codex-goal-continuation.md` and `upstream-adaptation.md` before changing this behavior.
 
 Record the audit as JSON:
 
@@ -302,7 +322,7 @@ python scripts/codex_loop.py objective-audit --cwd REPO <<'JSON'
 JSON
 ```
 
-Allowed statuses are `proven`, `contradicted`, `incomplete`, `weak`, and `missing`. A `proven` item requires non-empty evidence and an authoritative source. Every requirement must be `proven` for the audit to pass. The audit is bound to the stored objective, current workspace generation, and current `plan_revision`; a later workspace mutation or user steer makes it stale. Re-run the objective audit after those changes and before final `completion`.
+Allowed statuses are `proven`, `contradicted`, `incomplete`, `weak`, and `missing`. A `proven` item requires non-empty evidence and an authoritative source. Every requirement must be `proven` for the audit to pass. The audit is bound to `effective_request_sha256` plus the current workspace generation. A later user steer changes the request hash; a later workspace mutation changes generation; either makes the prior audit stale. Rewriting a working objective summary does not change request authority and therefore does not invalidate an otherwise current audit. Re-run the objective audit after authoritative request or workspace changes and before final `completion`.
 
 The runtime deliberately does not understand domain-specific workflow internals. If the objective names another Skill, gate, invariant, or deliverable, record the authoritative evidence proving that requirement rather than adding a domain-specific dependency mechanism to Codex Loop.
 

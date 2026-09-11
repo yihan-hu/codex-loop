@@ -22,6 +22,7 @@ PROFILES = {
     "regular", "bug_fix", "feature", "refactor", "test_repair", "ci_repair",
     "code_review", "review_fix", "command_only", "investigation",
 }
+MAX_REQUEST_AUTHORITY_CHARS = 65536
 READ_ONLY_PROFILES = {"code_review", "investigation"}
 NO_WRITE_PROFILES = READ_ONLY_PROFILES | {"command_only"}
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS validations (
     legacy_inferred INTEGER NOT NULL DEFAULT 1,
     disposition TEXT NOT NULL DEFAULT 'blocking',
     disposition_evidence TEXT,
+    disposition_request_sha256 TEXT,
     source TEXT NOT NULL DEFAULT 'local_runtime',
     evidence TEXT,
     plan_id TEXT,
@@ -191,6 +193,17 @@ def scrub_persisted_text(value: str | None, *, limit: int = 8192) -> str | None:
         text,
     )
     return text
+
+
+def scrub_request_authority_text(value: str | None) -> str:
+    if value is None:
+        return ""
+    text = _unicode_safe(str(value))
+    if len(text) > MAX_REQUEST_AUTHORITY_CHARS:
+        raise ValueError(
+            f"request authority text exceeds {MAX_REQUEST_AUTHORITY_CHARS} characters; refusing to silently truncate it"
+        )
+    return scrub_persisted_text(text, limit=MAX_REQUEST_AUTHORITY_CHARS) or ""
 
 
 def scrub_persisted_value(value: Any, *, depth: int = 0) -> Any:
@@ -386,6 +399,7 @@ class StateStore:
                 "cleanup_evidence": "TEXT",
                 "warnings_json": "TEXT NOT NULL DEFAULT '[]'",
                 "legacy_inferred": "INTEGER NOT NULL DEFAULT 1",
+                "disposition_request_sha256": "TEXT",
             }
             for column, declaration in validation_additions.items():
                 if column not in validation_columns:
@@ -425,6 +439,10 @@ class StateStore:
     def set_meta(self, key: str, value: Any) -> None:
         encoded = json.dumps(value, ensure_ascii=True, sort_keys=True)
         with self.connect() as db:
+            if key == "request_anchor":
+                row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+                if row is not None and str(row["value"]) != encoded:
+                    raise RuntimeError("task request anchor is immutable once configured")
             db.execute(
                 "INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, encoded),
@@ -458,6 +476,7 @@ class StateStore:
         objective: str,
         criteria: list[str],
         *,
+        request_anchor: str,
         profile: str = "regular",
         requires_validation: bool = True,
         no_validation_reason: str | None = None,
@@ -466,6 +485,12 @@ class StateStore:
         task_id = validate_task_id(task_id)
         if profile not in PROFILES:
             raise ValueError(f"invalid task profile: {profile}")
+        request_anchor = scrub_request_authority_text(request_anchor)
+        if not request_anchor.strip():
+            raise ValueError("task request anchor must not be empty")
+        existing_anchor = self.request_anchor()
+        if existing_anchor and existing_anchor != request_anchor:
+            raise RuntimeError("task request anchor is immutable once configured")
         objective = scrub_persisted_text(objective) or ""
         if not objective.strip():
             raise ValueError("task objective must not be empty")
@@ -486,7 +511,14 @@ class StateStore:
                 [(i, text) for i, text in enumerate(clean_criteria)],
             )
         self.set_meta("task_id", task_id)
+        self.set_meta("request_anchor", request_anchor)
         self.set_meta("objective", objective)
+        self.set_meta("working_focus", {
+            "current_subgoal": objective,
+            "status": "in_progress",
+            "non_goals": [],
+            "expected_change_surface": [],
+        })
         self.set_meta("profile", profile)
         self.set_meta("criteria_auto_generated", auto_criterion)
         self.set_meta("requires_validation", bool(requires_validation))
@@ -495,6 +527,75 @@ class StateStore:
         self.set_meta("generation", 0)
         self.set_meta("plan_revision", 0)
         self.set_meta("task_status", "active")
+
+    def request_anchor(self) -> str:
+        return str(self.get_meta("request_anchor", "") or "")
+
+    def request_steers(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT steer_id,text,state,created_at FROM steers ORDER BY created_at,rowid"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def effective_request(self) -> dict[str, Any]:
+        return {
+            "anchor": self.request_anchor(),
+            "steers": [str(item.get("text", "")) for item in self.request_steers()],
+        }
+
+    def effective_request_sha256(self) -> str:
+        encoded = json.dumps(
+            self.effective_request(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _normalize_change_surface_entry(value: str) -> str:
+        clean = (scrub_persisted_text(value, limit=1024) or "").strip().replace("\\", "/")
+        if not clean:
+            raise ValueError("expected change surface entries must not be empty")
+        if clean.startswith("/") or re.match(r"^[A-Za-z]:/", clean):
+            raise ValueError("expected change surface entries must be workspace-relative")
+        is_prefix = clean.endswith("/")
+        parts = [part for part in clean.split("/") if part not in {"", "."}]
+        if not parts or any(part == ".." for part in parts):
+            raise ValueError("expected change surface entries must stay inside the workspace")
+        normalized = "/".join(parts)
+        return normalized + "/" if is_prefix else normalized
+
+    def set_working_focus(
+        self,
+        current_subgoal: str,
+        *,
+        non_goals: list[str] | None = None,
+        expected_change_surface: list[str] | None = None,
+    ) -> dict[str, Any]:
+        self.ensure_active()
+        subgoal = (scrub_persisted_text(current_subgoal, limit=4096) or "").strip()
+        if not subgoal:
+            raise ValueError("working focus requires one non-empty current subgoal")
+        goals = [
+            (scrub_persisted_text(item, limit=2048) or "").strip()
+            for item in list(non_goals or [])[:32]
+        ]
+        goals = [item for item in goals if item]
+        surface = [
+            self._normalize_change_surface_entry(item)
+            for item in list(expected_change_surface or [])[:64]
+        ]
+        focus = {
+            "current_subgoal": subgoal,
+            "status": "in_progress",
+            "non_goals": goals,
+            "expected_change_surface": list(dict.fromkeys(surface)),
+        }
+        self.set_meta("working_focus", focus)
+        return focus
+
+    def working_focus(self) -> dict[str, Any]:
+        value = self.get_meta("working_focus", {})
+        return dict(value) if isinstance(value, dict) else {}
 
     def cancel(self, reason: str | None = None) -> None:
         clean_reason = scrub_persisted_text(reason, limit=2048)
@@ -767,22 +868,20 @@ class StateStore:
         return None if row is None else dict(row)
 
     def resolve_validation(self, validation_id: int, disposition: str, evidence: str) -> None:
-        if disposition != "baseline_unrelated":
-            raise ValueError("only baseline_unrelated validation disposition is supported")
+        if disposition != "unrelated_to_request":
+            raise ValueError("only unrelated_to_request validation disposition is supported")
         clean = scrub_persisted_text(evidence, limit=4096)
         if not (clean and clean.strip()):
-            raise ValueError("baseline_unrelated validation disposition requires observable evidence")
+            raise ValueError("unrelated_to_request validation disposition requires observable evidence")
         with self.connect() as db:
-            row = db.execute("SELECT passed,generation FROM validations WHERE id=?", (int(validation_id),)).fetchone()
+            row = db.execute("SELECT passed FROM validations WHERE id=?", (int(validation_id),)).fetchone()
             if row is None:
                 raise ValueError(f"validation {validation_id} does not exist")
             if bool(row["passed"]):
-                raise ValueError("passing validation cannot be marked baseline_unrelated")
-            if int(row["generation"]) != 0:
-                raise ValueError("baseline_unrelated requires a failure actually observed at baseline generation 0")
+                raise ValueError("passing validation cannot be marked unrelated_to_request")
             db.execute(
-                "UPDATE validations SET disposition=?,disposition_evidence=? WHERE id=?",
-                (disposition, clean, int(validation_id)),
+                "UPDATE validations SET disposition=?,disposition_evidence=?,disposition_request_sha256=? WHERE id=?",
+                (disposition, clean, self.effective_request_sha256(), int(validation_id)),
             )
 
     def validation_state_for_generation(self, generation: int) -> dict[str, Any]:
@@ -800,8 +899,18 @@ class StateStore:
         current = list(latest.values())
         legacy_identity = [x for x in current if not str(x.get("cwd") or "").strip()]
         eligible = [x for x in current if str(x.get("cwd") or "").strip()]
-        blocking = [x for x in eligible if x.get("disposition", "blocking") != "baseline_unrelated"]
-        nonblocking = [x for x in eligible if x.get("disposition") == "baseline_unrelated"]
+        request_sha256 = self.effective_request_sha256()
+        nonblocking = [
+            x for x in eligible
+            if x.get("disposition") == "unrelated_to_request"
+            and str(x.get("disposition_request_sha256") or "") == request_sha256
+        ]
+        nonblocking_ids = {int(x["id"]) for x in nonblocking}
+        stale_nonblocking = [
+            x for x in eligible
+            if x.get("disposition") == "unrelated_to_request" and int(x["id"]) not in nonblocking_ids
+        ]
+        blocking = [x for x in eligible if int(x["id"]) not in nonblocking_ids]
         for item in current:
             try:
                 item["warnings"] = json.loads(item.get("warnings_json") or "[]")
@@ -814,7 +923,10 @@ class StateStore:
         cleanup_failed = [x for x in blocking if str(x.get("cleanup_status") or "UNKNOWN") == "FAILED"]
         orphaned = [x for x in blocking if str(x.get("process_status") or "UNKNOWN") == "ORPHANED" or str(x.get("cleanup_status") or "UNKNOWN") == "ORPHANED"]
         supervision_partial = [x for x in blocking if str(x.get("process_status") or "UNKNOWN") == "UNKNOWN" or str(x.get("cleanup_status") or "UNKNOWN") == "UNSUPPORTED"]
-        warning_codes = sorted({warning for item in blocking for warning in item.get("warnings", [])})
+        warning_codes = sorted(
+            {warning for item in blocking for warning in item.get("warnings", [])}
+            | ({"STALE_UNRELATED_VALIDATION_DISPOSITION"} if stale_nonblocking else set())
+        )
         return {
             "commands": current,
             "passed_count": len(passed),
@@ -827,6 +939,8 @@ class StateStore:
             "warning_codes": warning_codes,
             "nonblocking_count": len(nonblocking),
             "nonblocking": nonblocking,
+            "stale_nonblocking_count": len(stale_nonblocking),
+            "stale_nonblocking": stale_nonblocking,
             "legacy_identity_count": len(legacy_identity),
             "legacy_identity": legacy_identity,
         }
@@ -1250,7 +1364,7 @@ class StateStore:
         return item
 
     def record_steer(self, text: str) -> str:
-        clean = scrub_persisted_text(text, limit=4096) or ""
+        clean = scrub_request_authority_text(text)
         if not clean.strip():
             raise ValueError("steer text must not be empty")
         steer_id = uuid.uuid4().hex

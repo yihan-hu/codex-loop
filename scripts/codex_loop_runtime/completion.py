@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -13,10 +12,6 @@ from .state import READ_ONLY_PROFILES, StateStore, scrub_persisted_text
 
 OBJECTIVE_AUDIT_STATUSES = {"proven", "contradicted", "incomplete", "weak", "missing"}
 UPSTREAM_GOAL_CONTINUATION_BLOB = "62391c523cab01022a32c6bb685292ed1e8d3205"
-
-
-def _objective_sha256(objective: str) -> str:
-    return hashlib.sha256(str(objective).encode("utf-8")).hexdigest()
 
 
 def record_objective_audit(store: StateStore, payload: Any) -> dict[str, Any]:
@@ -55,13 +50,11 @@ def record_objective_audit(store: StateStore, payload: Any) -> dict[str, Any]:
             "authoritative_source": source,
         })
 
-    objective = str(store.get_meta("objective", "") or "")
     audit = {
-        "version": 1,
+        "version": 2,
         "upstream_blob": UPSTREAM_GOAL_CONTINUATION_BLOB,
-        "objective_sha256": _objective_sha256(objective),
+        "effective_request_sha256": store.effective_request_sha256(),
         "generation": store.generation(),
-        "plan_revision": int(store.get_meta("plan_revision", 0)),
         "requirements": normalized,
     }
     store.set_meta("objective_completion_audit", audit)
@@ -83,13 +76,10 @@ def _objective_audit_state(store: StateStore, generation: int) -> dict[str, Any]
             "unresolved": [],
         }
 
-    objective = str(store.get_meta("objective", "") or "")
-    if str(audit.get("objective_sha256", "")) != _objective_sha256(objective):
-        reasons.append("objective completion audit does not match the current objective")
+    if str(audit.get("effective_request_sha256", "")) != store.effective_request_sha256():
+        reasons.append("objective completion audit does not match the current effective request")
     if int(audit.get("generation", -1)) != int(generation):
         reasons.append(f"objective completion audit is stale for generation {generation}")
-    if int(audit.get("plan_revision", -1)) != int(store.get_meta("plan_revision", 0)):
-        reasons.append("objective completion audit predates the current user steer/plan revision")
 
     requirements = audit.get("requirements")
     if not isinstance(requirements, list) or not requirements:
@@ -113,7 +103,7 @@ def _objective_audit_state(store: StateStore, generation: int) -> dict[str, Any]
         if unresolved:
             reasons.append("one or more objective requirements are not proven by authoritative evidence")
 
-    fresh = not any("does not match" in x or "stale" in x or "predates" in x for x in reasons)
+    fresh = not any("does not match" in x or "stale" in x for x in reasons)
     passed = bool(requirements) and not reasons and not unresolved
     return {
         "required": True,
@@ -124,7 +114,7 @@ def _objective_audit_state(store: StateStore, generation: int) -> dict[str, Any]
         "requirements": requirements,
         "unresolved": unresolved,
         "generation": audit.get("generation"),
-        "plan_revision": audit.get("plan_revision"),
+        "effective_request_sha256": audit.get("effective_request_sha256"),
         "upstream_blob": audit.get("upstream_blob"),
     }
 
@@ -154,6 +144,8 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
     reasons: list[str] = []
     blockers: list[str] = []
     generation = store.generation()
+    if not store.request_anchor().strip():
+        blockers.append("task request anchor is missing")
     active_isolation = store.active_isolation()
     if active_isolation is not None:
         reasons.append(

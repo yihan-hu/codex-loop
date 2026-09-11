@@ -137,6 +137,58 @@
       "upgrade_path": "Use optional schema-whitelisted persistence and evidence drill-down; prefer native history APIs if exposed."
     },
     {
+      "id": "retained_user_request",
+      "layer": "control_plane",
+      "paths": [
+        "codex-rs/protocol/src/protocol.rs"
+      ],
+      "required_patterns": [
+        "USER_MESSAGE_BEGIN"
+      ],
+      "status": "PARTIAL",
+      "divergence": "The ChatGPT Skill runtime does not expose Codex conversation-item identity/history as a local authority primitive. Codex Loop therefore stores a bounded privacy-scrubbed immutable request anchor and ordered later user steers in private task state.",
+      "upgrade_path": "Bind request authority directly to native immutable host user-message/item identity when exposed; keep summaries and criteria as derived execution aids rather than task truth."
+    },
+    {
+      "id": "single_in_progress_focus",
+      "layer": "control_plane",
+      "paths": [
+        "codex-rs/protocol/src/plan_tool.rs"
+      ],
+      "required_patterns": [
+        "InProgress"
+      ],
+      "status": "PARTIAL",
+      "divergence": "Codex Loop does not clone the native update_plan tool/runtime. It projects one current in-progress working focus from private task state, with optional non-goals and expected change surface.",
+      "upgrade_path": "Use a native host plan/current-step primitive when it can preserve one authoritative in-progress focus without creating a second planning truth source."
+    },
+    {
+      "id": "coding_precision_policy",
+      "layer": "concept",
+      "paths": [
+        "codex-rs/protocol/src/prompts/base_instructions/default.md"
+      ],
+      "required_patterns": [
+        "Do not attempt to fix unrelated bugs or broken tests",
+        "start as specific as possible"
+      ],
+      "status": "ALIGNED"
+    },
+    {
+      "id": "apply_patch_boundary",
+      "layer": "control_plane",
+      "paths": [
+        "codex-rs/apply-patch/src/parser.rs"
+      ],
+      "required_patterns": [
+        "*** Begin Patch",
+        "*** Update File: "
+      ],
+      "status": "PARTIAL",
+      "divergence": "Codex Loop adopts patch-first model behavior but keeps patch grammar parsing, filesystem application, sandboxing, and tool dispatch with the active host rather than duplicating Codex's native patch engine inside the portable runtime.",
+      "upgrade_path": "Prefer a native host apply-patch primitive. Only port patch execution locally if the host cannot provide it and the full filesystem/sandbox safety contract can be preserved without creating a competing mutation engine."
+    },
+    {
       "id": "agent_graph_store",
       "layer": "concept",
       "paths": [

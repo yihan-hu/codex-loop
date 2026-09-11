@@ -15,7 +15,7 @@ class ContextProjectionTests(unittest.TestCase):
         store.configure_task(
             store.path.parent.name,
             'context projection objective',
-            list(criteria or []),
+            list(criteria or []), request_anchor='context projection objective',
             requires_validation=requires_validation,
             no_validation_reason=None if requires_validation else 'fixture has no executable validation',
         )
@@ -38,6 +38,57 @@ class ContextProjectionTests(unittest.TestCase):
             self.assertNotIn('repository_instructions', view['lifecycle']['active_capabilities'])
             self.assertNotIn('validation', view['lifecycle']['requirements'])
             self.assertNotIn('change_review', view['lifecycle']['requirements'])
+
+    def test_working_projection_exposes_single_focus_and_scope_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            store = self.make(root)
+            store.set_working_focus(
+                'fix parser null handling',
+                non_goals=['do not refactor tokenizer'],
+                expected_change_surface=['parser.py', 'tests/parser/'],
+            )
+            (root / 'helper.py').write_text('unrelated')
+            view = build_working(root, root, store)
+            focus = view['effective_spec']['working_focus']
+            self.assertEqual(focus['current_subgoal'], 'fix parser null handling')
+            self.assertEqual(focus['status'], 'in_progress')
+            self.assertEqual(focus['non_goals'], ['do not refactor tokenizer'])
+            self.assertEqual(focus['expected_change_surface'], ['parser.py', 'tests/parser/'])
+            self.assertEqual(view['state']['scope_drift'], ['helper.py'])
+            self.assertEqual(view['state']['changed_paths'][0]['scope'], 'drift')
+            self.assertTrue(any(x['kind'] == 'review' and 'scope drift' in x['action'] for x in view['next_actions']))
+
+    def test_working_projection_bounds_long_request_authority_with_explicit_drilldown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            anchor = 'a' * 13000
+            steer = 'b' * 5000
+            store = create_store(root)
+            store.configure_task(
+                store.path.parent.name,
+                'bounded request projection',
+                [],
+                request_anchor=anchor,
+                requires_validation=False,
+                no_validation_reason='fixture has no executable validation',
+            )
+            capture_baseline(root, store)
+            store.record_steer(steer)
+
+            view = build_working(root, root, store)
+            self.assertEqual(len(view['effective_spec']['request_anchor']), 12000)
+            self.assertEqual(len(view['effective_spec']['request_steers'][0]['text']), 4096)
+            self.assertEqual(view['truncated']['request_anchor_chars'], 1000)
+            self.assertEqual(view['truncated']['request_steer_chars'], 904)
+            self.assertTrue(any('full request authority' in x['action'] for x in view['next_actions']))
+            self.assertIn({'ref': 'request:full', 'inspect_with': 'snapshot'}, view['evidence_refs'])
+
+            full = build_full(root, root, store)
+            self.assertEqual(full['request_anchor'], anchor)
+            self.assertEqual(full['effective_request']['steers'], [steer])
 
     def test_working_projection_derives_freshness_without_exposing_evidence_generation(self):
         with tempfile.TemporaryDirectory() as tmp:

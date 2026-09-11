@@ -45,7 +45,7 @@ class ObjectiveCompletionAuditTests(unittest.TestCase):
         store.configure_task(
             store.path.parent.name,
             objective,
-            ["working criterion is satisfied"],
+            ["working criterion is satisfied"], request_anchor=objective,
             requires_validation=False,
             no_validation_reason="fixture has no meaningful executable validation",
         )
@@ -60,7 +60,7 @@ class ObjectiveCompletionAuditTests(unittest.TestCase):
                 root,
                 "bootstrap",
                 "--objective",
-                "finish the requested objective",
+                "finish the requested objective", '--request-anchor', "finish the requested objective",
                 "--criterion",
                 "working criterion is satisfied",
                 "--no-validation",
@@ -129,7 +129,16 @@ class ObjectiveCompletionAuditTests(unittest.TestCase):
             store.record_steer("also preserve the public API")
             audit = _objective_audit_state(store, store.generation())
             self.assertFalse(audit["fresh"])
-            self.assertIn("plan revision", " ".join(audit["reasons"]))
+            self.assertIn("effective request", " ".join(audit["reasons"]))
+
+    def test_working_objective_rewrite_does_not_change_request_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(Path(tmp))
+            before = store.effective_request_sha256()
+            record_objective_audit(store, proven())
+            store.set_meta("objective", "broader working summary that is not task authority")
+            self.assertEqual(store.effective_request_sha256(), before)
+            self.assertTrue(_objective_audit_state(store, store.generation())["pass"])
 
     def test_proven_item_requires_authoritative_source(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -60,7 +60,7 @@ def make_store(root: Path):
     store.configure_task(
         store.path.parent.name,
         "release lineage fixture",
-        ["release lineage works"],
+        ["release lineage works"], request_anchor="release lineage fixture",
         requires_validation=False,
         no_validation_reason="fixture exercises release lineage directly",
     )
@@ -443,7 +443,7 @@ class ReleaseLineageTests(unittest.TestCase):
             root = Path(tmp)
             base = init_repo(root)
             store = create_store(root)
-            store.configure_task(store.path.parent.name, "publish audit", ["ready"], requires_validation=True)
+            store.configure_task(store.path.parent.name, "publish audit", ["ready"], request_anchor="publish audit", requires_validation=True)
             store.set_meta("workspace_binding", capture_workspace_binding(root))
             capture_baseline(root, store)
             (root / "tracked.txt").write_text("target\n", encoding="utf-8")

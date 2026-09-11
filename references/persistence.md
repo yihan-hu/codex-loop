@@ -20,7 +20,7 @@ Repository continuity adds a higher-priority layer before both recovery mechanis
 
 `persistence-export --backend google_drive` creates a private temporary `state-only.json` manifest. The host may upload it to `Codex Loop/.runtime/tasks/<task-id>/`. It remains schema-whitelisted and may contain the objective, criteria, task/profile/generation metadata, repository commit/tree lineage, bounded resume metadata, and hashed external-action identity. It must not contain chain of thought, hidden instructions, credentials/tokens/cookies, raw tool transcripts, approval/session nonces, environment secrets, or raw external-action identities.
 
-A later conversation downloads the manifest, runs `persistence-validate`, then `persistence-resume-plan` and `persistence-resume`. Resume creates a new freshness domain: old PASS, validation, review, and objective-audit evidence is historical until re-proven against current reality. See `persistence-resume.md`.
+A later conversation downloads the manifest, runs `persistence-validate`, then `persistence-resume-plan` and `persistence-resume`. Current-schema state preserves the privacy-scrubbed immutable request anchor and ordered steer texts because they are task authority, while integration/validation/completion evidence becomes historical or pending. Resume creates a new freshness domain: old PASS, validation, review, steer acknowledgements, and objective-audit evidence are not fresh until re-proven against current reality. Legacy manifests that predate request-anchor storage are accepted only as historical recovery input and cannot silently promote a summarized objective into current request authority. See `persistence-resume.md`.
 
 ## Workspace Cache (`state_and_workspace` recovery)
 

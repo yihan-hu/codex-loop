@@ -21,15 +21,18 @@ python3 scripts/codex_loop.py persistence-resume --cwd REPO \
 
 ## Freshness reset
 
-Resume creates a **new task/freshness domain**. It preserves the objective, criterion definitions, profile, validation requirement, clean-process requirement, and privacy-safe external-action lineage. It does not restore current proof:
+Resume creates a **new task/freshness domain**. Current-schema manifests preserve the immutable request anchor, ordered user steer texts, working objective, criterion definitions, profile, validation requirement, clean-process requirement, and privacy-safe external-action lineage. Steer texts remain request authority but reopen as `pending` because old integration evidence cannot be fresh in the new workspace generation. It does not restore current proof:
 
 - previous criterion PASS -> new criterion `pending`;
 - previous validation -> `HISTORICAL`;
 - previous final review -> `HISTORICAL`;
 - previous objective audit -> `HISTORICAL`;
+- previous steer acknowledgement -> new steer `pending`;
 - previous capability/permission state -> re-observe.
 
 `resume_lineage` records the source manifest hash, prior task/generation, a new resume epoch, and new task identity. Current workspace facts always win.
+
+Persistence schema v3 is the first schema that carries request authority explicitly. A v1/v2 manifest may still be validated/migrated for inspection, but if it lacks an original request anchor `persistence-resume` returns `NEEDS_RECONCILIATION` without creating a task. Never substitute its stored objective summary for the missing user request. Recover the original request from an authoritative host/history source first, then start a new current task with that request as `--request-anchor`.
 
 ## Source divergence
 

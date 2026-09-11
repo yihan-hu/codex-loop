@@ -48,6 +48,10 @@ def _map_current(items: list[FileSnapshot]) -> dict[str, FileSnapshot]:
     return {item.path: item for item in items}
 
 
+def _matches_expected_surface(path: str, entry: str) -> bool:
+    return path.startswith(entry) if entry.endswith("/") else path == entry
+
+
 def changes(root: Path, store: StateStore) -> dict[str, Any]:
     root = root.resolve()
     baseline = store.baseline()
@@ -74,6 +78,15 @@ def changes(root: Path, store: StateStore) -> dict[str, Any]:
     changed_paths = set(added) | set(deleted) | set(modified)
     journaled = store.mutation_paths()
     unexpected_protected = sorted((protected & changed_paths) - journaled)
+    focus = store.working_focus()
+    expected_surface = [str(item) for item in focus.get("expected_change_surface", []) if str(item)]
+    scope_drift = []
+    if expected_surface:
+        scope_drift = sorted(
+            path
+            for path in changed_paths
+            if not any(_matches_expected_surface(path, entry) for entry in expected_surface)
+        )
 
     git_summary = {
         "is_git": bool(git_now.get("is_git")),
@@ -105,6 +118,8 @@ def changes(root: Path, store: StateStore) -> dict[str, Any]:
         "protected_paths": sorted(protected),
         "agent_owned_paths": sorted(journaled),
         "unexpected_protected_changes": unexpected_protected,
+        "expected_change_surface": expected_surface,
+        "scope_drift": scope_drift,
         "ignored_watch": store.get_meta("ignored_watch", {"watched_paths": [], "opaque_paths": []}),
         "git": git_summary,
     }

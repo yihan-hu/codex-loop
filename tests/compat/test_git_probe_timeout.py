@@ -49,7 +49,7 @@ class GitStatusFailClosedTests(unittest.TestCase):
   from codex_loop_runtime import workspace as ws
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a.txt').write_text('one')
-   store=create_store(root); store.configure_task(store.path.parent.name,'objective',[],requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation')
+   store=create_store(root); store.configure_task(store.path.parent.name,'objective',[], request_anchor='objective',requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation')
    with patch.object(ws,'git_status_porcelain_z',return_value=None):
     with self.assertRaisesRegex(RuntimeError,'safe baseline'):
      capture_baseline(root,store)
@@ -71,7 +71,7 @@ class GitRepoIdentityFailClosedTests(unittest.TestCase):
   from codex_loop_runtime import workspace as ws
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a.txt').write_text('one')
-   store=create_store(root); store.configure_task(store.path.parent.name,'objective',[],requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation')
+   store=create_store(root); store.configure_task(store.path.parent.name,'objective',[], request_anchor='objective',requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation')
    with patch.object(ws,'git_repo_probe',return_value=None):
     with self.assertRaisesRegex(RuntimeError,'safe baseline'):
      capture_baseline(root,store)
@@ -92,7 +92,7 @@ class GitIdentityProbeFailureTests(unittest.TestCase):
   from codex_loop_runtime import workspace as ws
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a').write_text('a'); subprocess.run(['git','add','a'],cwd=root,check=True)
-   store=create_store(root); store.configure_task(store.path.parent.name,'objective',[],requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation')
+   store=create_store(root); store.configure_task(store.path.parent.name,'objective',[], request_anchor='objective',requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation')
    with patch.object(ws,'_git_head_probe',return_value=(None, True)):
     with self.assertRaisesRegex(RuntimeError,'safe baseline'):
      capture_baseline(root,store)

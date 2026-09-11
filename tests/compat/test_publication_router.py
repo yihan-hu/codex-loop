@@ -49,7 +49,7 @@ def ready_store(root: Path) -> StateStore:
     store.configure_task(
         root.name,
         "publication router",
-        ["route publication"],
+        ["route publication"], request_anchor="publication router",
         requires_validation=False,
         no_validation_reason="test fixture exercises deterministic publication routing",
     )

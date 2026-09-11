@@ -18,7 +18,7 @@ class PersistenceResumeTests(unittest.TestCase):
         state.configure_task(
             "s" * 32,
             "Resume this objective safely",
-            ["Functional result", "Publication reconciled"],
+            ["Functional result", "Publication reconciled"], request_anchor="Resume this objective safely",
             profile="feature",
             requires_validation=False,
             no_validation_reason="fixture does not execute validation",
@@ -60,6 +60,29 @@ class PersistenceResumeTests(unittest.TestCase):
             self.assertEqual(resumed.validation_state_for_generation(0)["passed_count"], 0)
             self.assertEqual(resumed.get_meta("historical_recovery_evidence")["validation"], "HISTORICAL")
             self.assertEqual(resumed.get_meta("resume_lineage")["prior_generation"], 0)
+
+    def test_resume_preserves_anchor_and_reopens_steers_as_pending(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = self._source_store(root)
+            source.record_steer("preserve the public API")
+            second = source.record_steer("do not touch tokenizer")
+            source.ack_steer(second, "historical integration evidence")
+            manifest = build_state_manifest(root, root, source, repository="owner/repo")
+            result = resume_state_manifest(root, manifest, {
+                "workspace_presence": True,
+                "repository_head": "1" * 40,
+                "repository_tree": "2" * 40,
+                "external_actions": [],
+            })
+            self.assertEqual(result["status"], "RESUMED")
+            resumed = StateStore(Path(result["state"]))
+            self.assertEqual(resumed.request_anchor(), "Resume this objective safely")
+            self.assertEqual(
+                resumed.effective_request()["steers"],
+                ["preserve the public API", "do not touch tokenizer"],
+            )
+            self.assertEqual(len(resumed.pending_steers()), 2)
 
     def test_missing_source_observation_requires_reconciliation_not_divergence(self):
         with tempfile.TemporaryDirectory() as td:
@@ -181,13 +204,15 @@ class PersistenceResumeTests(unittest.TestCase):
             resumed = StateStore(Path(result["state"]))
             self.assertEqual(resumed.external_actions()[0]["state"], "outcome_unknown")
 
-    def test_v1_manifest_is_migrated_as_historical_recovery_input(self):
+    def test_v1_manifest_without_request_anchor_is_historical_but_not_promoted_to_authority(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             source = self._source_store(root)
-            v2 = build_state_manifest(root, root, source, repository="owner/repo")
-            v1 = json.loads(json.dumps(v2))
+            current = build_state_manifest(root, root, source, repository="owner/repo")
+            v1 = json.loads(json.dumps(current))
             v1["schema_version"] = 1
+            v1["task"].pop("request_anchor")
+            v1.pop("steers")
             for key in ("requires_validation", "no_validation_reason", "requires_clean_process_exit"):
                 v1["task"].pop(key)
             v1["resume"].pop("lineage_policy")
@@ -195,8 +220,18 @@ class PersistenceResumeTests(unittest.TestCase):
             v1["workspace"].pop("source_tree")
             v1.pop("historical")
             migrated = validate_state_manifest(v1)
-            self.assertEqual(migrated["schema_version"], 2)
+            self.assertEqual(migrated["schema_version"], 3)
             self.assertEqual(migrated["historical"]["freshness_on_resume"], "HISTORICAL")
+            self.assertEqual(migrated["historical"]["request_authority"], "MISSING")
+            result = resume_state_manifest(root, migrated, {
+                "workspace_presence": True,
+                "repository_head": "1" * 40,
+                "repository_tree": "2" * 40,
+                "external_actions": [],
+            })
+            self.assertEqual(result["status"], "NEEDS_RECONCILIATION")
+            self.assertFalse(result["created_task"])
+            self.assertIn("original request anchor", result["reason"])
 
     def test_missing_workspace_never_binds_recovery_state(self):
         with tempfile.TemporaryDirectory() as td:

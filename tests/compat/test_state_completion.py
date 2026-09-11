@@ -1,7 +1,7 @@
 import os, subprocess, sys, tempfile, unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'scripts'))
-from codex_loop_runtime.change_tracker import capture_baseline, sync_generation
+from codex_loop_runtime.change_tracker import capture_baseline, changes, sync_generation
 from codex_loop_runtime.completion import CompletionStatus, assess
 from codex_loop_runtime.state import create_store, open_store, root_state_dir, state_dir_for
 
@@ -10,7 +10,7 @@ def host_validation(store, argv, exit_code, *, cwd, evidence):
   return store.record_host_validation(plan['plan_id'],store.generation(),argv,exit_code,cwd=cwd,evidence=evidence)
 class CompletionTests(unittest.TestCase):
   def make(self,root,**kw):
-    s=create_store(root); s.configure_task(s.path.parent.name,'objective',kw.pop('criteria',[]),**kw); capture_baseline(root,s); return s
+    s=create_store(root); s.configure_task(s.path.parent.name,'objective',kw.pop('criteria',[]), request_anchor='objective',**kw); capture_baseline(root,s); return s
   def test_empty_criteria_becomes_objective_and_needs_evidence(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); s=self.make(root,requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation'); self.assertEqual(len(s.criteria()),1)
@@ -43,6 +43,38 @@ class CompletionTests(unittest.TestCase):
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); s=self.make(root,requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation'); s.set_criterion(0,'pass','ok'); sid=s.record_steer('do not change API'); self.assertEqual(assess(root,s).status,CompletionStatus.CONTINUE); 
       with self.assertRaises(ValueError): s.ack_steer(sid,'')
       s.ack_steer(sid,'replanned to preserve public API'); self.assertEqual(assess(root,s).status,CompletionStatus.PASS)
+  def test_request_anchor_is_distinct_immutable_authority_and_steers_are_ordered(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root=Path(tmp); s=create_store(root); s.configure_task(s.path.parent.name,'working summary',[],request_anchor='fix null handling only; do not refactor',requires_validation=False,no_validation_reason='fixture')
+      self.assertEqual(s.request_anchor(),'fix null handling only; do not refactor')
+      self.assertNotEqual(s.request_anchor(),s.get_meta('objective'))
+      first=s.record_steer('preserve the public API'); second=s.record_steer('do not touch tokenizer')
+      self.assertNotEqual(first,second)
+      self.assertEqual(s.effective_request()['steers'],['preserve the public API','do not touch tokenizer'])
+      with self.assertRaisesRegex(RuntimeError,'immutable'):
+        s.set_meta('request_anchor','replace it with a broader task')
+
+  def test_request_authority_refuses_silent_truncation(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root=Path(tmp); s=create_store(root)
+      oversized='x'*65537
+      with self.assertRaisesRegex(ValueError,'refusing to silently truncate'):
+        s.configure_task(s.path.parent.name,'working summary',[],request_anchor=oversized,requires_validation=False,no_validation_reason='fixture')
+      s.configure_task(s.path.parent.name,'working summary',[],request_anchor='authoritative request',requires_validation=False,no_validation_reason='fixture')
+      with self.assertRaisesRegex(ValueError,'refusing to silently truncate'):
+        s.record_steer(oversized)
+
+  def test_scope_drift_is_visible_but_not_a_completion_blocker(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
+      s=self.make(root,requires_validation=False,no_validation_reason='fixture')
+      s.set_working_focus('edit only the parser',non_goals=['do not refactor helpers'],expected_change_surface=['parser.py','tests/parser/'])
+      (root/'helper.py').write_text('unrelated')
+      sync_generation(root,s)
+      change_state=changes(root,s)
+      self.assertEqual(change_state['scope_drift'],['helper.py'])
+      s.set_criterion(0,'pass','requested parser behavior is already satisfied by fixture state')
+      self.assertEqual(assess(root,s).status,CompletionStatus.PASS)
   def test_readonly_profile_host_change_blocks(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a').write_text('a'); s=self.make(root,profile='code_review',requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation'); s.set_criterion(0,'pass','review complete'); (root/'a').write_text('b'); self.assertEqual(assess(root,s).status,CompletionStatus.BLOCKED)
@@ -51,7 +83,7 @@ class CompletionTests(unittest.TestCase):
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a').write_text('a'); subprocess.run(['git','add','a'],cwd=root,check=True); s=self.make(root,requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation'); s.set_criterion(0,'pass','ok'); (root/'b').write_text('b'); subprocess.run(['git','add','b'],cwd=root,check=True); self.assertEqual(assess(root,s).status,CompletionStatus.CONTINUE)
   def test_task_id_isolation_and_unknown_does_not_create(self):
     with tempfile.TemporaryDirectory() as tmp:
-      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); a=create_store(root,task_id='task_a'); a.configure_task('task_a','a',[]); b=create_store(root,task_id='task_b'); b.configure_task('task_b','b',[]); self.assertEqual(open_store(root,'task_a').get_meta('objective'),'a');
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); a=create_store(root,task_id='task_a'); a.configure_task('task_a','a',[], request_anchor='a'); b=create_store(root,task_id='task_b'); b.configure_task('task_b','b',[], request_anchor='b'); self.assertEqual(open_store(root,'task_a').get_meta('objective'),'a');
       target=root_state_dir(root)/'tasks'/'missing'; self.assertFalse(target.exists());
       with self.assertRaises(RuntimeError): state_dir_for(root,'missing',create=False)
       self.assertFalse(target.exists())
@@ -63,7 +95,7 @@ if __name__=='__main__': unittest.main()
 
 class FreshnessAndValidationIdentityTests(unittest.TestCase):
   def make(self,root,**kw):
-    s=create_store(root); s.configure_task(s.path.parent.name,'objective',kw.pop('criteria',[]),**kw); capture_baseline(root,s); return s
+    s=create_store(root); s.configure_task(s.path.parent.name,'objective',kw.pop('criteria',[]), request_anchor='objective',**kw); capture_baseline(root,s); return s
   def test_opaque_ignored_input_blocks_until_explicit_current_waiver(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)

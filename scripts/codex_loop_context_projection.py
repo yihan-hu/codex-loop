@@ -17,6 +17,32 @@ MAX_WORKING_PATHS = 24
 MAX_WORKING_REASONS = 10
 MAX_WORKING_ACTIONS = 8
 MAX_WORKING_STEERS = 8
+MAX_WORKING_REQUEST_CHARS = 12000
+MAX_WORKING_STEER_CHARS = 4096
+
+
+def _bounded_text(value: Any, limit: int) -> tuple[str, int]:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text, 0
+    return text[:limit], len(text) - limit
+
+
+def _bounded_steer_view(
+    items: list[dict[str, Any]],
+    *,
+    state: str | None = None,
+) -> tuple[list[dict[str, str]], int, int]:
+    result: list[dict[str, str]] = []
+    omitted_chars = 0
+    for item in items[:MAX_WORKING_STEERS]:
+        text, clipped = _bounded_text(item.get("text", ""), MAX_WORKING_STEER_CHARS)
+        omitted_chars += clipped
+        result.append({
+            "text": text,
+            "state": state if state is not None else str(item.get("state", "pending")),
+        })
+    return result, max(0, len(items) - len(result)), omitted_chars
 
 
 def _validation_view(state: dict[str, Any]) -> dict[str, Any]:
@@ -64,6 +90,7 @@ def collect_context(root: Path, cwd: Path, store: StateStore, *, reconcile: bool
         "instructions": instruction_entries,
         "shell": shell,
         "criteria": store.criteria(),
+        "request_steers": store.request_steers(),
         "pending_steers": store.pending_steers(),
         "integrated_steers": store.integrated_steers(),
         "stale_steers": store.stale_steers(),
@@ -119,6 +146,10 @@ def full_projection(facts: dict[str, Any]) -> dict[str, Any]:
         "task_id": store.task_id,
         "task_status": store.get_meta("task_status", "uninitialized"),
         "profile": store.get_meta("profile", "regular"),
+        "request_anchor": store.request_anchor(),
+        "effective_request": store.effective_request(),
+        "effective_request_sha256": store.effective_request_sha256(),
+        "working_focus": store.working_focus(),
         "objective": store.get_meta("objective", ""),
         "generation": facts["generation"],
         "plan_revision": store.get_meta("plan_revision", 0),
@@ -178,6 +209,8 @@ def _changed_path_view(change_state: dict[str, Any]) -> tuple[list[dict[str, Any
     protected = set(map(str, change_state.get("protected_paths", [])))
     agent_owned = set(map(str, change_state.get("agent_owned_paths", [])))
     unexpected = set(map(str, change_state.get("unexpected_protected_changes", [])))
+    drift = set(map(str, change_state.get("scope_drift", [])))
+    expected_surface = bool(change_state.get("expected_change_surface"))
     view: list[dict[str, Any]] = []
     for path in ordered[:MAX_WORKING_PATHS]:
         if path in unexpected:
@@ -190,7 +223,8 @@ def _changed_path_view(change_state: dict[str, Any]) -> tuple[list[dict[str, Any
             ownership = "user"
         else:
             ownership = "external-or-unattributed"
-        view.append({"path": path, "ownership": ownership})
+        scope = "drift" if path in drift else ("expected" if expected_surface else "unscoped")
+        view.append({"path": path, "ownership": ownership, "scope": scope})
     return view, max(0, len(ordered) - len(view))
 
 
@@ -220,6 +254,9 @@ def _guardrails(facts: dict[str, Any]) -> list[str]:
     store: StateStore = facts["store"]
     profile = str(store.get_meta("profile", "regular"))
     result: list[str] = []
+    result.append("request anchor plus ordered user steers are authoritative; objective and criteria are execution aids")
+    result.append("existing-code changes are surgical by default; do not fix unrelated bugs, broken tests, or surrounding code")
+    result.append("prefer a focused patch-sized mutation, inspect its diff, then expand only when the effective request requires it")
     binding_status = facts.get("workspace_binding", {})
     if binding_status.get("bound") and not binding_status.get("matches"):
         result.append("canonical workspace binding mismatch; do not mutate, package, or publish from this tree")
@@ -267,6 +304,12 @@ def _next_actions(facts: dict[str, Any], validation_status: str) -> list[dict[st
 
     if change_state.get("unexpected_protected_changes"):
         add("blocker", "reconcile protected user work before further mutation", "protected baseline work changed outside the runtime journal")
+    if change_state.get("scope_drift"):
+        add(
+            "review",
+            "inspect scope drift and either narrow/revert it or update working focus only when the effective request justifies the extra surface",
+            "changed paths extend beyond the current expected change surface",
+        )
     opaque = sorted(str(x) for x in change_state.get("ignored_watch", {}).get("opaque_paths", []))
     waiver = facts["store"].freshness_waiver()
     waiver_ok = bool(
@@ -291,9 +334,13 @@ def _next_actions(facts: dict[str, Any], validation_status: str) -> list[dict[st
     if pending_criteria:
         add("required", "satisfy or re-evaluate acceptance criteria: " + ", ".join(pending_criteria[:6]), "acceptance evidence is incomplete")
     if validation_status == "failing":
-        add("required", "inspect the current validation failure, fix the cause, and rerun validation", "current-generation validation is failing")
+        add(
+            "required",
+            "inspect the current validation failure against the effective request; fix only a relevant cause, otherwise record why the failure is unrelated",
+            "current-generation validation is failing",
+        )
     elif validation_status in {"missing", "stale"}:
-        add("required", "run the smallest relevant validation from the intended cwd", f"validation is {validation_status}")
+        add("required", "run the most specific relevant validation first from the intended cwd, then broaden only if useful", f"validation is {validation_status}")
     if facts["store"].unresolved_external_count() or facts["store"].unresolved_external_failure_count():
         add("required", "reconcile unresolved external-action outcomes from real host observations", "completion requires terminal external state")
     if facts["store"].running_process_count() or facts["store"].unresolved_process_failure_count():
@@ -312,14 +359,19 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
     criteria_view, criteria_truncated = _criterion_working_view(facts["criteria"], facts["generation"])
     changed_paths, paths_truncated = _changed_path_view(facts["changes"])
     validation_status = _validation_status(facts)
-    pending_steers = [
-        {"text": str(x.get("text", "")), "state": "pending"}
-        for x in facts["pending_steers"][:MAX_WORKING_STEERS]
-    ]
-    stale_steers = [
-        {"text": str(x.get("text", "")), "state": "stale"}
-        for x in facts["stale_steers"][:MAX_WORKING_STEERS]
-    ]
+    request_anchor, request_anchor_chars = _bounded_text(store.request_anchor(), MAX_WORKING_REQUEST_CHARS)
+    pending_steers, pending_steers_truncated, pending_steer_chars = _bounded_steer_view(
+        facts["pending_steers"], state="pending"
+    )
+    stale_steers, stale_steers_truncated, stale_steer_chars = _bounded_steer_view(
+        facts["stale_steers"], state="stale"
+    )
+    request_steers, request_steers_truncated, request_steer_chars = _bounded_steer_view(
+        facts["request_steers"]
+    )
+    request_authority_truncated = bool(
+        request_anchor_chars or request_steers_truncated or request_steer_chars
+    )
     reasons = list(decision.reasons)[:MAX_WORKING_REASONS]
     lifecycle = derive_capability_state(
         generation=int(facts["generation"]),
@@ -341,14 +393,29 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
     ]
     for item in criteria_view[:8]:
         evidence_refs.append({"ref": f"criterion:{item['ref']}", "inspect_with": "snapshot"})
+    next_actions = _next_actions(facts, validation_status)
+    if request_authority_truncated:
+        authority_action = {
+            "kind": "required",
+            "action": "inspect the full request authority with snapshot before further mutation",
+            "reason": "the bounded next projection omits part of the authoritative request or ordered user steers",
+        }
+        next_actions = [authority_action] + [
+            item for item in next_actions if item.get("action") != authority_action["action"]
+        ]
+        next_actions = next_actions[:MAX_WORKING_ACTIONS]
+        evidence_refs.append({"ref": "request:full", "inspect_with": "snapshot"})
     return {
-        "context_version": 1,
+        "context_version": 2,
         "task": {
             "objective": store.get_meta("objective", ""),
             "profile": store.get_meta("profile", "regular"),
             "status": store.get_meta("task_status", "uninitialized"),
         },
         "effective_spec": {
+            "request_anchor": request_anchor,
+            "request_steers": request_steers,
+            "working_focus": store.working_focus(),
             "criteria": criteria_view,
             "guardrails": _guardrails(facts),
             "user_deltas": pending_steers + stale_steers,
@@ -358,20 +425,26 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
             "hard_blocked": decision.status.value == "BLOCKED",
             "validation": validation_status,
             "changed_paths": changed_paths,
+            "scope_drift": list(facts["changes"].get("scope_drift", []))[:MAX_WORKING_PATHS],
             "change_count": len({x["path"] for x in changed_paths}) + paths_truncated,
             "completion_reasons": reasons,
             "delegation": "isolated" if facts.get("active_isolation") is not None else "main",
         },
         "lifecycle": lifecycle,
         "warnings": list(facts.get("warnings", []))[-8:],
-        "next_actions": _next_actions(facts, validation_status),
+        "next_actions": next_actions,
         "evidence_refs": evidence_refs,
         "truncated": {
             "criteria": criteria_truncated,
             "changed_paths": paths_truncated,
             "completion_reasons": max(0, len(decision.reasons) - len(reasons)),
-            "pending_steers": max(0, len(facts["pending_steers"]) - len(pending_steers)),
-            "stale_steers": max(0, len(facts["stale_steers"]) - len(stale_steers)),
+            "request_anchor_chars": request_anchor_chars,
+            "pending_steers": pending_steers_truncated,
+            "pending_steer_chars": pending_steer_chars,
+            "stale_steers": stale_steers_truncated,
+            "stale_steer_chars": stale_steer_chars,
+            "request_steers": request_steers_truncated,
+            "request_steer_chars": request_steer_chars,
         },
     }
 

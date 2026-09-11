@@ -9,10 +9,26 @@ def call(root,*args,check=True,input_bytes=None):
     p=subprocess.run(cmd,input=input_bytes,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=check)
     return json.loads(p.stdout or b'{}'),p
 class CliSmokeTests(unittest.TestCase):
+  def test_bootstrap_requires_explicit_request_anchor(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
+      out,p=call(root,'bootstrap','--objective','working summary',check=False)
+      self.assertNotEqual(p.returncode,0); self.assertEqual(out,{}); self.assertIn('--request-anchor',p.stderr.decode())
+
+  def test_focus_command_projects_one_in_progress_subgoal(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
+      call(root,'bootstrap','--objective','working summary','--request-anchor','fix parser only','--no-validation','--no-validation-reason','fixture')
+      focus,_=call(root,'focus','--subgoal','fix parser null handling','--non-goal','do not refactor tokenizer','--expected-path','parser.py')
+      self.assertEqual(focus['data']['status'],'in_progress')
+      nxt,_=call(root,'next')
+      self.assertEqual(nxt['data']['effective_spec']['request_anchor'],'fix parser only')
+      self.assertEqual(nxt['data']['effective_spec']['working_focus']['current_subgoal'],'fix parser null handling')
+
   def test_end_to_end_host_validation_gate(self):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a.txt').write_text('a')
-      b,_=call(root,'bootstrap','--objective','change a to b','--criterion','a is b'); tid=b['data']['task_id']
+      b,_=call(root,'bootstrap','--objective','change a to b', '--request-anchor', 'change a to b','--criterion','a is b'); tid=b['data']['task_id']
       h,_=call(root,'hash','--path','a.txt'); expected=h['data']['sha256']
       content=root/'payload'; content.write_text('b')
       call(root,'write','--path','a.txt','--content-file',str(content),'--expected-sha256',expected,'--allow-protected','--protected-override-reason','user explicitly requested changing preexisting content')
@@ -28,22 +44,22 @@ class CliSmokeTests(unittest.TestCase):
     with tempfile.TemporaryDirectory() as tmp:
       parent=Path(tmp); root=parent/'repo'; root.mkdir(); subprocess.run(['git','init','-q'],cwd=root,check=True); (root/'a.txt').write_text('a')
       alias=parent/'repo-alias'; alias.symlink_to(root,target_is_directory=True)
-      call(alias,'bootstrap','--objective','alias write','--criterion','a is b')
+      call(alias,'bootstrap','--objective','alias write', '--request-anchor', 'alias write','--criterion','a is b')
       h,_=call(alias,'hash','--path','a.txt'); payload=alias/'payload'; payload.write_text('b')
       call(alias,'write','--path','a.txt','--content-file',str(payload),'--expected-sha256',h['data']['sha256'],'--allow-protected','--protected-override-reason','test intentionally changes the baseline file')
       self.assertEqual((root/'a.txt').read_text(),'b')
 
   def test_unknown_exec_is_not_nested(self):
     with tempfile.TemporaryDirectory() as tmp:
-      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','inspect')
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','inspect', '--request-anchor', 'inspect')
       out,_=call(root,'exec','--','python3','-c','print(1)'); self.assertFalse(out['data']['executed']); self.assertTrue(out['data']['requires_host_visible_execution'])
   def test_validation_record_rejects_non_array(self):
     with tempfile.TemporaryDirectory() as tmp:
-      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','x')
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','x', '--request-anchor', 'x')
       out,p=call(root,'validation-record','--plan-id','fake','--command-json','"pytest"','--generation','0','--exit-code','0','--evidence','x',check=False); self.assertNotEqual(p.returncode,0); self.assertFalse(out['ok'])
   def test_host_validation_plan_cannot_be_forged_or_reused(self):
     with tempfile.TemporaryDirectory() as tmp:
-      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','plan guard')
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','plan guard', '--request-anchor', 'plan guard')
       plan,_=call(root,'validate','--debug-bookkeeping','--','pytest','-q'); gen=str(plan['data']['generation']); pid=plan['data']['plan_id']
       out,p=call(root,'validation-record','--plan-id','deadbeef','--command-json','["pytest","-q"]','--generation',gen,'--exit-code','0','--evidence','forged',check=False)
       self.assertNotEqual(p.returncode,0); self.assertIn('does not exist',out['error']['message'])
@@ -52,7 +68,7 @@ class CliSmokeTests(unittest.TestCase):
       self.assertNotEqual(p.returncode,0); self.assertIn('already been consumed',out['error']['message'])
   def test_host_validation_generation_is_cas_bound(self):
     with tempfile.TemporaryDirectory() as tmp:
-      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','validate x')
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','validate x', '--request-anchor', 'validate x')
       plan,_=call(root,'validate','--debug-bookkeeping','--','pytest','-q'); gen=str(plan['data']['generation']); pid=plan['data']['plan_id']
       (root/'changed-after-validation.txt').write_text('later')
       out,p=call(root,'validation-record','--plan-id',pid,'--command-json','["pytest","-q"]','--generation',gen,'--exit-code','0','--evidence','host-visible pytest exited 0 before later edit',check=False)
@@ -62,7 +78,7 @@ class CliSmokeTests(unittest.TestCase):
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); subprocess.run(['git','config','user.name','Test User'],cwd=root,check=True); subprocess.run(['git','config','user.email','test@example.com'],cwd=root,check=True)
       (root/'a.txt').write_text('base'); subprocess.run(['git','add','a.txt'],cwd=root,check=True); subprocess.run(['git','commit','-qm','base'],cwd=root,check=True)
       base=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(); base_tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=root,text=True).strip()
-      call(root,'bootstrap','--objective','release flow')
+      call(root,'bootstrap','--objective','release flow', '--request-anchor', 'release flow')
       binding,_=call(root,'workspace-binding'); self.assertTrue(binding['data']['matches']); self.assertEqual(binding['data']['binding']['base_commit'],base)
       (root/'a.txt').write_text('target'); subprocess.run(['git','add','a.txt'],cwd=root,check=True); subprocess.run(['git','commit','-qm','target'],cwd=root,check=True)
       plan,_=call(root,'release-plan','--artifact-name','skill.zip','--archive-prefix','codex-loop'); target=plan['data']['source']['commit']; target_tree=plan['data']['source']['tree']; self.assertEqual(plan['data']['archive']['argv'][-1],target)
@@ -76,7 +92,7 @@ class CliSmokeTests(unittest.TestCase):
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); subprocess.run(['git','config','user.name','Test User'],cwd=root,check=True); subprocess.run(['git','config','user.email','test@example.com'],cwd=root,check=True)
       (root/'a.txt').write_text('base'); subprocess.run(['git','add','a.txt'],cwd=root,check=True); subprocess.run(['git','commit','-qm','base'],cwd=root,check=True)
-      call(root,'bootstrap','--objective','prepare then publish','--criterion','source is ready','--no-validation','--no-validation-reason','fixture has no executable workload')
+      call(root,'bootstrap','--objective','prepare then publish', '--request-anchor', 'prepare then publish','--criterion','source is ready','--no-validation','--no-validation-reason','fixture has no executable workload')
       started,_=call(root,'web-publish-continuation-begin','--repository','owner/repo','--branch','main')
       self.assertTrue(started['data']['active']); self.assertTrue(started['data']['revalidation_forbidden'])
       blocked,p=call(root,'validate','--','pytest','-q',check=False)
@@ -96,7 +112,7 @@ class CliSmokeTests(unittest.TestCase):
 
   def test_repeated_validate_reuses_unconsumed_plan_and_inference_stays_unambiguous(self):
     with tempfile.TemporaryDirectory() as tmp:
-      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','deduplicated plans')
+      root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','deduplicated plans', '--request-anchor', 'deduplicated plans')
       first,_=call(root,'validate','--debug-bookkeeping','--','pytest','-q')
       second,_=call(root,'validate','--debug-bookkeeping','--','pytest','-q')
       self.assertEqual(first['data']['plan_id'],second['data']['plan_id']); self.assertFalse(first['data']['plan_reused']); self.assertTrue(second['data']['plan_reused'])

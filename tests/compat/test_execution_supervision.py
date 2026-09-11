@@ -97,7 +97,7 @@ class CompletionSeparationTests(unittest.TestCase):
         store.configure_task(
             store.path.parent.name,
             "run tests",
-            ["tests pass"],
+            ["tests pass"], request_anchor="run tests",
             profile="feature",
             requires_validation=True,
             requires_clean_process_exit=clean_exit,
