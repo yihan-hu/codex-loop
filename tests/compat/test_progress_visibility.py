@@ -164,18 +164,16 @@ class ProgressVisibilityTests(unittest.TestCase):
         self.assertIn("progress-policy", proc.stdout)
         self.assertIn("deployment-provenance-verify", proc.stdout)
 
-    def test_skill_and_docs_bind_progress_policy_to_durable_lifecycle(self):
+    def test_progress_policy_is_optional_host_adapter_not_default_workflow(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         ref = (ROOT / "references" / "progress-visibility.md").read_text(encoding="utf-8")
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("### Progress visibility", skill)
-        self.assertIn("progress-policy --lifecycle-mode durable", skill)
-        self.assertIn("Direct/trivial work remains low-noise", skill)
-        self.assertIn("~/.codex-loop/host.json", skill)
+        self.assertNotIn("### Progress visibility", skill)
+        self.assertIn("optional", skill.lower())
+        self.assertIn("host-facing behavior policy, not a second execution engine", ref)
         self.assertIn("15 seconds", ref)
         self.assertIn("3 substantive tool calls", ref)
         self.assertIn("progress-config --reset", ref)
-        self.assertIn("Adaptive progress visibility", readme)
+        self.assertIn("direct path: no periodic progress messages", ref)
 
 
 if __name__ == "__main__":

@@ -1,304 +1,164 @@
 ---
 name: codex-loop
-description: "Domain-agnostic objective lifecycle for ChatGPT across research, analysis, writing, artifacts, coding, and operations. Use automatically for non-trivial multi-step objectives and for repository/filesystem, Git/source acquisition or publication, Skill install/update/deploy, sync/transfer, Web/Local routing, or local-computer routing intent. Once selected, enter the objective lifecycle directly; use planning, validation, delegation, persistence, and managed-process features only when they are useful. Before substantive work, immediately prewarm any GitHub/Google Drive permissions that are predictably required so conversation-scoped access can be granted early. Preserve the full objective through verification and completion. Never launch Codex CLI or another model runtime."
+description: "Lightweight durable objective layer for ChatGPT. Use for repository/filesystem work, Git/source publication, Skill update/deploy, Web/Local routing, cross-tool objectives, or genuinely long multi-step work that may need resume. Prefer native Codex-style agent execution over workflow governance: keep the user objective, a thin pending/in_progress/completed plan when useful, minimal validation, and one final semantic acceptance review. Escalate to stronger review, persistence, managed processes, or external-action bookkeeping only when risk or task shape requires it. Never launch Codex CLI or another model runtime."
 ---
 
 # Codex Loop
 
-Act as the objective-lifecycle orchestrator, not a coding-only agent. Use ChatGPT and the relevant domain Skill for reasoning and domain execution, and use the bundled deterministic runtime for repeatable lifecycle/state mechanics. Keep the ChatGPT host authoritative for model sampling, actual tool dispatch, sandboxing, approvals, connectors/MCP, hidden context, and conversation persistence.
+Treat Codex Loop as a thin durability and routing layer around the host model, not as a workflow engine. Let the host model reason, inspect, edit, test, and repair naturally. Codex Loop should mainly prevent loss of the objective, unsafe routing, duplicate high-impact external actions, and unreconciled task-owned process state.
 
-Use `scripts/codex_loop.py` from the installed/bundled Codex Loop root as the stable local-runtime entry point. Resolve this path from Codex Loop itself, never from the target repository. Run bundled code directly rather than reimplementing its bookkeeping inline. Runtime state belongs in the private system temp directory, never in the repository.
+Use `scripts/codex_loop.py` from this Skill as the stable runtime entry point. Runtime state belongs in the private system temp directory, never in the target repository.
 
-## Common command intent interception
+## Default execution model
 
-Intercept these high-frequency intents **before choosing a tool, shell command, transport, or fallback**. Treat the user's verb as semantic intent, route it through Codex Loop first, then read the named reference for execution details. Do not let literal Git or filesystem wording override the deterministic Web/Local routing state.
+Use this happy path unless the task itself requires more rigor:
 
-| User wording / intent | Canonical route | Forbidden default |
-| --- | --- | --- |
-| `git clone`, `git pull`, `git fetch`, open/refresh/sync a GitHub repo | Intercept before literal execution. **Web:** call `repository-enter` first, reuse HOT/WARM state, and use the verified Web acquisition/sync path only when needed. **Local:** after explicit Local selection and route check, native Git is the canonical path for clone/fetch/pull inside the authorized task scope. | Executing literal Git before Codex Loop has resolved Web vs Local, or treating a Web-only replacement as mandatory after Local is selected |
-| `git push`, `push main`, `publish`, `send changes to GitHub` | Intercept before literal execution. **Web:** the bundled Codex Loop controller routes to verified Web publication. **Local:** the bundled controller routes to native Git plus exact remote commit/tree readback. The target repository never has to contain Codex Loop runtime files. | Unrouted `git push`, requiring an ordinary target repo to provide `publish-enter`, GitHub contents/object reconstruction, or switching modes without explicit user selection |
-| `commit and push` | Commit only in the authoritative workspace, then use the mode-selected publication path above. Local native Git is first-class once Local is explicitly selected. | Treating the phrase as permission to change workspace mode, or bypassing routing because the literal Git command is obvious |
-| `pytest`, `npm test`, build/lint/typecheck | Bind/plan the exact validation command and run it through the host-visible execution path | Treating `requires_host_visible_execution` as a capability failure |
-| save/copy/send/move a ChatGPT/Web file to Mac/local host | Use the verified Drive staging -> RDC binary bridge in `references/web-to-local-handoff.md`; the transfer request itself authorizes the narrow `rdc_transfer` | Model/Base64 relay, ad hoc text chunking, or asking for a second data-plane authorization |
-| install/update a Skill | Route `deployment_target` first. In ChatGPT Web validate the exact `skill.zip`, expose those exact bytes as a **fresh current-conversation download artifact**, then direct manual installation through `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`. | Reusing a stale/previous attachment or Library reference, synthesizing a Library deep link, inferring local installation from RDC, or claiming that returning the ZIP installed the Skill |
-| update/package **Codex Loop** | Finish the requested source update and validation, build the repository-neutral official Skill Creator `skill.zip`, copy those exact bytes to `codex-loop.zip`, then expose that exact `codex-loop.zip` as a **fresh current-conversation download artifact**. The user installs it manually through `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`. | Returning `skill.zip` directly, recompressing during the rename, reusing a stale/Library reference, synthesizing a Library deep link, or treating package creation/artifact exposure as installation |
-| open/click/use Chrome or GUI | Route `interaction_target` independently; local Chrome/macOS still requires explicit current-task computer-use authorization | Inferring Local workspace mode or local computer authorization from the interaction request |
-| any RDC filesystem/search/process/config action | Intercept into Codex Loop **before the first RDC call**. Classify it as repository work, downstream transfer, browser/GUI interaction, or narrow host-bootstrap/config access; establish the task scope once and reuse it only while route, root, action class, and authorization remain unchanged. | Calling RDC first and deciding scope afterward; scanning sibling/home folders because RDC can see them; treating host `allowedDirectories` as semantic permission |
+`execute <-> inspect/test/repair -> optional one review -> final acceptance -> done`
 
-**Intent interception is mandatory; transport substitution is mode-dependent.** A negative literal-transport rule means “route first, then use the canonical path for the selected mode,” not “stop the objective.” In Local mode the canonical path may be the literal native Git command itself. A missing specialized observation primitive is not the same as a missing canonical route: continue through modeled read-only observations within the same source authority when they can still locate or verify the canonical direct artifact. Fail closed only after those direct same-authority paths are exhausted; never invent a new transport.
+Do not create checker A/B chains, repeated fresh-PASS ceremonies, criterion-by-criterion evidence gates, or a separate outer semantic audit by default. A strong model should choose its own execution trajectory and rerun only checks plausibly affected by a repair.
 
-**RDC is never a side door around Codex Loop.** Before repository/file/search/process/browser/config work through RDC, resolve the Codex Loop route and task scope first. The host's RDC `allowedDirectories` is only a hard upper capability boundary; Codex Loop's current task scope may be narrower, and the effective permission is their intersection. Once a task is bound to a canonical worktree, sibling repositories and other folders under a broader host root are out of scope unless the user separately grants or names them for this task.
+### Final acceptance
 
-## Consumer setup and dependency disclosure
+Before finishing, do one semantic review against the actual current state:
 
-**Base use has zero external setup.** Ordinary Codex Loop use inside ChatGPT requires only the installed Skill. GitHub, Google Drive, Remote Desktop Commander (RDC), a local checkout, and access to any maintainer repository are optional capabilities, never installation prerequisites.
+1. Re-read the user's effective request, including later corrections.
+2. Inspect the final artifact/diff/state that matters.
+3. Run the minimum relevant validation that has not already been run on the current state.
+4. If a material requirement remains unsatisfied, continue working.
+5. Otherwise finish and report the important evidence and any real limitation.
 
-Treat any repository named by maintainer provenance only as release-origin evidence, never as consumer configuration. A consumer package has no repository binding. Never infer, request, or authorize a user's working repository from package provenance, a maintainer repository, memory, or another conversation; resolve the repository from the current task. Legacy provenance manifests are also provenance only and never user binding.
+The runtime `completion` command checks deterministic blockers only. It does not certify semantic correctness.
 
-Read `references/consumer-onboarding.md` when the user asks how to get started/setup Codex Loop, or when the current task first requires GitHub, Google Drive Web publication, RDC/local filesystem access, native Git, local Chrome, or macOS GUI control. Show only the smallest relevant setup tier and the exact missing prerequisites. Do not dump the full advanced setup checklist on a base consumer.
+## Thin task state
 
-For Web publication or ordinary Web -> Mac/local file transfer, disclose the one-time Google Drive staging requirement before the first such transfer: connect the Drive integration, create `ChatGPT-GitHub-Staging`, and make that folder anyone-with-link reader/viewer so an authorized downloader can fetch the staged binary. Reuse this configured staging boundary for ordinary Web -> local transfers; do not require a second transfer-specific Drive folder. If the available Drive connector cannot set public folder permissions, instruct the user to perform that one manual Drive UI step rather than pretending it was configured. Web publication additionally requires the repository's audited Actions workflow and its declared `contents: write` permission; never weaken unrelated repository protections.
+Do not bootstrap durable state merely because Codex Loop was selected. Use it when resume, long-running coordination, protected-work tracking, managed processes, publication, or external-action reconciliation will actually help.
 
+Bootstrap:
 
-### Google Drive temporary cleanup and cache lifecycle
+```bash
+python3 scripts/codex_loop.py bootstrap --cwd REPO \
+  --request-anchor 'EXACT USER REQUEST' \
+  --objective 'concise working objective' \
+  --criterion 'optional acceptance condition'
+```
 
-Codex Loop-created temporary objects are self-cleaning. Permission sentinels and publish/transfer staging objects must be deleted automatically after their exact identity has been read back and their purpose is complete. Cleanup failure is reported as `cleanup_pending`; it does not invalidate a successful primary operation.
+`request_anchor` plus ordered later `steer` entries remains the authoritative request. Objective and acceptance text are working aids, not a second specification.
 
-Do not add a global Drive-delete enable/disable switch. Safety comes from exact object identity, bounded parent scope, and provenance that the object was created by the current Codex Loop flow. This automatic cleanup authority does not extend to pre-existing user files, durable deliverables, sibling objects, or unrelated Drive content.
+### Codex-style plan
 
-Whenever Codex Loop uploads a semantically temporary/cache object to Drive, register its canonical cache folder when later TTL cleanup is needed. Exact owned cache objects that reach their TTL are cleanup-ready automatically after exact identity/parent readback; no extra LLM-review, user-confirmation, or global-delete gate is required. Temporary staging and permission sentinels are cleaned immediately when their purpose is complete.
+For genuinely multi-step work, keep only a short plan with Codex's three statuses:
 
-## Invocation and continuation
+- `pending`
+- `in_progress`
+- `completed`
 
-**Broad invocation, direct lifecycle admission.** Treat Codex Loop as a domain-agnostic lifecycle orchestrator, not a coding-only workflow. Select it implicitly whenever the user's objective plausibly contains multiple dependent steps or may need durable task state/evidence, iterative review, delegation, external-action bookkeeping, managed processes, or cross-tool coordination. This applies across research, analysis, writing, scientific work, document/slide/spreadsheet creation, operations, repository development, Git/deployment, Skill maintenance, and computer use. Do not require the user to type `@Codex Loop`, `$codex-loop`, or otherwise name the Skill.
+At most one step may be `in_progress`. Update several statuses in one call rather than recording lifecycle transitions after every action.
 
-Once selected, enter the objective lifecycle directly. Do not run a second direct-vs-durable admission classifier. Keep optional machinery lazy: planning, executable validation, delegation, persistence, external-action bookkeeping, and managed processes activate only when the objective actually needs them.
+```bash
+python3 scripts/codex_loop.py plan --cwd REPO --plan-json '[
+  {"step":"Inspect current implementation","status":"completed"},
+  {"step":"Implement minimal fix","status":"in_progress"},
+  {"step":"Run relevant tests","status":"pending"}
+]'
+```
 
-Codex Loop owns objective continuity, lifecycle state, evidence, review, and completion semantics; a matching domain Skill owns the domain method. When another Skill applies, use it inside the objective and treat its required gates, invariants, artifacts, or deliverables as completion requirements without copying its internal semantics into Codex Loop.
+Use `next` as the lightweight resume capsule. It exposes the request, plan, acceptance text, changed paths, validation state, deterministic finish blockers, and the smallest useful next action.
 
-Terse continuation requests such as `revise`, `verify`, `export`, `push`, `publish`, `sync`, `install`, `update the Skill`, `open this in Chrome`, or `click through the flow` inherit Codex Loop when the conversation context unambiguously identifies the active objective. When the active objective updates Codex Loop itself, finish the requested source work, validation, and review; publish only when the user explicitly asked to publish; then produce the validated repository-neutral official `skill.zip`, copy it byte-for-byte to `codex-loop.zip`, and expose only that exact `codex-loop.zip` as a fresh current-conversation artifact. The byte-identical renamed package plus its current host artifact reference is the terminal Codex Loop delivery. Manual installation remains outside Codex Loop and uses `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`.
+```bash
+python3 scripts/codex_loop.py next --cwd REPO
+```
 
-### Continuation policy
+On resume, inspect current repository/tool state before acting. Do not redo a completed step unless current evidence shows it is stale.
 
-Use a simple host-facing `continuation_policy`, not a second lifecycle state machine. Default to `manual`. When the user explicitly asks to keep going until a concrete terminal condition (for example “keep going until this works”, “iterate until all tests pass”, or “don’t stop until done”), use `until_terminal`.
+### User steering
 
-Under `until_terminal`, keep the effective request intact: the immutable request anchor plus ordered later user steers remain authoritative even when the working objective or focus changes. `CONTINUE` means choose the smallest useful next action and continue automatically; `PASS` and genuine `BLOCKED` are terminal. Do not ask whether to continue when a safe authorized next action is already available. Re-observe and change strategy instead of blindly repeating a no-progress action. This policy never implies background or asynchronous execution.
+Record a material user correction once:
 
-Use the upstream Codex goal-continuation semantics as the behavioral reference rather than inventing an independent retry/continuation protocol.
+```bash
+python3 scripts/codex_loop.py steer --cwd REPO --text 'new user instruction'
+```
 
-## Deterministic session routing plane
+A steer is immediately authoritative. Do not require a separate steer acknowledgement or re-ack it after every workspace mutation.
 
-Treat Web-vs-Local routing as machine state, not model memory. Before the first repository/filesystem, browser/computer, Skill installation/deployment, Git publication, transfer, or synchronization host action in a conversation, initialize the lightweight routing plane with `route-init`. In ChatGPT Web, pass `--host-surface chatgpt_web`. The command creates a conversation-scoped private JSON file under the system temp directory and returns an opaque routing session id. Keep the id only in current-conversation context; never write it to Git, Host Profile, user memory, a package, or cross-conversation persistence.
+## Validation
 
-The routing file owns three independent axes:
+Run tests/build/lint/typecheck through the normal host-visible execution path when they are relevant. Start with the smallest check that exercises the changed behavior; broaden only when useful.
 
-- `workspace_mode`: `web` or `local`; every new routing session starts `web`.
-- `interaction_target`: `none`, `cloud_browser`, `local_chrome`, or `local_mac_gui`; every new routing session starts `none`.
-- `deployment_target`: unresolved, `artifact_only`, `chatgpt_web_skill`, or `local_codex_skill`; this is independent of where source development happens.
+Durable `completion` does not require a recorded validation by default. Add `--require-validation` at bootstrap only when a current passing check must be a deterministic finish condition (publication paths impose their own validation requirement).
 
-For **any** Skill or Skill installation package, never infer `deployment_target=local_codex_skill` from RDC availability, a remembered Mac checkout, an installed local Skill, prior conversation history, or the absence of a Web install API. A generic `install` in a routing session bound to `host_surface=chatgpt_web` resolves deterministically to the native `chatgpt_web_skill` target unless the current conversation explicitly selected a different deployment target. Selecting `workspace_mode=local`, `interaction_target=local_chrome|local_mac_gui`, or a non-native deployment target requires `route-transition` with **host-observed current-user selection** plus audit evidence. Pass `--current-user-selection-observed` only when the explicit selection is present in the current conversation/task. The evidence string is audit data only: project context, memory, a prior conversation, RDC availability, or model-authored prose can never authorize a transition by themselves. The runtime stores only a SHA-256 digest of the evidence, not raw conversation text.
+`validate` may return a host-visible execution request. After the host runs the command, record the observed result directly; there is no plan-id handshake.
 
-Before each routing-sensitive host action, call `route-check` with the intended action. It fails closed when state and action conflict. Current-task authorizations remain separate inputs: the routing file records *where* an action should go, but never turns a prior target selection into permission to mutate local source, use the local computer, access a granted workspace, or install a Skill locally. A direct/trivial request such as `install` still uses this lightweight routing plane even when durable lifecycle bootstrap is unnecessary.
+```bash
+python3 scripts/codex_loop.py validate --cwd REPO -- pytest tests/test_target.py
+python3 scripts/codex_loop.py validation-record --cwd REPO \
+  --command-json '["pytest","tests/test_target.py"]' \
+  --exit-code 0 --evidence 'targeted test passed'
+```
 
-Read `references/interaction-routing.md` for the state machine and `references/runtime-protocol.md` for exact commands.
+A repair invalidates confidence only where it can matter. Rerun affected validation; do not mechanically rerun every prior checker. Existing repository tests are the default regression mechanism.
 
-## Development location selection
+## Review policy
 
-This section applies only when the active objective includes repository/filesystem work, Skill source maintenance, packaging/release, Git, synchronization, or another development-location-sensitive action. For non-repository research, analysis, writing, scientific, artifact, or operations objectives, skip `workspace_mode` and Web-vs-Local development machinery; use the relevant domain Skill and host tools while Codex Loop continues to manage objective continuity, evidence, and completion.
+Use no separate review for trivial or well-covered changes when direct inspection plus tests is sufficient.
 
-For repository or Skill-development work, a new ChatGPT Web conversation starts in **Web mode** and uses the current ChatGPT/web workspace until the user explicitly selects Local. Web and Local are both first-class once selected; the default is a routing starting point, not a preference that can override an explicit Local choice. Do not inspect, mutate, or synchronize any RDC-backed local workspace merely because Remote Desktop Commander is available.
+Use one Codex-style review for large, unfamiliar, weakly tested, cross-module, or materially risky changes. Read `references/codex-review.md`, review the actual diff/change against the base/commit/current changes, and return only discrete actionable findings that the author would really fix. Ignore nits and speculative breakage. If there are no substantive findings, stop; do not create a second reviewer just to obtain another PASS.
 
-**Mandatory pre-tool routing gate.** Before the first repository/filesystem observation or discovery, workspace mutation, packaging/release action, Git action, Skill install/deploy action, or transfer/synchronization action, require an initialized routing session and run `route-check` for the intended action. The routing file is authoritative over contextual guesses. Until a `route-transition` with explicit Local-selection evidence changes it, `workspace_mode=web` and the current ChatGPT workspace is the only mutable source baseline. RDC/computer-use availability does not select Local mode. Resolve browser/computer interaction and Skill deployment independently via `interaction_target` and `deployment_target` as defined in `references/interaction-routing.md`.
+After a real finding is repaired, rerun only affected tests/checks. Escalate to independent review or broader regression only when the repair/risk justifies it.
 
-**Fail-closed Web rule.** RDC availability, the existence of a local checkout, an installed Skill directory, or the absence of an obvious Web-mode mutation/publish bridge is not evidence that Local mode has been selected. If a required Web-mode capability is genuinely unavailable, preserve the Web workspace, stop at that boundary, and report the missing capability. Do not search, inspect, mutate, or synchronize a local checkout as a workaround.
+## Deterministic completion blockers
 
-**Repository continuity gate — HOT before WARM before COLD.** For repository development, do not treat every new turn/conversation or missing remembered path as a new source-acquisition event. After routing, call the bundled Codex Loop controller's `repository-enter` against the current workspace before `source-acquisition-plan`; the target repository does not need Codex Loop runtime files. `HOT_REUSE` is the normal path: a real Git worktree with the expected canonical origin/branch, complete history, and valid lineage remains authoritative and continues directly to edit/commit/publish. The returned `source_provenance` is path-independent; the returned `workspace_lease` is path-bound. A path change or lost workspace invalidates only the lease. If HOT is unavailable, prefer `WARM_RESTORE_WORKSPACE_CACHE` for an explicitly preserved in-progress worktree, otherwise `WARM_RESTORE_PUBLISHED_SOURCE` for the exact fresh-restored published revision. Restore/verify into a fresh Git workspace and rerun `repository-enter`. Only `COLD_ACQUIRE_REQUIRED` may enter the canonical source-acquisition flow. A moved remote HEAD is synchronization state: fetch only missing Git objects, then fast-forward/rebase/merge as needed; never reinterpret ordinary remote movement as source-identity invalidation or a reason to re-download the repository. Read `references/repository-continuity.md`.
+`completion` may block/continue for concrete machine-observable conditions such as:
 
-**Web source acquisition gate.** Only after `repository-enter` returns `COLD_ACQUIRE_REQUIRED`, read `references/source-acquisition.md` before transfer. Normal source inputs are user upload, Google Drive, or GitHub. Prefer the audited `.github/workflows/workspace-download.yml` exact commit-bound **Git bundle**; if that exact revision was produced by verified Web publish, a receipt-bound self-contained published-source bundle with exact hash/commit/tree + fresh-restore proof is equally direct. A specialized connector query that cannot observe the relevant workflow trigger is only an observability gap: continue through compatible same-authority read-only GitHub Actions-run observations and inspect receipt-bound `published-source-<run_id>` artifacts before declaring the direct path unavailable. `source-acquisition-plan` returns `CONTINUE_DISCOVERY` until that same-authority direct-artifact discovery has actually been exhausted; only then pass `--same-authority-artifact-discovery-exhausted` and allow the normal fail-closed result. Materialize any selected direct bundle into a fresh **real Git repository**, set the canonical GitHub origin/target branch, then run `source-acquisition-verify` for exact HEAD commit/tree verification plus complete non-shallow history **before durable bootstrap or source mutation**. The durable workspace binding must continue to descend from that bootstrap base; Web publish/bundle planning rechecks the binding and fails closed if the same `.git` was rewritten onto disconnected history. Incremental replay, per-file reconstruction, installed-Skill bootstrap, model relay, and Local mode remain non-automatic fallbacks. Installed-Skill bootstrap is default-off and a named fallback is enabled only after host-observed **explicit current-turn user authorization** for that current task. Any identity mismatch stops rather than triggering slow recovery.
+- unfinished plan steps when a plan exists;
+- missing current validation when validation was explicitly required for the durable task;
+- unresolved task-owned processes;
+- unresolved consequential external actions;
+- protected pre-existing user work modified unexpectedly;
+- read-only task profiles that observed mutation;
+- canonical workspace binding mismatch.
 
-**Local mode is a first-class execution mode after explicit user selection.** Repository routing is host-platform-neutral: an RDC-backed macOS or Windows Git workspace may be selected explicitly as the local baseline. Once selected, native local tools such as Git are canonical rather than fallback transports. macOS is the end-to-end verified reference host; Windows Local mode remains best-effort/beta where platform-specific mechanics differ. Do not select Local merely because RDC or a checkout exists, and never switch from Web to Local to escape a Web blocker without explicit user selection. Read `references/local-mode-setup.md` for platform details.
+Do not use `completion` to repeat the model's semantic acceptance review.
 
-**Web -> local/Mac synchronization is a downstream transfer, not a workspace-mode switch.** This is the ordinary Web -> local/Mac file transfer default. Whenever the user asks to save/synchronize the current Web repository to a Mac or other RDC host, call `web-local-sync-plan` and use its only supported data plane: exact self-contained Git bundle -> Google Drive binary staging via `file_uri` -> RDC download to the explicitly authorized local destination -> local size/SHA-256 + `git bundle verify` -> exact staging cleanup. The transfer request itself authorizes this narrow data-plane choice; do **not** ask for a second Drive/data-plane/computer-use authorization. Keep `workspace_mode=web` after the copy. `rdc_transfer` is distinct from `rdc_repository`: the former authorizes a bounded downstream binary destination, while the latter still requires explicit Local-mode selection before the local repository may become a development baseline. Do not substitute GitHub Actions artifacts, repository archives, GitHub contents/object relay, an unmodeled direct bridge, model-carried Base64/chunks, or source regeneration. Read `references/web-to-local-handoff.md`.
+## Checkpoints and persistence
 
-**Controller-owned publication routing.** For every `push`/`publish` intent, the **bundled Codex Loop controller** resolves `workspace_mode` before transport and may call its own `publish-enter ... --controller-abi 1` helper. Pass the target repository through `--cwd`; never resolve this helper relative to the target repository and never require an ordinary repository to contain Codex Loop. The controller selects Web exact-identity publication or Local native Git from routing state and returns a `mode_protocol_reference`. Execute only the selected mode's modeled actions. A missing Codex Loop runtime inside the target repository is not a publication blocker. Read `references/publication-router.md`.
+Use ordinary host conversation continuity first. Use `checkpoint` only before a genuinely long/noisy transition or when durable re-entry matters. Keep checkpoints small: request, plan, key findings, next action, and current machine-observable state.
 
-In Web mode, the bundled controller freezes/reuses publish-only continuation evidence and runs the Web planner against the current Web workspace state. FAST_PUBLISH remains the default and `FULL_VERIFIED_PUBLISH` remains explicit-only. Successful Web publication preserves exact Git identity: remote commit == audited source commit and remote tree == audited source tree. GitHub does **not** need to contain the audited source commit object before publication; the verified Git bundle is the mechanism that introduces that exact object to the importer. This absence must never be treated as a blocker or trigger for transport discovery. Read `references/web-mode-publish.md` for the controller-selected Web protocol.
+Cross-conversation persistence remains opt-in. Read `references/persistence.md` and `references/persistence-resume.md` only when the user explicitly needs the objective/workspace to survive conversation loss.
 
-Enter **local mode** only when the user explicitly asks to make a persistent local/PiWork Git checkout the repository-development baseline. A request to use Remote Desktop Commander, Chrome, computer use, or native macOS interaction by itself does **not** enter Local mode. A generic request such as `push` also does not silently migrate a conversation that is still in Web mode. Once Local mode has been selected for repository development, later repository tasks in the same conversation inherit the baseline unless the user explicitly switches back to Web mode. **Local mode is routing state, not write consent:** every task that would edit, create, delete, overwrite, reformat, or otherwise mutate local source files requires explicit current-task local-source-mutation authorization. Prior Local-mode selection, prior local edits, RDC availability, or a request to push existing work does not supply that authorization.
+## Repository and host routing
 
-Development location is conversation-scoped, not a permanent cross-conversation preference. A new conversation resets to web mode. Within the current conversation, keep local mode active across later repository tasks once selected, while each durable runtime task still binds independently to its own canonical Git worktree under the resolved local root.
+Routing is one of the few places where deterministic governance is worth keeping because it controls real side effects.
 
-When Local mode is selected, resolve the primary local root from the user's current-conversation selection and host authorization. Reuse it for later repository tasks in the same conversation. Prefer a registered `development_root` alias (for example `piwork`) when one has been configured; the unified private Host Profile at `~/.codex-loop/host.json` may name `workspace.default_local_workspace`, while legacy `default_local_workspace`/`default_local_root` are migration inputs only. The Host Profile may be read at any time for non-sensitive global preferences, but reading a workspace alias never activates Local mode, resolves a filesystem path, or grants access; local workspace resolution begins only after explicit Local-development intent. Persistent path knowledge never selects Local mode by itself. If the root remains unresolved or is not authorized by RDC, fail closed and ask once for the exact root. Read `references/host-profile.md`, `references/local-mode-setup.md`, and `references/workspace-registry.md` before the first repository-affecting local filesystem operation in a conversation.
+Before repository/filesystem mutation, Git publication, local computer use, Skill deployment, or Web/Local transfer, resolve the intended host path. In ChatGPT Web, Web is the default workspace until the user explicitly selects Local. Local selection does not itself grant source mutation or computer use.
 
-### Known workspace registry and session grants
+For detailed routes, load only the relevant reference:
 
-Persistent workspace identity and ephemeral access authorization are separate. `~/.codex-loop/workspace-registry.json` stores only normalized alias -> canonical absolute path + `repository`/`development_root` kind. A registered workspace is **KNOWN, not GRANTED**. The registry must never store trust/authorization fields, and knowing an alias must never activate Local mode, computer use, or filesystem access.
+- repository reuse/acquisition: `references/repository-continuity.md`, then `references/source-acquisition.md` only if cold acquisition is required;
+- Web/Local routing: `references/interaction-routing.md`;
+- publication: `references/publication-router.md`, then the selected `references/web-mode-publish.md` or `references/release-lineage.md`;
+- Web -> local transfer: `references/web-to-local-handoff.md`;
+- workspace grants: `references/workspace-registry.md`;
+- local execution/computer boundary: `references/remote-desktop-boundary.md`;
+- Skill packaging/deployment: `references/skill-deployment.md` and `references/deployment-provenance.md`.
 
-A registered workspace becomes **GRANTED** only after explicit user path authorization in the current conversation, such as “Give EpiAgent path permission.” Requests such as “modify EpiAgent”, “look at EpiAgent”, or “you know the EpiAgent path” are not grants. If the alias is known but not granted, ask only for current-conversation permission; do not ask the user to repeat the stored absolute path.
+Keep routing checks at the action boundary. Do not force unrelated reasoning/edit/test steps through routing state.
 
-Record observed authorization with `workspace-grant --current-user-authorization-observed --authorization-evidence ...`. Evidence alone cannot mint a grant; the observation flag may be passed only after explicit current-conversation user authorization is actually observed. The first grant returns an opaque conversation session nonce. Keep that nonce only in the current conversation context and pass it to later `workspace-grants`/`workspace-resolve` calls; never persist it in repository files, host config, registry, user memory, or another cross-conversation store. A new conversation has no prior nonce, so its grants reset even though registry knowledge persists. Registry updates fingerprint-invalidate older grants rather than transferring them to a new path. The grant command records an already-observed user path authorization; it must never be invoked unless explicit user authorization has already been observed.
+## External actions and safety
 
-Before any RDC filesystem action on a registered workspace, resolve it with the current session nonce and only host-observed authorized roots, then require access. `REGISTERED + GRANTED THIS CONVERSATION + HOST/RDC AUTHORIZED = ACCESSIBLE`; host/RDC denial always wins. Resolve real paths and reject missing paths, changed symlink targets, parent/sibling grant inference, or whole-home/disk discovery.
+For consequential non-idempotent external actions, keep `planned -> dispatched -> terminal_success|terminal_failure|outcome_unknown` reconciliation. Never blindly retry `outcome_unknown`; inspect external reality first.
 
-For Local mode, reason about `Primary Local Root + Session Granted Roots = Effective Local Roots`. Multiple effective roots may be accessible, but each durable task remains **BOUND** to exactly one canonical Git working tree through the existing workspace binding. `KNOWN != GRANTED`, `GRANTED != BOUND`, and `KNOWN != BOUND`.
+Sandboxing, approvals, connector authentication, and actual tool dispatch remain host-owned. Put governance effort at these side-effect boundaries rather than constraining model reasoning.
 
-## Capability and permission preflight
+For interactive/task-owned processes, use bounded timeouts, keep processes observable/terminable, and clean them up before completion. Read `references/execution-supervision.md` only when process lifecycle is relevant.
 
-At Skill admission, if the explicit request already makes GitHub and/or Google Drive use predictable, run the bounded permission smoke at the front of the flow before repository acquisition, durable bootstrap, or substantive observation. Resolve only the minimum routing needed to choose the representative probe. If the need becomes known only later, prewarm it immediately when discovered. This permission preparation is distinct from the final semantic change review near completion. Read `references/capability-preflight.md` when the task may require RDC, GitHub, Google Drive, local Chrome/computer use, macOS GUI permissions, or another host integration. For User Chrome Browser tasks, also read `references/browser-control-recovery.md`; for native macOS GUI computer use, read `references/local-mac-gui.md`.
+## Optional capabilities
 
-When the bundled runtime is available, call `permission-preflight-plan` as soon as the required GitHub/Drive capability and its relevant route are known, before other substantive work. The plan writes no permission state. Execute every required probe through the **real host path**: connector/tool discovery, schema availability, a connection boolean, or prose from an earlier turn is not permission-smoke evidence. A live probe must be bounded and representative of every later host write class. For Web-mode publication the common host-permission set is `github_push` + `google_drive_write`; Web `github_push` requires live push-capable repository permission readback, an unreferenced fixed empty-blob write, **and** an idempotent same-SHA `update_ref` on the exact target branch with `force=false`, so both Git-object write and persistent-ref write approval boundaries are crossed before work begins without moving source or the branch. For Local native-Git publication prefer host-visible `git push --dry-run`; for Drive write, create/read/delete only a uniquely named non-sensitive sentinel owned by the preflight. The push-triggered import workflow is a runtime dependency, not a host Actions-write API call: prove it after the request push by observing the matching workflow run/receipt and exact remote commit/tree. If a host has no safe representative probe for one of the required write classes, report that class as not prewarmed rather than inventing a mutating test.
+Base use has zero external setup. A consumer package has no repository binding. GitHub, Google Drive, Remote Desktop Commander, local workspaces, and browser/GUI adapters are optional; read `references/consumer-onboarding.md` only when one of those integrations is actually needed.
 
-For GitHub Actions, request a write-scoped permission probe only when the planned host path will actually dispatch or rerun Actions. Use only an audited workflow/job that cannot mutate source or refs; in the Codex Loop repository `Workspace Download` is safe for that purpose while `Workspace Import` is not. Do not require an Actions write probe merely because a push-triggered importer will execute, and never manufacture a source mutation just to trigger approval.
+Delegation, persistence, managed process sessions, publication adapters, workspace cache, model relay, and GUI/browser routing are optional. Activate them only for tasks that actually need them; their existence must not add steps to the normal happy path.
 
-Batch predictable missing connection/setup requests up front when the host supports it, then continue automatically after they are satisfied. Reuse live, still-valid host observations during the current task/session instead of interrupting the user for the same permission repeatedly. Request only capabilities actually needed by the reviewed workflow.
+## Skill maintenance and packaging
 
-Preflight is **early permission discovery**, not authorization. It never bypasses host-enforced per-action approval, sandboxing, branch/ruleset enforcement, or high-impact-action confirmation. Persist only non-sensitive preferences/locators in the private Host Profile described by `references/host-profile.md`; credentials, observed capabilities, approvals, grants, and session state remain host-owned. A profile preference or successful smoke probe never proves permanent authorization.
+When maintaining Codex Loop itself, update `ARCHITECTURE.md` with any architecture change. Prefer upstream Codex semantics over local governance abstractions. `references/source-map.yaml` records upstream-derived/local surfaces; run source-fidelity checks only when mapped upstream resources or mappings actually change.
 
-**Explicit local-source-mutation authorization gate.** In Local mode, before the first source-content mutation in each task, require an explicit current-task instruction to modify the local repository, such as “fix this locally,” “modify the PiWork checkout,” or “update the local Codex Loop and push.” Do not infer write consent from Local mode persisting from an earlier task, RDC availability, earlier local edits, a read-only local inspection request, synchronization intent, or a generic `push`. A push may publish already-existing audited local commits/changes when otherwise authorized, but it must not silently create or change source content. Keep this authorization task-scoped; do not carry it into a later task.
-
-**Browser target resolution.** Read `references/interaction-routing.md` and `references/host-profile.md` before Web interaction that may need browser execution. Resolve in this order: explicit user target -> task hard requirement -> Host Profile preference -> built-in default. The built-in/default preference is `cloud_browser`. Cloud Browser unavailability must never silently activate Local Chrome; `local_chrome` remains an explicitly authorized user-session adapter, independent from `workspace_mode`.
-
-**Explicit computer-use authorization gate.** Before the first `local_chrome` or `local_mac_gui` interaction action, require explicit user authorization for computer use in the current task. A direct instruction such as “use my local Chrome to verify this flow” qualifies. RDC/Chrome availability, prior computer use, a persisted capability, or the agent's belief that browser interaction would be helpful does not qualify. Once explicitly authorized, low-risk interaction within the stated task scope may continue without re-asking for every click/tab action, while any host-required sensitive-action confirmation still applies. Read `references/interaction-routing.md` for the exact scope.
-
-**Browser Control evidence gate.** Do not infer Browser Control from successful RDC/AppleScript/GUI automation. A `local_chrome` Browser task requires a supported Browser/Chrome executor attached to the current conversation. If the Chrome extension/native host is healthy but that executor is absent, report `SESSION_BROWSER_CAPABILITY_MISSING`; do not repair Chrome again, attach to internal sockets, hand-create the native-host manifest, or silently fall back to AppleScript.
-
-## Lifecycle admission
-
-**Skill admission is the lifecycle admission.** Once Codex Loop has been selected by the host Skill router, do not run a second direct-vs-durable classifier. Start the objective lifecycle immediately.
-
-Keep optional capabilities lazy: planning only for meaningfully multi-step/ambiguous work; executable validation only when useful; delegation only when used; persistence only when explicitly needed; managed-process bookkeeping only when a real managed process exists. Do not create state merely to prove that the task deserved Codex Loop.
-
-`next` may project currently relevant obligations from authoritative runtime facts, but it must not create a second mutable planning or capability truth source.
-
-### Progress visibility
-
-For multi-step/durable objectives, actively increase user-visible progress by default so the Web experience does not appear stalled. For multi-step objectives, read `references/progress-visibility.md` and, when useful, consult `progress-policy --lifecycle-mode durable`. The default durable policy is enhanced: provide a concise upfront plan when useful, then surface substantive progress after whichever comes first, approximately 15 seconds or 3 substantive tool calls, with immediate updates for material findings/blockers/state changes when enabled. Direct/trivial work remains low-noise and must not gain periodic status chatter.
-
-Progress cadence is host-facing guidance rather than a local timer: ChatGPT remains authoritative for message timing and actual tool dispatch. Keep updates concise and informative (what changed, what was learned, what is next), never dump tool-by-tool logs, hidden reasoning, secrets, or repetitive status. User overrides live only in the private host-local `~/.codex-loop/host.json` `progress_visibility` node; never commit or package that file. If progress configuration is unavailable or invalid, fall back to the enhanced defaults and continue the task rather than blocking execution.
-
-### Upstream completion fidelity
-
-Before deciding that a durable task is complete, use the exact OpenAI Codex goal continuation resource in `references/upstream-codex-goal-continuation.md`, especially its `Completion audit` section. Read `references/upstream-adaptation.md` for provenance and the thin host adapter. Prefer direct upstream semantics when the host exposes an equivalent primitive; otherwise adapt only the interface needed by this runtime. Do not add domain-specific dependency registries or handshakes to Codex Loop.
-
-## Core loop
-
-1. **Permission prewarm first.** As soon as the request makes GitHub and/or Google Drive use predictable, resolve only the routing needed to choose the representative probe, call `permission-preflight-plan`, and execute the live probes before repository acquisition, durable bootstrap, source mutation, or long-running work. Batch any host permission/setup prompts so the user can grant conversation-scoped access once. This does not persist permission truth or waive later host-enforced approval.
-2. **Bootstrap when state is useful.** Codex Loop admission already selected the lifecycle. Resolve/materialize the workspace, copy the authoritative host-visible user request into the immutable `request_anchor` without paraphrasing it, derive a concise working `objective` plus concrete acceptance criteria, then run `bootstrap` when repository/durable state is needed. If the active task already has later user corrections before bootstrap, record them as ordered `steer` entries immediately after bootstrap rather than folding them into the working objective. The anchor plus ordered user steers is task authority; objective/criteria are execution aids and must never silently broaden or replace it. If the original request is unavailable after context/history loss, recover it from an authoritative host source or stop for reconciliation; never reconstruct it from an objective summary. Do not run a second lifecycle admission classifier. The runtime binds the new task as the workspace's active task; ordinary task-scoped commands inherit that binding, while explicit `--task-id` remains available for disambiguation/debugging. Call `next` for the bounded working set and `instructions`/`snapshot` only when deeper drill-down is needed.
-3. **Orient the current edit.** For non-trivial repository work, keep one current `in_progress` focus with `focus`: the smallest useful subgoal, explicit non-goals when they prevent likely overreach, and the expected change surface when reasonably knowable. This is model-visible working memory, not a mutation authorization or completion gate. Re-anchor it to the effective request when evidence or a user steer changes the plan.
-4. **Observe.** Start from `next`, then inspect only the relevant code, config, tests, failures, call sites, Git state, and evidence references. Prefer repository evidence over assumptions and drill down instead of loading full runtime state repeatedly.
-5. **Act surgically.** Take the smallest coherent action that advances the current focus. In an existing codebase, do exactly the requested work: do not refactor, rename, reorganize, fix unrelated bugs, or repair unrelated broken tests unless the effective request requires it. Prefer the host's native `apply_patch`/patch-sized edit primitive when available; otherwise use the narrowest guarded write against a known preimage. Immediately inspect the resulting diff before widening the change surface. Keep arbitrary shell/Git/build/test commands host-visible; the local process layer intentionally runs only a tiny deterministic allowlist.
-6. **Integrate and re-anchor.** Treat every tool result, failure, external action, user steer, and workspace mutation as new evidence. Refresh `snapshot`/`changes` after host-side mutations. If changed paths fall outside the current expected change surface, treat `scope_drift` as a review signal: justify the extra surface from the effective request and update focus, or narrow/revert the accidental change. Scope drift itself is not a hard blocker.
-7. **Validate from specific to broader.** Start with the smallest validation that directly exercises the changed/requested behavior, then broaden only when useful for regression confidence. Call `validate -- <argv...>` from the intended working directory. If it returns `requires_host_visible_execution`, run that exact validation through the host tool path from the same `--cwd`, then record the result with `validation-record --command-json ... --exit-code ... --evidence ...`. A later observable mutation makes older validation stale. A failing broader check does not create new task scope: after actual semantic review, `validation-resolve` may classify a failure `unrelated_to_request` with concise observable evidence, while completion still requires a current authoritative passing validation when validation is required. Opaque ignored inputs block completion unless an explicit current-generation freshness waiver records the uncertainty.
-8. **Final change review.** Review scope fidelity first: every substantive final hunk must be justified by the request anchor or a later user steer. Remove accidental improvements even when they look beneficial. Then review behavioral correctness, regression risk, and repository quality. Review is semantic work, not a runtime receipt; do not record a `reviewed=true` bookkeeping flag.
-9. **Evidence.** Mark criteria `pass` only with concise observable evidence. Criterion-pass and steer-ack evidence is generation-bound: any later workspace mutation makes it stale and it must be re-evaluated. Record important host/external actions when their outcome matters to completion.
-10. **Objective completion audit.** Before calling `completion`, independently re-derive concrete requirements from the effective request: immutable request anchor plus ordered later user steers, together with any referenced current files, plans, specifications, issues, or instructions. Do not promote a working objective/criterion summary into task authority. For every explicit requirement, numbered item, named artifact, command, test, gate, invariant, and deliverable, identify authoritative current-state evidence and classify it as `proven`, `contradicted`, `incomplete`, `weak`, or `missing`. Record the full requirement-by-requirement result with `objective-audit`. Treat uncertain or indirect evidence as not achieved. If the request names another Skill or workflow, require authoritative evidence for that workflow's required end state without importing its domain logic into Codex Loop.
-11. **Gate.** Run `completion`. Continue on `CONTINUE`; report a genuine blocker on `BLOCKED`; finish only on `PASS`. Working criteria cannot substitute for a fresh passing objective audit.
-
-Read `references/runtime-protocol.md` for exact command forms, `references/agent-loop.md` for recovery behavior, and `references/completion-criteria.md` before finalizing substantial work.
-
-## Context projection
-
-Treat runtime state as the durable source of truth and model context as a bounded working set. `next` is the primary agent-facing projection: it exposes request authority, ordered user steers, the single current working focus, criteria, current freshness/completion reasons, changed-path ownership plus scope-drift summaries, and a small set of legal next actions without surfacing task ids, generations, validation plan ids, or evidence-generation bookkeeping. `snapshot` remains the full debug/audit view. Checkpoints and world-state views must derive from the same context projector rather than rebuilding competing summaries.
-
-Use the pattern **summary -> evidence reference -> drill down**. Hide execution mechanics, not task semantics: code/test results, user constraints, acceptance conditions, failures, and meaningful diffs still belong in model context when they affect the next decision. Do not implement a second token/context manager in the local runtime; ChatGPT host context remains authoritative.
-
-## Canonical workspace and release lineage
-
-Bind every durable task to the workspace implied by the current conversation's development mode. In web mode, the current ChatGPT workspace is the mutable development baseline. When local mode is active for the conversation, bind each task to the selected Git working tree under `LOCAL_ROOT` and treat that working tree as the only mutable local baseline. **Installed Skill directories are deployment state and are default-off as source acquisition.** Never inspect/copy an installed Skill automatically because it is convenient, current, or another source path is blocked. Only when the user explicitly authorizes the installed copy as source in the current conversation may it be copied read-only into a fresh workspace under `references/source-acquisition.md`; verify deployment provenance when available, require fresh exact remote equality before calling it current/latest, label an explicitly accepted older revision `historical_explicitly_accepted`, and label provenance gaps honestly rather than inventing freshness. Never edit the installed directory in place or continue consulting it as competing authority. Copied `final`/`publish` folders, release staging, downloaded artifacts, and unpacked releases remain transport/release material rather than development baselines. For concurrent local tasks on one repository, use separate Git branches/worktrees that share repository history rather than full-source copies.
-
-Only when Local mode is active for repository development, treat the resolved `LOCAL_ROOT` as the persistent repository filesystem boundary when RDC actually authorizes it. All repository discovery, cloning, worktrees, source edits, tests, builds, packaging, release artifacts, receipts, scratch files, and terminal/Git operations must remain under that root unless the user explicitly grants a narrower-purpose temporary root outside it for the current task. A task still binds to one canonical Git working tree inside `LOCAL_ROOT`; root authorization does not make sibling repositories interchangeable source baselines. Treat every location outside the authorized roots as forbidden for repository work by default; never search the whole disk or home directory to discover a repo, never read credentials directly, and never follow symlinks/path traversal outside the allowlist. Interaction-only RDC use follows the separate `local_chrome`/`local_mac_gui` boundary and must not touch the local checkout while `workspace_mode=web`. Read `references/remote-desktop-boundary.md` before the first RDC filesystem or computer-use action.
-
-When the conversation is still in Web mode and the task includes GitHub publication, read `references/web-mode-publish.md` before the first external write. Keep source Git objects out of GitHub connector/object payloads: the connector may bootstrap the small trusted import workflow and create the minimal import-request JSON, but the audited Git bundle itself must move through the verified binary staging provider.
-
-For repeated small Web-mode publication cycles, the bundled controller's `publish-enter` is the mandatory performance and routing gate. It begins/reuses the publish-only continuation, then calls the Web planner against the current Web workspace state. Do not call low-level `web-publish-continuation-begin` / `web-publish-plan` directly from normal model control unless debugging the router itself. Reuse fresh exact-scope permission observations, validation, and matching bundle receipts exactly as the returned planner requests. If `.github/workflows/**` changes, obey the returned `FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED` path. Intermediate fix -> push -> inspect cycles remain source-only work: do not rebuild the official `skill.zip` or its byte-identical `codex-loop.zip` chat-download copy until source publication itself is complete.
-
-When Local mode is active for the current conversation and the task includes packaging or publishing, read `references/release-lineage.md`. Do not enter Local solely because a Web conversation says `push`; explicit Local selection remains required. For an ordinary Local source-only push, validate/review and commit once, observe/fetch the remote, then use the bundled controller's Local publication path: native Git from the bound worktree plus exact remote commit/tree readback. The target repo does not need `scripts/codex_loop.py`. Only when the user also asks to package/release/install/deploy should release artifacts enter the flow. Native Git failure remains fail-closed; never switch to connector source upload, model-carried relay, copied trees, or force-push around lineage checks.
-
-After a verified Local-mode push, generate the existing opt-in synchronization offer with `python3 scripts/codex_loop.py workspace-sync-offer --repository OWNER/REPO --commit FULL_SHA`. A source push does not automatically sync the repository back into ChatGPT.
-
-Treat source publication, Skill packaging, and ChatGPT deployment as separate evidence stages. Read `references/skill-deployment.md` whenever a task installs/updates any Skill or Skill installation package, moves artifacts between ChatGPT and the local host, or raises a synchronization question. In Web mode, keep the current ChatGPT workspace as the task source baseline; return downloadable artifacts normally, and when GitHub publication is requested use the verified `references/web-mode-publish.md` path without migrating the task to Local mode. In local mode, keep the canonical Git repository under `LOCAL_ROOT` as source of truth and GitHub as the durable remote. Treat `skill.zip` as a release artifact and the installed ChatGPT Skill as a deployed copy in either mode. When packaging Codex Loop, read `references/deployment-provenance.md`: ordinary consumer ZIPs use the repository-neutral `consumer` distribution profile and bind only the runtime file manifest; explicit maintainer packages may additionally carry exact repository/commit/tree provenance marked `provenance_only`. The build-generated manifest is never committed, and package SHA remains external receipt evidence.
-
-**Codex Loop manual-install packaging invariant.** When Codex Loop source is updated, produce the validated repository-neutral official `skill.zip`, copy those exact bytes to a file named `codex-loop.zip`, verify both SHA-256 values are identical, and expose only that exact `codex-loop.zip` through the host's **fresh current-conversation artifact/file mechanism**. If publication was requested, prove `SOURCE_PUSHED` first and then package the updated workspace. Do not recompress or otherwise transform the ZIP during the rename. Do not construct, infer, or reuse a Library URL/reference for delivery. Package bytes, artifact exposure, and product installation are separate boundaries: after the fresh artifact is exposed, direct the user to `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`. Manual installation is a separate user action outside Codex Loop and is not lifecycle state.
-
-## Delegation fallback
-
-When a workflow requests a subagent or delegated reviewer/researcher/tester, prefer a native host subagent only when the host actually provides one. If native delegated execution is unavailable, do not stop the task or ask for confirmation solely because of that limitation. Enter a logical isolated task instead, record requested versus actual capabilities, emit one concise degradation warning, and continue the workflow. Read `references/delegation.md` before using delegation.
-
-Logical isolation is behavioral, not physical: prior parent reasoning is treated as untrusted unless explicitly projected, the worker re-observes repository/tool evidence, and the result returns as bounded structured evidence. Never describe logical isolation as a fresh physical model context, independent model instance, parallel/background model execution, or independent security boundary. Delegated results are evidence, not truth, and never auto-pass acceptance criteria. Capability degradation is a warning dimension, not a completion blocker.
-
-The MVP supports one active read-only isolation per task with `isolate-enter`, `isolate-status`, `isolate-finish`, and `isolate-abort`. If nested/parallel/background delegation is requested but unavailable, flatten or serialize it at the host orchestration layer and record the appropriate warning rather than inventing nested local model runtimes.
-
-## Task profiles
-
-Use the narrowest matching profile at bootstrap:
-
-- `bug_fix`, `test_repair`, `ci_repair`: reproduce when practical, make the smallest fix, then validate the failing path.
-- `feature`: derive acceptance criteria, follow existing architecture, implement, and validate a real path.
-- `refactor`: preserve behavior and minimize unrelated churn.
-- `code_review`, `investigation`: read-only. Any workspace change blocks completion.
-- `command_only`: local writes are forbidden; do not expand a requested command into unrelated edits.
-- `review_fix`, `regular`: ordinary repository mutation workflow.
-
-## Local execution boundary
-
-The local runtime may manage deterministic primitives such as `pwd`, `true`, `false`, bounded `echo`/`printf`/`sleep`, and stdin-only filters. Shell wrappers, arbitrary executables, filesystem-reading commands, package managers, compilers, test runners, Git operations other than a pure version query, network actions, and unknown/opaque commands stay host-visible.
-
-Never route a command through the local helper to avoid host approval or sandboxing. A local `dangerous`, `opaque`, or `unknown` classification is not authorization; use the normal host tool path.
-
-Independent read-only host observations may run in parallel when they do not share mutable state. Serialize workspace mutations, Git mutations, process-control operations, and actions whose outcome affects the next step.
-
-### Host/RDC execution safety
-
-Apply these rules to every external or RDC-launched command, including validation and helper work; they are execution requirements, not optional cleanup advice.
-
-1. Interactive commands must remain foreground/task-owned; do not detach them from the controlling terminal/session.
-2. Every external command must have an explicit finite timeout. If an input prompt appears unexpectedly, output repeats without progress, or no progress is observed, terminate the task-owned process/process group immediately on detection rather than waiting indefinitely.
-3. Bound **what Codex Loop writes**, not how much free disk happens to exist. A task-owned log, temporary file, or otherwise unbounded generated file defaults to a **1 GB** ceiling. For a user-requested artifact that legitimately needs to be larger, establish a finite task-specific cap before starting the writer. Prefer the command/tool's native size, rotation, or retention limit. Otherwise identify the exact task-owned output path(s), keep the producing process observable and terminable, monitor growth while it runs, and terminate it when the cap is reached. Do not launch an unbounded file writer through an execution mode that cannot be stopped at the cap; never use a minimum-free-disk threshold as an admission gate.
-4. Prefer the command/tool's own size/rotation/retention limit when available. If the host cannot observe a potentially unbounded task-owned output path and no native size bound exists, do not start that writer without another finite bound.
-5. For DOCX ZIP-level diagnosis or repair, run `unzip -t` first. Never automatically run `zip -FF` on a DOCX; if integrity fails, stop and use an explicitly reviewed recovery on a copy.
-6. Before task completion, inspect and clean up task-owned residual processes and temporary files. A process whose ownership/termination is unresolved prevents completion.
-7. `nohup`, `disown`, shell backgrounding, daemonization, or any child intended to survive task completion is forbidden unless the user explicitly authorizes persistent background execution for this task.
-
-Read `references/execution-supervision.md` for the single execution policy. Do not create a second lifecycle or seven independent gates for these rules.
-
-## Guarded writes and user work
-
-Treat baseline uncommitted/staged/untracked work as protected. For an existing file, obtain its latest SHA with `hash`, then pass `--expected-sha256` to `write`. The writer uses commit-time atomic compare-exchange where the platform/filesystem can provide it, refuses symlink parents/special files, preserves a displaced user preimage if rollback itself fails, and caps local payloads at 16 MiB. If atomic CAS cannot be guaranteed, keep the write host-visible rather than weakening the guarantee.
-
-Do not reset, clean, restore, checkout, broadly reformat, or overwrite unrelated work. `--allow-protected` is exceptional: pair it with `--protected-override-reason`, use it only when the requested change truly requires modifying an already-modified user file, and inspect the preexisting content first. The runtime records the reason on that mutation.
-
-Git commands remain host-visible. Observe actual Git state and judge it against the user objective; do not maintain a second `git-authorize` bookkeeping permission model.
-
-## Host-observed validation and execution outcomes
-
-For ordinary tests/builds/linters:
-
-1. Run `validate -- <exact argv...>` and consume its `execution_policy`.
-2. Run the exact command through the host tool path from the returned cwd. Observe workload completion separately from process termination/cleanup when the host exposes that distinction.
-3. Record either a rich `ExecutionObservation` with `validation-record --workload-status ... --workload-evidence-kind ... --process-status ... --cleanup-status ...`, or use `--exit-code` only as the compatibility path when the host observed an ordinary terminal process exit.
-
-Read `references/execution-supervision.md` before reasoning about a command that appears workload-complete but remains alive. Authoritative workload completion and process termination are independent execution facts. Absence of an exit code must not erase an authoritative workload result. Progress-only output such as `100%` must never establish workload success. `framework_authoritative` evidence requires a registered parser/adapter; `explicit_protocol` evidence requires capture-layer token/nonce verification. Generic execution-lifecycle pathology belongs in the execution supervisor rather than agent-invented forced-exit wrappers.
-
-The runtime resolves the unique current unconsumed validation plan and then uses the same one-time plan/generation/cwd/exact-argv checks as before. If no unique matching plan exists, recording fails closed. `validate --debug-bookkeeping` and explicit `--plan-id`/`--generation` remain available for compatibility tests and low-level audit/debugging only. If the workspace changed between planning and recording, the record is rejected as stale. A failing validation from any generation may be marked `unrelated_to_request` only after the model actually inspects its relevance to the effective request and records concise observable evidence. That disposition is bound to the current effective-request hash, so a later user steer makes the old relevance judgment stale and the failure blocking again until it is re-evaluated. The disposition cannot be applied to a passing validation and never substitutes for the required passing validation. A teardown stall is normally a warning after authoritative workload PASS and successful cleanup, but it remains completion-relevant when the effective request explicitly requires clean process exit (`bootstrap --require-clean-process-exit`).
-
-## Interactive/background processes
-
-Use one-shot execution by default. Start the model-free helper service only for a real session:
-
-`service-start -> spawn -> poll/stdin/interrupt/terminate -> service-stop`
-
-The helper is task-scoped, token-authenticated, single-owner, limited to 64 active processes, and uses bounded model-visible output and bounded private transcripts. Managed interactive/background sessions are enabled only where the local runtime can provide faithful process-group/interrupt semantics; on Windows, keep session execution host-visible. Do not leave unnecessary processes running; unresolved running, orphaned, or failed process state blocks completion. Resolve an orphaned/failed record only with host-observed evidence.
-
-## User steering, cancellation, and checkpoints
-
-When the user changes requirements mid-task, record the change with `steer`. The steer immediately joins the ordered effective request and changes its request hash even before integration is acknowledged. Re-anchor the current `focus`, then `steer-ack` only with evidence showing how the new constraint was integrated. Steer acknowledgements are generation-bound: after a later workspace mutation they become stale and may be re-acked only after re-evaluation. Pending or stale steers block completion, but their text never stops being request authority merely because integration evidence is stale.
-
-On cancellation, use `cancel`; stop new mutations and do not automatically revert workspace changes. The runtime closes only external actions that are still `planned` (never dispatched) as resolved `cancelled before dispatch`; actions already `dispatched` or `outcome_unknown` must be reconciled from real external observations before cleanup. After cancellation, allow only observation/cleanup and terminal-outcome reconciliation, never new progress work. Use `checkpoint` before long/noisy transitions. `checkpoint-restore` reconciles current workspace/instruction state; current facts override stale checkpoint assumptions.
-
-### Optional cross-conversation persistence
-
-Cross-conversation persistence is **off by default**. When the user explicitly enables it or requires a Web objective/workspace to survive conversation loss, read `references/persistence.md` and `references/persistence-resume.md`. Keep `state_only` lifecycle recovery separate from the explicit `Workspace Cache` artifact class. `persistence-export --backend google_drive` creates the small schema-whitelisted state manifest; `workspace-cache-create` creates a private immutable Git/worktree capsule governed by the registered **3-day automatic cleanup** policy preserving exact HEAD commit/tree plus staged, unstaged, and non-ignored untracked state. Drive authentication and all connector I/O remain host-owned. Never persist OAuth material, cookies, approval/session tokens, hidden instructions, chain of thought, raw tool transcripts, environment secrets, ignored build caches, `.git/config`, hooks, or credentials. Drive is recovery transport, not a second mutable truth source.
-
-Resume is deterministic rather than model reconstruction: `persistence-resume-plan` identifies source/workspace/external facts that must be re-observed, then `persistence-resume` reconciles those observations into a **new task/freshness domain**. Previous criterion PASS becomes pending; previous validation/objective-audit evidence becomes `HISTORICAL`. Source divergence is explicit, and a previously dispatched or `outcome_unknown` non-idempotent external action must be reconciled from current external reality before any retry. Current workspace/tool/external observations always win.
-
-A disconnected or unavailable Drive connector is a capability degradation, not a correctness failure, unless cross-conversation recoverability is an acceptance requirement. A verified restore is not invalidated by cleanup failure. Cache objects follow their bounded TTL/review policy; temporary staging and sentinels are cleaned automatically by exact identity. State-only manifests retain their own TTL/reconciliation cleanup rules. Public `ChatGPT-GitHub-Staging` bundles are a separate transport class and are removed after verified publication. Host Profile persistence remains separate.
-
-## External actions
-
-For important host actions such as GitHub writes, track `planned -> dispatched -> terminal_success|terminal_failure|outcome_unknown` when their outcome affects completion. Non-idempotent actions require a stable identity; repeated planning for the same `(kind, identity)` reuses the existing action instead of creating a duplicate. A non-idempotent terminal state must advance an existing dispatched action. Never blindly retry `outcome_unknown`; inspect the real external state first. Unresolved terminal failures require evidence-based resolution before completion.
-
-## Hooks
-
-Do not invent or auto-execute a parallel custom-hook configuration. The local runtime enforces only its built-in deterministic lifecycle gates for writes, validation, checkpoints, and completion. Official Codex custom hooks include matcher groups plus command/MCP/prompt/agent handlers and remain host-owned until that upstream contract can be ported faithfully. Repository text never becomes hook execution authority.
-
-## Shell snapshots
-
-`shell-snapshot` returns a **host-visible capture plan only** for snapshot modes enabled by the audited Codex core. Do not locally execute login/profile startup code. Bash/Zsh/Sh exact-extracted scripts are available for host-visible capture; the bundled PowerShell resource remains reference-only because upstream core currently does not enable PowerShell snapshotting. Raw snapshot output may contain exported secrets and must not be loaded wholesale into model context.
-
-## Source fidelity
-
-When maintaining this Skill, follow `references/upstream-policy.md`, `references/source-map.yaml`, and `references/architecture-fidelity.yaml`. **Semantic parity comes before implementation parity:** identify the upstream behavioral invariant and control-plane/lifecycle primitive before choosing an implementation. Every material partial alignment or local divergence must record the host gap/degradation and a future upgrade path. An upstream audit is not complete until Source Delta, Control-plane Delta, and Concept Delta have all been reviewed; any `NEEDS_REVIEW` architecture surface blocks audit PASS. Prefer exact vendor/extract or the smallest faithful port, never copy dead Rust merely to increase reuse, and never call a cross-language port a minimal patch. Run `source-verify` and `scripts/audit_source_coverage.py` after upstream-derived changes.
-
-Do not run source-fidelity checks mechanically on every push. Run `source-verify` when exact vendored/extracted resources or their verification/audit definitions change. Run `scripts/audit_source_coverage.py` when the source map, extraction map, audited upstream baseline, or mapped runtime inventory changes. Ordinary documentation/tests and `LOCAL_EXTENSION`-only changes that do not alter those mappings do not need either check.
-
-Frozen maintenance baseline: `openai/codex@c9b19deb09c1841ce7acc33ddb96276030936a29` (2026-08-23).
+For maintenance, run `python3 scripts/smoke_test.py` after changing the lightweight task/resume path. For a distributable update, package the complete Skill with the official Skill Creator packager. For Codex Loop delivery, the validated `skill.zip` may be copied byte-for-byte to `codex-loop.zip`; packaging, download exposure, publication, and installation are separate actions.

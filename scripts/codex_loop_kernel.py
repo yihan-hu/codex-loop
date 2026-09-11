@@ -103,14 +103,9 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
     try:
         store.configure_task(
             task_id, args.objective, args.criterion or [], request_anchor=args.request_anchor, profile=args.profile,
-            requires_validation=not args.no_validation,
-            no_validation_reason=args.no_validation_reason,
+            requires_validation=args.require_validation,
             requires_clean_process_exit=args.require_clean_process_exit,
         )
-        # New CLI-bootstrapped tasks adopt the upstream Codex goal completion-audit
-        # contract. Legacy/direct StateStore fixtures remain readable and do not
-        # acquire this obligation retroactively.
-        store.set_meta("requires_objective_completion_audit", True)
         store.set_meta("workspace_binding", capture_workspace_binding(root))
         count = capture_baseline(root, store)
         set_active_task(root, task_id)
@@ -170,16 +165,13 @@ def cmd_validate(args: argparse.Namespace) -> None:
     safety = assess_command(argv)
     if safety.classification.value != "safe_known":
         sync_generation(root, store)
-        plan = store.create_validation_plan(store.generation(), argv, cwd=cwd_path)
         emit_ok({
             "executed": False,
             "requires_host_visible_execution": True,
             "safety": safety,
             "identity": identify(argv, cwd_path),
             "cwd": str(cwd_path),
-            "generation": store.generation(),
-            "plan_id": plan["plan_id"],
-            "next": "run the exact validation through the host tool, then use validation-record with this one-time plan-id, the same generation/cwd/command, exit code, and concise observable evidence",
+            "next": "run the exact validation through the host tool, then record the observed result with validation-record",
         })
         return
     result = validate(root, cwd_path, store, argv, timeout=args.timeout)
@@ -193,22 +185,10 @@ def cmd_validation_record(args: argparse.Namespace) -> None:
     parsed = json.loads(args.command_json)
     if not (isinstance(parsed, list) and parsed and all(isinstance(x, str) for x in parsed)):
         raise ValueError("--command-json must be a non-empty JSON array of strings")
-    current_generation = store.generation()
-    if int(args.generation) != current_generation:
-        raise RuntimeError(
-            f"host validation is stale: observed generation {int(args.generation)} but current generation is {current_generation}; rerun validation"
-        )
-    validation_id = store.record_host_validation(
-        args.plan_id, current_generation, parsed, int(args.exit_code), cwd=cwd_path, evidence=args.evidence,
+    validation_id = store.record_observed_validation(
+        parsed, int(args.exit_code), cwd=cwd_path, evidence=args.evidence,
     )
-    emit_ok({"validation_id": validation_id, "generation": current_generation, "cwd": str(cwd_path), "exit_code": int(args.exit_code)})
-
-
-def cmd_validation_resolve(args: argparse.Namespace) -> None:
-    _cwd_path, _root_path, store = _store(args)
-    store.ensure_active()
-    store.resolve_validation(args.validation_id, "unrelated_to_request", args.evidence)
-    emit_ok({"validation_id": args.validation_id, "disposition": "unrelated_to_request"})
+    emit_ok({"validation_id": validation_id, "generation": store.generation(), "cwd": str(cwd_path), "exit_code": int(args.exit_code)})
 
 
 def _read_local_content_file(root: Path, store, raw: str) -> bytes:
@@ -266,11 +246,12 @@ def cmd_changes(args: argparse.Namespace) -> None:
     emit_ok(result)
 
 
-def cmd_criterion(args: argparse.Namespace) -> None:
+def cmd_plan(args: argparse.Namespace) -> None:
     _cwd_path, _root_path, store = _store(args)
-    store.ensure_active()
-    store.set_criterion(args.index, args.status, args.evidence)
-    emit_ok(store.criteria())
+    items = json.loads(args.plan_json)
+    if not isinstance(items, list):
+        raise ValueError("--plan-json must be a JSON array")
+    emit_ok({"plan": store.set_plan(items)})
 
 
 def cmd_steer(args: argparse.Namespace) -> None:
@@ -282,23 +263,6 @@ def cmd_steer(args: argparse.Namespace) -> None:
         "plan_revision": store.get_meta("plan_revision", 0),
         "effective_request_sha256": store.effective_request_sha256(),
     })
-
-
-def cmd_steer_ack(args: argparse.Namespace) -> None:
-    _cwd_path, _root_path, store = _store(args)
-    store.ensure_active()
-    store.ack_steer(args.steer_id, args.evidence)
-    emit_ok({"steer_id": args.steer_id, "state": "acked"})
-
-
-def cmd_focus(args: argparse.Namespace) -> None:
-    _cwd_path, _root_path, store = _store(args)
-    focus = store.set_working_focus(
-        args.subgoal,
-        non_goals=args.non_goal or [],
-        expected_change_surface=args.expected_path or [],
-    )
-    emit_ok(focus)
 
 
 def cmd_external(args: argparse.Namespace) -> None:
@@ -530,15 +494,6 @@ def cmd_completion(args: argparse.Namespace) -> None:
     emit_ok(assess_completion(root, store))
 
 
-def cmd_freshness_waiver(args: argparse.Namespace) -> None:
-    _cwd_path, root, store = _store(args)
-    store.ensure_active()
-    sync_generation(root, store)
-    opaque = sorted(str(x) for x in changes(root, store).get("ignored_watch", {}).get("opaque_paths", []))
-    waiver = store.set_freshness_waiver(opaque, args.reason)
-    emit_ok(waiver)
-
-
 def cmd_cancel(args: argparse.Namespace) -> None:
     _cwd_path, root, store = _store(args)
     store.ensure_active()
@@ -670,23 +625,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex_loop.py")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--request-anchor", required=True); p.add_argument("--objective", required=True); p.add_argument("--criterion", action="append"); p.add_argument("--profile", default="regular"); p.add_argument("--no-validation", action="store_true"); p.add_argument("--no-validation-reason"); p.add_argument("--require-clean-process-exit", action="store_true"); p.set_defaults(func=cmd_bootstrap)
+    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--request-anchor", required=True); p.add_argument("--objective", required=True); p.add_argument("--criterion", action="append"); p.add_argument("--profile", default="regular"); p.add_argument("--require-validation", action="store_true"); p.add_argument("--require-clean-process-exit", action="store_true"); p.set_defaults(func=cmd_bootstrap)
     for name, func in [("snapshot", cmd_snapshot), ("instructions", cmd_instructions), ("changes", cmd_changes), ("completion", cmd_completion), ("checkpoint-restore", cmd_checkpoint_restore), ("service-start", cmd_service_start), ("service-stop", cmd_service_stop), ("shell-snapshot", cmd_shell_snapshot), ("cleanup", cmd_cleanup)]:
         p = sub.add_parser(name); _add_scope(p); p.set_defaults(func=func)
         if name == "instructions": p.add_argument("--fallback", action="append")
     p = sub.add_parser("command-check"); p.add_argument("--cwd"); p.add_argument("command", nargs=argparse.REMAINDER); p.set_defaults(func=cmd_command_check)
     for name, func in [("exec", cmd_exec), ("validate", cmd_validate), ("spawn", cmd_spawn)]:
         p = sub.add_parser(name); _add_scope(p); p.add_argument("--timeout", type=float); p.add_argument("command", nargs=argparse.REMAINDER); p.set_defaults(func=func)
-    p = sub.add_parser("validation-record"); _add_scope(p); p.add_argument("--plan-id", required=True); p.add_argument("--command-json", required=True); p.add_argument("--generation", required=True, type=int); p.add_argument("--exit-code", required=True, type=int); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_validation_record)
-    p = sub.add_parser("validation-resolve"); _add_scope(p); p.add_argument("--validation-id", type=int, required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_validation_resolve)
-    p = sub.add_parser("freshness-waiver"); _add_scope(p); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_freshness_waiver)
+    p = sub.add_parser("validation-record"); _add_scope(p); p.add_argument("--command-json", required=True); p.add_argument("--exit-code", required=True, type=int); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_validation_record)
     p = sub.add_parser("external-resolve-failure"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_external_resolve_failure)
     p = sub.add_parser("write"); _add_scope(p); p.add_argument("--path", required=True); p.add_argument("--content-file"); p.add_argument("--expected-sha256"); p.add_argument("--allow-protected", action="store_true"); p.add_argument("--protected-override-reason"); p.set_defaults(func=cmd_write)
     p = sub.add_parser("hash"); _add_scope(p); p.add_argument("--path", required=True); p.set_defaults(func=cmd_hash)
-    p = sub.add_parser("criterion"); _add_scope(p); p.add_argument("--index", type=int, required=True); p.add_argument("--status", choices=["pending","pass","fail","blocked"], required=True); p.add_argument("--evidence"); p.set_defaults(func=cmd_criterion)
+    p = sub.add_parser("plan"); _add_scope(p); p.add_argument("--plan-json", required=True); p.set_defaults(func=cmd_plan)
     p = sub.add_parser("steer"); _add_scope(p); p.add_argument("--text", required=True); p.set_defaults(func=cmd_steer)
-    p = sub.add_parser("steer-ack"); _add_scope(p); p.add_argument("--steer-id", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_steer_ack)
-    p = sub.add_parser("focus"); _add_scope(p); p.add_argument("--subgoal", required=True); p.add_argument("--non-goal", action="append"); p.add_argument("--expected-path", action="append"); p.set_defaults(func=cmd_focus)
     p = sub.add_parser("external"); _add_scope(p); p.add_argument("--kind", required=True); p.add_argument("--state", required=True, choices=["planned","dispatched","terminal_success","terminal_failure","outcome_unknown","cancelled_before_dispatch"]); p.add_argument("--identity"); p.add_argument("--action-class", default="recheckable", choices=["read_only","recheckable","external_non_idempotent"]); p.add_argument("--action-id"); p.add_argument("--details-json"); p.set_defaults(func=cmd_external)
     p = sub.add_parser("workspace-binding"); _add_scope(p); p.set_defaults(func=cmd_workspace_binding)
     p = sub.add_parser("release-plan"); _add_scope(p); p.add_argument("--artifact-name", required=True); p.add_argument("--archive-prefix"); p.set_defaults(func=cmd_release_plan)

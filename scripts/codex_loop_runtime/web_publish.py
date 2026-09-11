@@ -96,8 +96,6 @@ def _workflow_control_plane_updates(root: Path, base: str, head: str) -> list[di
 
 def _validation_fresh(store: Any) -> tuple[bool, dict[str, Any]]:
     generation = store.generation()
-    if not bool(store.get_meta("requires_validation", True)):
-        return True, {"generation": generation, "reason": "task explicitly does not require validation"}
     state = store.validation_state_for_generation(generation)
     ok = (
         int(state.get("passed_count", 0)) >= 1

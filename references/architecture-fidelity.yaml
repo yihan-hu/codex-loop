@@ -41,9 +41,9 @@
         "ToolLifecycleContributor",
         "TokenUsageContributor"
       ],
-      "status": "PARTIAL",
-      "divergence": "ChatGPT Skills do not expose Codex's native thread/turn lifecycle contributor API.",
-      "upgrade_path": "Project Codex Loop events from authoritative runtime state and replace host-gap adapters when equivalent lifecycle hooks become available."
+      "status": "NOT_APPLICABLE",
+      "divergence": "Codex Loop intentionally no longer mirrors a thread/turn lifecycle contributor graph for ordinary task execution; the host model owns the agent loop.",
+      "upgrade_path": "None unless a concrete host-side lifecycle need appears."
     },
     {
       "id": "execution_lifetime_separation",
@@ -158,9 +158,9 @@
       "required_patterns": [
         "InProgress"
       ],
-      "status": "PARTIAL",
-      "divergence": "Codex Loop does not clone the native update_plan tool/runtime. It projects one current in-progress working focus from private task state, with optional non-goals and expected change surface.",
-      "upgrade_path": "Use a native host plan/current-step primitive when it can preserve one authoritative in-progress focus without creating a second planning truth source."
+      "status": "ALIGNED",
+      "divergence": "Codex Loop now uses a thin Codex-style plan with pending/in_progress/completed statuses and at most one in_progress step; it is execution memory rather than a semantic gate.",
+      "upgrade_path": "Use a native host update_plan primitive directly when exposed; otherwise keep this local representation thin."
     },
     {
       "id": "coding_precision_policy",

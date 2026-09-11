@@ -20,7 +20,7 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("force-with-lease", web_publish)
         self.assertIn("publish-enter", web_publish)
         self.assertIn("references/publication-router.md", skill)
-        self.assertIn("GitHub does **not** need to contain the audited source commit object", skill)
+        self.assertIn("GitHub not already containing the audited source commit object is not a blocker", web_publish)
 
     def test_web_publish_models_workflow_control_plane_refresh_before_import(self):
         web_publish = (ROOT / "references" / "web-mode-publish.md").read_text()
@@ -28,7 +28,7 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED", web_publish)
         self.assertIn("GitHub Connector", web_publish)
         self.assertIn("Workspace Download", web_publish)
-        self.assertIn("FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED", skill)
+        self.assertIn("references/web-mode-publish.md", skill)
 
     def test_local_mode_remains_native_git_only(self):
         skill = (ROOT / "SKILL.md").read_text()
@@ -38,7 +38,7 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("GitHub connector/object-API source upload is not a supported fallback", release)
         self.assertIn("This path is Web mode only", web_publish)
         self.assertIn("RDC + native Git", web_publish)
-        self.assertIn("Local mode", skill)
+        self.assertIn("explicitly selects Local", skill)
 
     def test_import_workflow_binds_and_verifies_git_bundle(self):
         workflow = (ROOT / ".github" / "workflows" / "workspace-import.yml").read_text()
@@ -99,7 +99,7 @@ class WebPublishContractTests(unittest.TestCase):
         description_line = next(line for line in skill.splitlines() if line.startswith("description: "))
         description = description_line.removeprefix("description: ").strip().strip(chr(34))
         self.assertLessEqual(len(description), 1024)
-        self.assertIn("Git/deployment", description)
+        self.assertIn("Git/source publication", description)
         self.assertIn("Web/Local routing", description)
 
     def test_public_docs_explain_web_publish_prerequisites(self):

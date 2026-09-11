@@ -34,23 +34,18 @@ class SemanticCompatibilityRoutingTests(unittest.TestCase):
         self.assertIn("canonical Web publication path itself", publish)
         self.assertIn("published_tree == audited source_tree", publish)
 
-    def test_skill_entrypoint_intercepts_high_frequency_literal_commands_before_tool_choice(self):
+    def test_skill_keeps_intent_translation_in_routing_reference(self):
         skill = (ROOT / "SKILL.md").read_text()
-        self.assertIn("Common command intent interception", skill)
-        self.assertIn("before choosing a tool, shell command, transport, or fallback", skill)
-        self.assertIn("`git clone`, `git pull`, `git fetch`", skill)
-        self.assertIn("call `repository-enter` first", skill)
-        self.assertIn("Intent interception is mandatory", skill)
-        self.assertIn("`git push`, `push main`, `publish`", skill)
-        self.assertIn("Intercept before literal execution", skill)
-        self.assertIn("Local native Git is first-class", skill)
-        self.assertIn("target repository never has to contain Codex Loop runtime files", skill)
-        self.assertIn("any RDC filesystem/search/process/config action", skill)
-        self.assertIn("Drive staging -> RDC", skill)
-        self.assertIn("update/package **Codex Loop**", skill)
-        self.assertIn("official Skill Creator `skill.zip`", skill)
-        self.assertIn("expose only that exact `codex-loop.zip`", skill)
-        self.assertIn("Manual installation", skill)
+        routing = (ROOT / "references" / "interaction-routing.md").read_text()
+        self.assertIn("references/interaction-routing.md", skill)
+        self.assertIn("Keep routing checks at the action boundary", skill)
+        self.assertNotIn("Common command intent interception", skill)
+        self.assertIn("`git clone`, `git pull`, `git fetch`", routing)
+        self.assertIn("`git push`", routing)
+        self.assertIn("intercept before literal Git", routing)
+        self.assertIn("Ordinary target repositories never need to contain Codex Loop runtime files", routing)
+        self.assertIn("Drive staging -> RDC", routing)
+        self.assertIn("validated `skill.zip`", routing)
 
 
     def test_equivalence_rule_does_not_weaken_unique_capability_boundaries(self):

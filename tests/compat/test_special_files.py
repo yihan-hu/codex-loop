@@ -9,6 +9,6 @@ class SpecialFiles(unittest.TestCase):
  @unittest.skipIf(os.name=='nt','FIFO Unix')
  def test_fifo_not_read_or_replaced(self):
   with tempfile.TemporaryDirectory() as tmp:
-   root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); fifo=root/'pipe'; os.mkfifo(fifo); self.assertIsNone(hash_file(fifo)); self.assertNotIn('pipe',[x.path for x in snapshot_files(root)]); s=create_store(root); s.configure_task(s.path.parent.name,'x',[], request_anchor='x',requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation'); capture_baseline(root,s)
+   root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); fifo=root/'pipe'; os.mkfifo(fifo); self.assertIsNone(hash_file(fifo)); self.assertNotIn('pipe',[x.path for x in snapshot_files(root)]); s=create_store(root); s.configure_task(s.path.parent.name,'x',[],requires_validation=False, request_anchor='x'); capture_baseline(root,s)
    with self.assertRaises(RuntimeError): guarded_write(root,s,fifo,b'x')
 if __name__=='__main__': unittest.main()

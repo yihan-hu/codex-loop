@@ -1,555 +1,117 @@
-# codex-loop runtime protocol
+# Runtime Protocol
 
-Use `python scripts/codex_loop.py ...`. Commands emit JSON. Runtime state is task-scoped under a private temp directory; it never writes `.codex-loop` state into the repository. `bootstrap` binds the created task as the workspace's active task, so ordinary task-scoped commands may omit `--task-id`. Pass an explicit `--task-id` when deliberately addressing a non-active task or when low-level audit/debugging requires it. If no active task exists, task-scoped commands fail closed.
+Use `python3 scripts/codex_loop.py ...`. Runtime task state is private and outside the repository.
 
-### Repository continuity gate
+## Durable task bootstrap
 
-Before source acquisition, classify the cheapest safe continuation:
-
-```bash
-python3 scripts/codex_loop.py repository-enter \
-  --session-id ROUTING_SESSION \
-  --cwd /CURRENT/OR/EXPECTED/REPO \
-  --repository OWNER/REPO \
-  --branch TARGET_BRANCH \
-  [--remote-head FULL_REMOTE_COMMIT --remote-tree FULL_REMOTE_TREE] \
-  [--source-provenance-json provenance.json] \
-  [--workspace-cache-json workspace-cache-metadata.json] \
-  [--published-source-json fast-import-receipt.json]
-```
-
-`HOT_REUSE` is the ordinary path and forbids source reacquisition. WARM states restore a verified Git artifact and then rerun `repository-enter`. Only `COLD_ACQUIRE_REQUIRED` enters `source-acquisition-plan`. Remote movement is reported as incremental synchronization state (`REMOTE_HEAD_UNSEEN`, `REMOTE_AHEAD`, `DIVERGED`, etc.); it never converts a valid HOT workspace into cold acquisition. See `repository-continuity.md`.
-
-### Source acquisition fallback gate
-
-This section is entered only after `repository-enter` returns `COLD_ACQUIRE_REQUIRED`. Direct exact artifacts are preferred and fallback is disabled by default:
+Use only when durable state is useful:
 
 ```bash
-python3 scripts/codex_loop.py source-acquisition-plan --exact-commit-bundle-available
-python3 scripts/codex_loop.py source-acquisition-plan --receipt-bound-bundle-available
-python3 scripts/codex_loop.py source-acquisition-plan
-# => CONTINUE_DISCOVERY while same-authority direct-artifact lookup is incomplete
-python3 scripts/codex_loop.py source-acquisition-plan --same-authority-artifact-discovery-exhausted
-# => BLOCKED only after compatible GitHub read-only discovery found no exact direct artifact
+python3 scripts/codex_loop.py bootstrap --cwd REPO \
+  --request-anchor 'exact user request' \
+  --objective 'concise working objective' \
+  --criterion 'optional acceptance condition'
 ```
 
-A specialized workflow-run wrapper that cannot represent the required push or `workflow_dispatch` trigger does not satisfy the exhausted condition. Continue with a compatible read-only listing of repository Actions runs and inspect successful import-run receipts for an exact receipt-bound `published-source-<run_id>` artifact before declaring the direct path unavailable. This is same GitHub authority discovery, not a new source transport.
+`--criterion` is acceptance text for the model; it is not a status/evidence gate. Recorded validation is optional unless `--require-validation` is explicitly set or a consequential path such as publication requires it.
 
-After restoring a direct Git bundle into a fresh repository and setting its canonical GitHub origin/target branch, verify exact Git identity **before bootstrap or mutation**:
+## Thin plan
 
 ```bash
-python3 scripts/codex_loop.py source-acquisition-verify \
-  --cwd /FRESH/WEB/REPO \
-  --repository OWNER/REPO \
-  --expected-commit FULL_COMMIT \
-  --expected-tree FULL_TREE \
-  --branch TARGET_BRANCH \
-  --method github_git_bundle
+python3 scripts/codex_loop.py plan --cwd REPO --plan-json '[
+  {"step":"Inspect implementation","status":"completed"},
+  {"step":"Make minimal change","status":"in_progress"},
+  {"step":"Run relevant tests","status":"pending"}
+]'
 ```
 
-The verifier reads the actual Git repository; it requires exact HEAD/tree, matching canonical origin/branch, complete non-shallow history, and presence of the expected commit object. A source-only snapshot or disconnected root returns `WORKSPACE_GIT_IDENTITY_MISMATCH` and must never be bootstrapped as canonical source.
+Allowed statuses are exactly `pending`, `in_progress`, and `completed`; at most one item may be `in_progress`.
 
-The no-flag discovery command returns `CONTINUE_DISCOVERY`; the explicit exhausted command returns `BLOCKED`. Only after explicit current-task user authorization may a named fallback be planned:
+## Working/resume view
 
 ```bash
-python3 scripts/codex_loop.py source-acquisition-plan \
-  --fallback-method verified_incremental_replay \
-  --current-user-fallback-authorization-observed \
-  --authorization-evidence "user explicitly authorized this fallback for the current task"
+python3 scripts/codex_loop.py next --cwd REPO
+python3 scripts/codex_loop.py snapshot --cwd REPO
 ```
 
-A fallback authorization is current-task-only and cannot be persisted. Any final commit/tree mismatch remains `WORKSPACE_GIT_IDENTITY_MISMATCH` and stops.
+`next` is the normal lightweight resume capsule: request anchor/steers, acceptance text, plan, changed paths, validation state, deterministic completion reasons, and suggested next action. Use `snapshot` only for deeper debugging/audit context.
 
-## Persistent workspace registry and conversation grants
-
-Workspace registry commands are host-local and not task-scoped. They never bootstrap a repository task and never imply Local mode.
+## User steer
 
 ```bash
-python3 scripts/codex_loop.py workspace-register --name epiagent --path /ABS/PATH --kind repository
-python3 scripts/codex_loop.py workspace-register --name piwork --path /ABS/PATH --kind development_root
-python3 scripts/codex_loop.py workspace-registry-list
-python3 scripts/codex_loop.py workspace-resolve epiagent
-python3 scripts/codex_loop.py workspace-remove epiagent
+python3 scripts/codex_loop.py steer --cwd REPO --text 'later user correction'
 ```
 
-Updating an existing canonical alias requires explicit `--update`. Registry state lives at `~/.codex-loop/workspace-registry.json` (or the test-only/process override `CODEX_LOOP_HOME`) and stores only alias/path/kind identity.
-
-After the host/model observes explicit user authorization in the current conversation, record a semantic grant:
-
-```bash
-python3 scripts/codex_loop.py workspace-grant epiagent \
-  --current-user-authorization-observed \
-  --authorization-evidence "user explicitly granted EpiAgent path access in this conversation"
-```
-
-The first grant returns a high-entropy `session_id`. Keep it only in the current conversation context; later calls pass it explicitly (or through host-owned ephemeral `CODEX_LOOP_SESSION_ID`):
-
-```bash
-python3 scripts/codex_loop.py workspace-grants --session-id SESSION_NONCE
-python3 scripts/codex_loop.py workspace-resolve epiagent --session-id SESSION_NONCE
-```
-
-The session file stores only the registered-workspace fingerprint and a digest of the evidence. Registry mutation makes an older grant stale. A new conversation has no old nonce and therefore no usable grant.
-
-Before host filesystem access, combine semantic grant with actual host/RDC authorization. Pass only roots the host has independently observed as authorized and fail closed with `--require-access`:
-
-```bash
-python3 scripts/codex_loop.py workspace-resolve epiagent \
-  --session-id SESSION_NONCE \
-  --host-authorized-root /HOST/AUTHORIZED/ROOT \
-  --require-access
-```
-
-This check cannot create RDC permission or change `allowedDirectories`. See `references/workspace-registry.md`.
-
-## Conversation routing state
-
-Routing-sensitive host actions use a lightweight conversation-scoped state file even when the task is otherwise direct and does not need durable lifecycle bootstrap. Initialize it once per conversation:
-
-```bash
-python3 scripts/codex_loop.py route-init --host-surface chatgpt_web
-# Optional: provide/reuse the opaque nonce explicitly
-python3 scripts/codex_loop.py route-show --session-id ROUTING_SESSION
-```
-
-`route-init` stores a private JSON file under the system temp directory with `workspace_mode=web`, `interaction_target=none`, and unresolved `deployment_target`. `host_surface` is immutable for that routing session. The returned session id may also be supplied through host-owned ephemeral `CODEX_LOOP_SESSION_ID`; never persist it in Git, Host Profile, user memory, packages, or recovery manifests.
-
-Change routing only through deterministic transitions:
-
-```bash
-python3 scripts/codex_loop.py route-transition --session-id ROUTING_SESSION \
-  --workspace-mode local \
-  --current-user-selection-observed \
-  --selection-evidence "user explicitly selected the local repository baseline"
-
-python3 scripts/codex_loop.py route-transition --session-id ROUTING_SESSION \
-  --deployment-target local_codex_skill \
-  --current-user-selection-observed \
-  --selection-evidence "user explicitly requested local Codex installation"
-
-python3 scripts/codex_loop.py route-transition --session-id ROUTING_SESSION \
-  --deployment-target none
-```
-
-Entering Local workspace mode, selecting a local interaction target, or selecting a non-native deployment target requires a host-observed explicit current-user selection plus audit evidence. `--current-user-selection-observed` may be asserted only for the current user turn/task; the evidence string is audit-only and is stored only as SHA-256. Project history, memory, prior conversations, or model-authored prose cannot authorize the transition. The routing file does not persist current-task authorization.
-
-Before the host dispatches a routing-sensitive action, check it:
-
-```bash
-python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action repository_observe
-python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action rdc_repository --workspace-granted
-python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action rdc_transfer --workspace-granted --local-computer-authorized
-python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action browser_interaction --current-user-local-computer-authorized
-python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action skill_install
-python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action local_skill_install --current-user-local-install-authorized
-python3 scripts/codex_loop.py route-check --session-id ROUTING_SESSION --action github_publish
-```
-
-Supported actions are `repository_observe`, `repository_mutate`, `rdc_repository`, `rdc_transfer`, `browser_interaction`, `skill_install`, `chatgpt_skill_install`, `local_skill_install`, and `github_publish`. `rdc_transfer` is a downstream binary-destination gate that can be authorized while `workspace_mode=web`; it never authorizes local repository observation/mutation or changes workspace authority. When the current user request explicitly asks to move/save/copy/deliver a file to the local host, that request is sufficient evidence to pass `--local-computer-authorized` for this narrow action without a second prompt. It does not satisfy a missing destination/workspace grant or any host-native permission prompt. In a ChatGPT Web routing session, generic `skill_install` resolves to `chatgpt_web_skill` when no explicit deployment target exists. It never selects local Codex from RDC availability, a remembered local checkout, or prior context. If `host_surface=unknown`, generic install remains unresolved and fails closed. Local repository mutation, computer use, workspace access, and local installation still require their separate current-task/current-conversation authorization inputs.
-
-## Post-task-review permission smoke planning
-
-After the task/workflow has been reviewed and routing is resolved, but before substantive execution, plan the live host probes for any predictable external permissions:
-
-```bash
-python3 scripts/codex_loop.py permission-preflight-plan \
-  --session-id ROUTING_SESSION \
-  --capability github_push \
-  --capability google_drive_write
-```
-
-Supported capability keys are `github_push`, `github_actions`, `google_drive_read`, and `google_drive_write`. The command deduplicates repeated keys and returns an ordered probe contract. A Drive-only task may omit `--session-id`; repository publication should pass the active routing session so the GitHub push probe can distinguish Web from Local mode.
-
-This command **does not execute connectors, request OAuth scopes, store approvals, or mark a capability granted**. It returns `runtime_state_written=false`. The host must execute every returned probe through the actual integration/native path. Schema discovery, tool availability, connection booleans, or a prior-turn success do not satisfy the plan.
-
-The standard probe semantics are:
-
-- `github_push`: Local mode uses host-visible native `git push --dry-run` against the intended remote/ref. Web mode combines live push-capable repository permission readback with one Git-database create-blob/write-object call containing fixed empty content; the blob must remain unreferenced and no tree/commit/ref may be created. A permission readback alone does not prove the host write-approval boundary was exercised. If the host exposes no isolated unreferenced object-write primitive, report the safe probe unavailable rather than create a source/ref mutation.
-- `github_actions`: request this probe only when the host will actually call an Actions write API (for example dispatch/rerun). Invoke that operation only on an audited workflow/job that cannot mutate source or refs. In this repository, `Workspace Download` is acceptable; `Workspace Import` is forbidden as a smoke probe. Record/reuse this capability at repository scope (`actions:OWNER/REPO`). A push-triggered importer does not require this host-permission probe; its Actions runtime is proved after the request push.
-- `google_drive_read`: live list/search/metadata access in the intended Drive scope.
-- `google_drive_write`: create one uniquely named non-sensitive sentinel owned by the preflight, read back its exact ID/metadata, then delete that exact sentinel.
-
-Probe results remain host observations. By default they remain fresh for four hours within the same unchanged routing session, so iterative publish loops do not repeat identical smoke solely because debugging took longer than 30 minutes. They must never be persisted as permanent authorization or used to bypass a later host-required sensitive-action approval. See `references/capability-preflight.md`.
-
-## Lifecycle admission
-
-Codex Loop selection by the host Skill router is the lifecycle admission. Do not run a second direct-vs-durable classifier. Bootstrap task state when the selected objective needs repository/durable state; keep optional capabilities lazy.
-
-## Bootstrap and world state
-
-```bash
-python scripts/codex_loop.py bootstrap --cwd REPO \
-  --request-anchor "authoritative host-visible user request copied without paraphrase" \
-  --objective "concise working summary" \
-  --criterion "..." --profile bug_fix
-python scripts/codex_loop.py next --cwd REPO
-# Drill down only when needed:
-python scripts/codex_loop.py snapshot --cwd REPO
-python scripts/codex_loop.py instructions --cwd REPO
-```
-
-`--request-anchor` is required and is immutable after task configuration. Pass the authoritative host-visible user request itself, not a model-written summary. It is privacy-scrubbed before task-private persistence, but it is never silently replaced by the working objective. Later `steer` records append to the effective request in order; if applicable corrections already occurred before bootstrap, record those corrections as ordered steers immediately afterward. If the authoritative request cannot be recovered from host-visible conversation/history, stop for reconciliation rather than deriving it from the objective. If request-authority text exceeds the bounded runtime limit, bootstrap/steer fails rather than silently truncating the user's requirements. If no criterion is supplied, bootstrap creates one from the objective; it still cannot pass without evidence. Use `--no-validation` only when the task genuinely has no meaningful executable validation, and always pair it with `--no-validation-reason "..."`. The waiver is task state and is surfaced by completion.
-
-Profiles: `regular`, `bug_fix`, `feature`, `refactor`, `test_repair`, `ci_repair`, `code_review`, `review_fix`, `command_only`, `investigation`.
-
-## Bounded working context
-
-`next` is the normal agent-facing state view. It is generated from the same context projector that backs full world-state/checkpoint data, but it intentionally omits low-level task/generation/plan bookkeeping and caps criteria, changed paths, completion reasons, request-authority text, steers, and suggested actions. The complete request anchor and effective request remain intact in private task state and `snapshot`; if `next` truncates any authoritative request text or ordered steer, it exposes the omitted counts and requires a `snapshot` drill-down before further mutation rather than silently treating the projection as complete. It returns:
-
-- request anchor plus ordered user steers, one current working focus, working objective/criteria, runtime guardrails, and unresolved user deltas;
-- derived validation status and current completion status;
-- bounded changed-path ownership (`agent`, `mixed`, `user`, or unexpected/unattributed) plus `expected`/`drift` scope classification when an expected change surface is set;
-- legal/required next actions;
-- evidence references for explicit drill-down.
-
-Use `snapshot` as the full debug/audit view rather than as the default prompt payload. The local runtime does not compact or own ChatGPT conversation context.
-
-### Working focus
-
-Use one current focus for non-trivial repository work:
-
-```bash
-python scripts/codex_loop.py focus --cwd REPO \
-  --subgoal "fix parser null handling" \
-  --non-goal "do not refactor tokenizer" \
-  --expected-path parser.py \
-  --expected-path tests/parser/
-```
-
-The runtime stores one `status=in_progress` subgoal, optional non-goals, and a workspace-relative expected change surface. A trailing `/` means a directory prefix. Absolute paths and traversal are rejected. `scope_drift` appears when the observed changed-file set extends beyond a non-empty expected surface. It is a semantic review signal only: inspect the diff, then narrow/revert the accidental edit or update focus only if the effective request justifies the wider surface.
-
-## Command preflight and execution
-
-```bash
-python scripts/codex_loop.py command-check --cwd REPO -- COMMAND ARG...
-python scripts/codex_loop.py exec --cwd REPO --task-id TASK -- COMMAND ARG...
-```
-
-`exec` runs only the narrow deterministic local allowlist. Otherwise it returns `requires_host_visible_execution: true`; run the exact command through a normal host tool. Shell wrappers, ordinary Git, compilers, test runners, package managers, network commands, arbitrary binaries, and unknown/opaque commands are deliberately host-visible.
-
-One-shot local execution defaults to a 30-second timeout and refuses values above 300 seconds. Model-visible output is head/tail bounded; private transcript files are bounded as well.
-
-## Guarded reads/writes and changes
-
-```bash
-python scripts/codex_loop.py hash --cwd REPO --task-id TASK --path FILE
-python scripts/codex_loop.py write --cwd REPO --task-id TASK --path FILE \
-  --expected-sha256 SHA < payload
-python scripts/codex_loop.py changes --cwd REPO --task-id TASK
-python scripts/codex_loop.py changes --cwd REPO --task-id TASK --review
-```
-
-`hash` only reads workspace paths and refuses symlink-parent escape. `write` accepts stdin or a `--content-file` only inside the workspace; runtime-private files are never accepted as hidden content sources. Existing files require a latest preimage SHA. On supported POSIX filesystems the commit uses atomic pathname exchange and verifies the displaced preimage at the commit instant; concurrent changes are rolled back, and if rollback itself fails the displaced user preimage is preserved at a recovery path. Unsupported atomic-CAS platforms stay host-visible. Local writes are capped at 16 MiB; larger operations stay host-visible. Inspect the final change set semantically; the runtime does not store a review receipt.
-
-
-### Opaque ignored inputs
-
-Regenerable Python interpreter bytecode caches (`__pycache__/`, `*.pyc`, `*.pyo`) are excluded from the ignored-input freshness watcher because they are execution byproducts, not source or validation inputs. Other ignored files remain watched/protected exactly as before.
-
-Large or unreadable ignored paths are surfaced as `opaque_paths`; completion fails closed because their contents cannot be freshness-tracked within the bounded watcher. Only when that uncertainty is knowingly acceptable may you record a current-generation waiver:
-
-```bash
-python scripts/codex_loop.py freshness-waiver --cwd REPO --task-id TASK \
-  --reason "why these opaque ignored inputs cannot affect this acceptance decision"
-```
-
-The waiver is bound to the current generation and exact opaque-path set. A changed generation or changed set invalidates it.
+The steer is authoritative immediately. There is no separate steer-ack command.
 
 ## Validation
 
-```bash
-python scripts/codex_loop.py validate --cwd REPO -- pytest -q
-```
-
-For normal test/build commands this returns a host-visible execution request plus an `execution_policy`. After running that exact command through the host, record independent workload/process/cleanup facts when available:
+Recorded validation is optional for ordinary durable completion. Bootstrap with `--require-validation` only when a current pass must be a deterministic finish condition; publication has its own current-validation requirement.
 
 ```bash
-python scripts/codex_loop.py validation-record --cwd REPO/package-a \
-  --command-json '["pytest","-q"]' \
-  --workload-status PASSED \
-  --workload-evidence-kind framework_authoritative \
-  --workload-evidence '237 passed in 18.41s' \
-  --workload-adapter pytest-terminal-summary-v1 \
-  --process-status TEARDOWN_STALLED \
-  --process-evidence 'process remained alive after terminal result' \
-  --cleanup-status SUCCEEDED \
-  --cleanup-evidence 'owned process group terminated after grace'
+python3 scripts/codex_loop.py validate --cwd REPO -- pytest tests/test_target.py
 ```
 
-For an ordinary command that exits normally, `--exit-code 0 --evidence ...` remains the compatibility path. Do not use progress-only output such as `100%` to create `PASSED`; framework evidence requires a named adapter and explicit-protocol evidence requires capture-layer token verification. See `execution-supervision.md`.
-
-The facade resolves the unique unconsumed plan matching the current generation, cwd, and exact argv identity, then consumes it through the original safety-kernel checks. Repeated planning of the same current generation/cwd/exact command reuses the existing unconsumed plan, so ordinary retries do not manufacture agent-visible ambiguity. Zero matches (no valid plan) and legacy/corrupt multiple matches both fail closed. The underlying `plan_id` remains a one-time host-validation capability bound to generation, cwd, and exact argv; workspace mutation still makes the result stale. For compatibility/audit debugging, `validate --debug-bookkeeping` exposes `plan_id`/generation and `validation-record` still accepts explicit `--plan-id`/`--generation`. Approval-cache shell canonicalization is deliberately not used for validation equivalence.
-
-Follow Codex's validation direction: start with the most specific check that demonstrates the requested behavior, then broaden only when useful. A failing check may be made non-blocking at any generation only after semantic review establishes that the failure is unrelated to the effective request and concise observable evidence is recorded:
+If the runtime reports `requires_host_visible_execution`, run that exact command through the host from the returned cwd, then record the observation directly:
 
 ```bash
-python scripts/codex_loop.py validation-resolve --cwd REPO --task-id TASK \
-  --validation-id ID --evidence "failure is in an untouched unrelated module and does not exercise the requested change"
+python3 scripts/codex_loop.py validation-record --cwd REPO \
+  --command-json '["pytest","tests/test_target.py"]' \
+  --exit-code 0 --evidence 'targeted test passed'
 ```
 
-The stored disposition is `unrelated_to_request` and is bound to the current `effective_request_sha256`. A later user steer invalidates the old relevance judgment and makes that failure blocking again until it is semantically re-evaluated. Passing validations cannot receive that disposition, and unrelated failures do not satisfy the requirement for at least one current authoritative passing validation. Do not use the disposition as a shortcut around a relevant regression.
+No validation plan-id or generation handshake is required. Rich workload/process/cleanup fields remain available when the host exposes them.
 
-## Criteria and steering
+## Completion
 
 ```bash
-python scripts/codex_loop.py criterion --cwd REPO --task-id TASK --index 0 \
-  --status pass --evidence "observable acceptance evidence"
-python scripts/codex_loop.py steer --cwd REPO --task-id TASK --text "do not change the public API"
-python scripts/codex_loop.py steer-ack --cwd REPO --task-id TASK --steer-id ID \
-  --evidence "replanned and verified the API surface is unchanged"
+python3 scripts/codex_loop.py completion --cwd REPO
 ```
 
-The request anchor plus every ordered steer text is the effective request. Recording a steer changes `effective_request_sha256` immediately; steer state tracks integration evidence, not whether the user instruction is authoritative. Passing criteria and acknowledging steers require evidence at the current workspace generation. Any later workspace mutation makes prior pass/ack evidence stale; re-check the condition, re-anchor `focus` when necessary, then repeat `criterion --status pass` or `steer-ack` with fresh evidence. Working objective/criteria guide execution but do not independently define or prove the effective request.
+The result is a deterministic guard only:
 
-## Objective completion audit
+- `PASS`: no modeled machine blocker remains; perform one model semantic final acceptance review and finish if the user's objective is satisfied.
+- `CONTINUE`: current machine state still has work such as unfinished durable plan, missing required validation, unresolved external action, or managed process cleanup.
+- `BLOCKED`: a hard state/safety invariant is violated, such as workspace binding mismatch or protected/read-only mutation.
 
-New tasks created through the Codex Loop CLI require a separate upstream-style objective audit before `completion` may return `PASS`. Re-derive the requirements from the effective request—request anchor plus ordered steers—and referenced current files/plans/specifications/issues/instructions; do not merely restate the bootstrap objective or criteria. Read `upstream-codex-goal-continuation.md` and `upstream-adaptation.md` before changing this behavior.
+There is no `objective-audit`, `criterion --status pass`, `steer-ack`, or mandatory `focus` command in the normal protocol.
 
-Record the audit as JSON:
+## Checkpoint
 
 ```bash
-python scripts/codex_loop.py objective-audit --cwd REPO <<'JSON'
-{
-  "requirements": [
-    {
-      "requirement": "Use the named workflow to its required end state",
-      "status": "proven",
-      "evidence": "The workflow's authoritative completion receipt reports PASS.",
-      "authoritative_source": "workflow completion receipt"
-    }
-  ]
-}
-JSON
+python3 scripts/codex_loop.py checkpoint --cwd REPO --key-finding '...' --next-action '...'
+python3 scripts/codex_loop.py checkpoint-restore --cwd REPO
 ```
 
-Allowed statuses are `proven`, `contradicted`, `incomplete`, `weak`, and `missing`. A `proven` item requires non-empty evidence and an authoritative source. Every requirement must be `proven` for the audit to pass. The audit is bound to `effective_request_sha256` plus the current workspace generation. A later user steer changes the request hash; a later workspace mutation changes generation; either makes the prior audit stale. Rewriting a working objective summary does not change request authority and therefore does not invalidate an otherwise current audit. Re-run the objective audit after authoritative request or workspace changes and before final `completion`.
+Use checkpoints only before long/noisy transitions or when re-entry matters.
 
-The runtime deliberately does not understand domain-specific workflow internals. If the objective names another Skill, gate, invariant, or deliverable, record the authoritative evidence proving that requirement rather than adding a domain-specific dependency mechanism to Codex Loop.
+## Persistence
 
-## Private Host Profile
-
-All non-sensitive user-instance preferences/locators share one schema-v2 file. Read/write it through:
+Cross-conversation persistence is opt-in:
 
 ```bash
-python3 scripts/codex_loop.py host-config show
-python3 scripts/codex_loop.py host-config get browser.preferred_target
-python3 scripts/codex_loop.py host-config set browser.preferred_target cloud_browser
-python3 scripts/codex_loop.py host-config unset web_publish.staging_folder_id
-python3 scripts/codex_loop.py host-config reset progress_visibility
+python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_drive
+python3 scripts/codex_loop.py persistence-resume-plan --manifest STATE.json
+python3 scripts/codex_loop.py persistence-resume --cwd REPO --manifest STATE.json --observations-json OBS.json
 ```
 
-Missing/unsafe configuration degrades to built-in safe defaults for reads; writes fail closed on malformed/unsafe existing files. Preferences never assert current capability, permission, grant, Local-mode selection, or Skill deployment target. Conversation routing state lives in the separate temp-file routing plane above. See `host-profile.md`.
+The v4 manifest stores the request, three-state plan, acceptance text, steers, minimal workspace identity, and unresolved consequential external-action identities. Prior validation is historical after resume; current repository/external reality wins.
 
-## Progress visibility configuration
+## Side-effect routing
 
-Progress behavior is host-facing policy with enhanced defaults for durable objectives and low-noise defaults for direct work. The effective user configuration lives outside the repository in the unified private Host Profile (`host-profile.md`). `progress-config` is a compatibility facade.
+Routing and publication commands are deliberately separate from the normal agent loop. Use the dedicated references for exact commands:
 
-```bash
-python3 scripts/codex_loop.py progress-config
-python3 scripts/codex_loop.py progress-policy --lifecycle-mode durable
-python3 scripts/codex_loop.py progress-config --mode enhanced --interval-seconds 20 --tool-call-interval 4
-python3 scripts/codex_loop.py progress-config --reset
-```
+- `interaction-routing.md`
+- `repository-continuity.md`
+- `source-acquisition.md`
+- `publication-router.md`
+- `web-mode-publish.md`
+- `release-lineage.md`
+- `workspace-registry.md`
+- `web-to-local-handoff.md`
 
-`progress-config` writes only the `progress_visibility` section of `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`) with private file permissions and preserves the other schema-v2 Host Profile sections. Invalid existing JSON is never overwritten. `progress-policy` treats invalid/missing preference configuration as non-blocking and falls back to enhanced defaults. See `host-profile.md` and `progress-visibility.md`.
+These controls guard real side effects. Do not route ordinary reasoning/edit/test steps through them unless the host action itself requires it.
 
-## Optional state-only persistence and Workspace Cache
+## Managed processes / delegation
 
-Persistence is off by default and Drive credentials remain host-owned. State-only recovery remains the lifecycle layer:
-
-```bash
-python3 scripts/codex_loop.py persistence-export --cwd REPO --backend google_drive --repository OWNER/REPO --source-commit FULL_COMMIT --source-tree FULL_TREE
-python3 scripts/codex_loop.py persistence-validate --manifest /PRIVATE/TEMP/state-only.json
-python3 scripts/codex_loop.py persistence-resume-plan --manifest /PRIVATE/TEMP/state-only.json
-python3 scripts/codex_loop.py persistence-resume --cwd REPO --manifest /PRIVATE/TEMP/state-only.json --observations-json observations.json
-python3 scripts/codex_loop.py persistence-cleanup-plan --manifest /PRIVATE/TEMP/state-only.json \
-  --ownership-proven --bounded-runtime-scope-proven --recoverable-delete-supported
-```
-
-When the user explicitly wants the **Web workspace itself** recoverable across conversations, create the separate 3-day immutable Workspace Capsule:
-
-```bash
-python3 scripts/codex_loop.py workspace-cache-create --cwd REPO --repository OWNER/REPO --output /PRIVATE/TEMP/workspace-cache.tar.gz
-python3 scripts/codex_loop.py workspace-cache-validate --capsule /PRIVATE/TEMP/workspace-cache.tar.gz --expected-sha256 FULL_SHA256
-python3 scripts/codex_loop.py workspace-cache-restore --capsule /PRIVATE/TEMP/workspace-cache.tar.gz --expected-sha256 FULL_SHA256 --destination /FRESH/WORKSPACE --consumption-receipt-output /PRIVATE/TEMP/cache-consumed.json
-python3 scripts/codex_loop.py workspace-cache-cleanup-plan --objects-json /PRIVATE/TEMP/cache-objects.json
-```
-
-The capsule preserves exact Git HEAD commit/tree plus staged, unstaged, and non-ignored untracked state while excluding ignored files, Git config/hooks, and credentials. Restore verifies exact identity/state before binding the fresh workspace. Upload the consumed receipt before deleting the restored Drive capsule; deletion failure becomes `CACHE_CLEANUP_PENDING` and never invalidates `WORKSPACE_RESTORED`. Every cache create/list/restore operation opportunistically scans only `Codex Loop/.runtime/workspace-cache` and plans cleanup for consumed or >=3-day exact owned objects, with at most one refreshed retry per failed delete in that operation. State-only resume still creates a new freshness domain and never makes historical PASS/validation/audit evidence current. See `persistence.md` and `persistence-resume.md`.
-
-## External/host actions
-
-```bash
-python scripts/codex_loop.py external --cwd REPO --task-id TASK --kind github_comment \
-  --state planned --action-class external_non_idempotent --identity issue:123
-python scripts/codex_loop.py external --cwd REPO --task-id TASK --kind github_comment \
-  --state dispatched --action-class external_non_idempotent --identity issue:123 --action-id ID
-python scripts/codex_loop.py external --cwd REPO --task-id TASK --kind github_comment \
-  --state terminal_success --action-class external_non_idempotent --identity issue:123 \
-  --action-id ID --details-json '{"observed":"comment present"}'
-```
-
-Terminal and `outcome_unknown` states require concise observable details. Non-idempotent actions require stable identity. Repeating the same planned `(kind, identity)` reuses its action id; advance that id through `dispatched` before recording a terminal result. Cancellation turns only never-dispatched `planned` actions into `cancelled_before_dispatch`. Resolve a terminal failure only after a later observation/action has handled it:
-
-```bash
-python scripts/codex_loop.py external-resolve-failure --cwd REPO --task-id TASK \
-  --action-id ID --evidence "later host-visible action recovered the failure"
-```
-
-## Stable publication entry contract
-
-Every repository `push` / `publish` continuation enters through one controller-owned ABI, regardless of Web or Local mode:
-
-```bash
-python3 scripts/codex_loop.py publish-enter --cwd REPO \
-  --session-id ROUTING_SESSION \
-  --repository OWNER/REPO --branch main \
-  --remote-head FULL_REMOTE_HEAD --remote-tree FULL_REMOTE_TREE \
-  --controller-abi 1 \
-  --capability-scope github_push=repo:OWNER/REPO \
-  --capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging
-```
-
-`publish-enter` is the bundled Codex Loop controller's model-facing publication helper and requires an explicit controller ABI. It reads deterministic routing state and selects the mode-specific Web or Local planner while the target repository is passed only through `--cwd`. The target repository does not need to contain `scripts/codex_loop.py`. Before transport, follow the returned `mode_protocol_reference` and modeled actions; never derive an alternate transport from Git terminology or connector availability. `PUBLICATION_ROUTER_ABI_UNSUPPORTED` is a bundled-controller compatibility blocker, while absence of a router file in an ordinary target repo is irrelevant. See `publication-router.md`.
-
-### Web route
-
-In Web mode the router automatically begins/reuses the publish-only continuation before calling the Web planner. If the current clean generation already has fresh validation, redundant validation remains forbidden. FAST_PUBLISH is the default; standard Web publication is explicit-only. The planner still returns the deterministic outcomes `FAST_PUBLISH`, `FAST_PUBLISH_REFRESH_REQUIRED`, `FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED`, `ALREADY_PUBLISHED`, `FAIL_CLOSED`, or explicitly selected `FULL_VERIFIED_PUBLISH`.
-
-The Web exact-identity protocol intentionally does **not** require GitHub to already contain the audited source commit object. `remote_source_object_presence_required=false`: the verified Git bundle carries that exact commit object into the importer. Object absence must never be used as a transport-selection gate. Success still requires exact remote commit and tree equality.
-
-Low-level `web-publish-continuation-begin`, `web-publish-plan`, and `web-publish-bundle` remain available for router/protocol debugging, but normal model control does not call them directly.
-
-### Web -> local/Mac downstream synchronization
-
-A user request to save/synchronize the current Web repository to a local host does not change workspace authority. Plan it with:
-
-```bash
-python3 scripts/codex_loop.py web-local-sync-plan --cwd REPO \
-  --session-id ROUTING_SESSION \
-  --destination-path /AUTHORIZED/LOCAL/PATH \
-  --workspace-granted \
-  --local-computer-authorized
-```
-
-The only automatic data plane is exact self-contained Git bundle -> Google Drive binary staging via `file_uri` -> RDC download to the authorized local path -> local size/SHA-256 + `git bundle verify` -> exact Drive cleanup. The `rdc_transfer` action is downstream-only and may be authorized while `workspace_mode=web`; it never grants `rdc_repository` or Local source mutation. GitHub Actions artifacts, repository archives, connector source relay, direct unmodeled bridges, model relay, and source regeneration are forbidden automatic fallbacks.
-
-### Local route
-
-In Local mode the bundled controller selects the native-Git planner. Pass `--workspace-granted`; ordinary source-only publication is the default, while release publication is explicit. Native Git runs from the authorized canonical local worktree and exact remote commit/tree readback proves success. Missing Codex Loop files in the target repo do not matter. Failure remains fail-closed with no transport switch.
-
-## Codex Loop manual package after update
-
-Codex Loop does not perform or track installation of itself. After a Codex Loop source update is complete:
-
-1. finish current-generation validation and final change review;
-2. publish only when the user explicitly requested publication;
-3. build a repository-neutral consumer Skill package from the updated workspace;
-4. validate/package it through Skill Creator so the canonical package is exactly `skill.zip`;
-5. copy `skill.zip` byte-for-byte to `codex-loop.zip` with `scripts/prepare_codex_loop_download.py` and require identical SHA-256 values;
-6. expose only that exact `codex-loop.zip` through the host's fresh current-conversation artifact/file mechanism and require the actual current host-returned reference;
-7. direct manual installation through `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`;
-8. treat fresh artifact exposure as the terminal Codex Loop delivery state.
-
-Do not synthesize or reuse a Library/file reference for the generated package. Manual installation is a user/product action outside the runtime lifecycle and does not add another Codex Loop stage.
-
-## Managed process sessions
-
-Interactive/background work should normally stay host-visible and foreground with an explicit finite timeout under `execution-supervision.md`. The local helper is not a license to detach work or let children survive task completion; persistent background execution requires explicit current-task user authorization.
-
-```bash
-python scripts/codex_loop.py service-start --cwd REPO --task-id TASK
-python scripts/codex_loop.py spawn --cwd REPO --task-id TASK -- sleep 10
-python scripts/codex_loop.py poll --cwd REPO --task-id TASK HANDLE
-python scripts/codex_loop.py stdin --cwd REPO --task-id TASK HANDLE "text"
-python scripts/codex_loop.py interrupt --cwd REPO --task-id TASK HANDLE
-python scripts/codex_loop.py terminate --cwd REPO --task-id TASK HANDLE
-python scripts/codex_loop.py service-stop --cwd REPO --task-id TASK
-```
-
-The helper contains no model. It is task-private, token-authenticated, protected by single-owner/start locks, limited to 64 active processes, and only spawns commands accepted by the same narrow local policy. A lost helper turns owned process records into `orphaned`. Orphaned or internally `failed` process records block completion and cleanup until `process-resolve --evidence "..."` records a host-observed resolution.
-
-## Git state
-
-Git commands remain host-visible. Observe actual HEAD/branch/index/worktree state and judge it against the user objective; do not maintain a separate `git-authorize` bookkeeping model.
-
-## Canonical workspace, release, and publish
-
-Every new task records a canonical workspace binding at bootstrap. Inspect it with:
-
-```bash
-python scripts/codex_loop.py workspace-binding --cwd REPO
-```
-
-The canonical root and shared Git repository identity must remain stable for the task. HEAD/branch may move only through the existing Git-mutation workflow. Use Git worktrees for concurrent tasks. Installed Skills are deployment state, are never edited in place, and are **default-off as source acquisition**. Only explicit current-turn user authorization may invoke the read-only installed-Skill copy exception in `references/source-acquisition.md`; current/latest claims still require exact remote equality, and explicitly accepted older/unknown provenance must be labeled honestly. Copied transport/release directories remain non-authoritative.
-
-When Web mode needs source from GitHub, use the exact-revision **Git bundle** workspace-download Actions artifact contract in `references/source-acquisition.md`, restore a real Git repository, and require exact commit/tree equality before binding it. A shell/network inability to run `git clone` in the container is not a reason to invent another source transport. Likewise, inability of one connector query to observe a workflow run must be recorded as an observability limitation, not as proof that the workflow failed or never ran. If a compatible read-only repository Actions-runs endpoint exists, use it and inspect receipt-bound published-source artifacts before `source-acquisition-plan --same-authority-artifact-discovery-exhausted` may block.
-
-Commit source before packaging. Plan an export from the audited Git HEAD, build outside the canonical tree, then record the artifact hash:
-
-```bash
-python scripts/codex_loop.py release-plan --cwd REPO --artifact-name skill.zip --archive-prefix codex-loop
-python scripts/codex_loop.py release-record --cwd REPO --artifact-name skill.zip \
-  --artifact-sha256 SHA256 --evidence "artifact built from the planned commit archive and verified"
-```
-
-`release-plan` fails when tracked/staged source is uncommitted. Untracked paths are reported but excluded because export comes from `git archive` of the exact commit. A release receipt is bound to task generation plus source commit/tree and becomes stale after later observed workspace mutation.
-
-Only when the current conversation is in Local mode does the bundled controller select native Git through Remote Desktop Commander on the persistent canonical repo. A generic `push` in Web mode never selects Local mode. Observe the destination branch with native Git, route the publication through the bundled controller, and execute only the Local native-Git path. If the observed remote head is not an ancestor of the audited local target, integrate the remote change in the same canonical worktree and rerun the gates. Do not force-update around this condition.
-
-Before pushing, record the planned native-Git external action as required, execute only the returned `git push --porcelain ...` through Remote Desktop Commander, then read back the remote ref/tree. Repository source bytes stay in Git's data plane. If native Git fails or is unavailable, stop and report the exact blocker rather than switching transports.
-
-## Explicitly authorized guarded model relay
-
-When a user explicitly authorizes a model-carried file transfer, frame and receive it with the deterministic helper described in `references/verified-model-relay.md`:
-
-```bash
-python scripts/codex_loop.py relay-frame --cwd AUTHORIZED_ROOT --input SOURCE --output ENVELOPE.txt
-python scripts/codex_loop.py relay-receive --cwd AUTHORIZED_ROOT --envelope ENVELOPE.txt --output DESTINATION --expected-size N --expected-sha256 SHA256
-```
-
-These commands do not create standing transfer permission and do not store payload bytes in task state. `--cwd` is the authorized filesystem root for the relay command: every resolved input/envelope/output path, including symlink targets, must remain below it. `relay-receive` publishes only after strict Base64 decode plus exact size/SHA-256 verification. Integrity failures return a structured failure class and `VERIFIED_CHUNK_RELAY` fallback rather than guessing a repair. Actual cross-surface carriage of the envelope remains host-owned.
-
-## Delegation / logical isolation
-
-Use delegation when a workflow requests an independent reviewer/researcher/tester/debugger pass. Native host execution is a preference; lack of native execution degrades to logical isolation with warnings rather than blocking the parent task. See `references/delegation.md` for the capability and context contract.
-
-```bash
-python scripts/codex_loop.py isolate-enter --cwd REPO --task-id TASK --role reviewer --objective "independent review" --requested-executor native_subagent --actual-executor logical_isolation --project-file src/a.py --fact "observed failure"
-python scripts/codex_loop.py isolate-status --cwd REPO --task-id TASK
-python scripts/codex_loop.py isolate-finish --cwd REPO --task-id TASK --isolation-id ISO_ID < result.json
-python scripts/codex_loop.py isolate-abort --cwd REPO --task-id TASK --isolation-id ISO_ID --reason "insufficient evidence"
-```
-
-Only one read-only isolation may be active. `isolate-enter` checkpoints Main state without creating a second truth source. `isolate-finish` reconciles the current generation and returns a fresh Main projection; it never restores old workspace reality or auto-passes criteria. Parent cancellation atomically aborts an active isolation.
-
-## Checkpoint, completion, cancel, cleanup
-
-```bash
-python scripts/codex_loop.py checkpoint --cwd REPO --task-id TASK --key-finding "..." --next-action "..."
-python scripts/codex_loop.py checkpoint-restore --cwd REPO --task-id TASK
-python scripts/codex_loop.py completion --cwd REPO --task-id TASK
-python scripts/codex_loop.py cancel --cwd REPO --task-id TASK --reason "user stopped"
-python scripts/codex_loop.py cleanup --cwd REPO --task-id TASK
-```
-
-`completion` returns `PASS`, `CONTINUE`, or `BLOCKED`. `cancel` immediately resolves only not-yet-dispatched `planned` external actions as `cancelled before dispatch`; `dispatched` and `outcome_unknown` actions remain unresolved until a real terminal observation is recorded. After cancellation, only observation/cleanup operations and terminal-outcome reconciliation are allowed. Cleanup never reverts workspace files and refuses unresolved external/process state.
-
-## Shell snapshot and source integrity
-
-```bash
-python scripts/codex_loop.py shell-snapshot --cwd REPO --task-id TASK
-python scripts/codex_loop.py source-verify
-python scripts/audit_source_coverage.py
-```
-
-`shell-snapshot` only returns a host-visible capture plan; it never runs shell startup/profile code locally. The plan encodes upstream capture/normalization/validation semantics (login-shell capture, 10-second timeout, `# Snapshot file` marker, non-login validation source, private non-model-visible storage, task-end cleanup). `source-verify` checks exact bundled resources. `audit_source_coverage.py --upstream /path/to/openai-codex` additionally parses the pinned upstream Rust module indexes and fails on unmapped drift.
-
-
-## Hooks
-
-The local runtime exposes no custom hook configuration. It enforces built-in deterministic lifecycle gates around write/validation/checkpoint/completion, while the official Codex matcher/handler hook runtime remains host-owned. Do not interpret repository files as executable hook authority.
-
-## Drive cache and deletion commands
-
-`drive-cache-cleanup-plan` considers only objects at least three days old whose exact parent path is in the host-local registry and whose bounded parent/ownership are proven. Exact owned registered cache objects at least three days old are returned as delete-ready automatically after identity/parent/ownership checks. Exact Codex Loop-created permission sentinels and publish/transfer staging objects are deleted automatically after verified consumption; there is no global Drive-delete switch or extra review/confirmation gate for these temporary objects.
+Use service/process and isolation commands only when the task actually needs an interactive managed process or delegated reviewer. They are not part of the default happy path. See `execution-supervision.md` and `delegation.md`.

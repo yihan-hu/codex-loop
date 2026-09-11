@@ -32,7 +32,7 @@ class ServiceProcessLimitTests(unittest.TestCase):
     from codex_loop_runtime.service import ProcessRegistry
     with tempfile.TemporaryDirectory() as tmp:
       root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
-      store=create_store(root); tid=store.path.parent.name; store.configure_task(tid,'limit',[], request_anchor='limit',requires_validation=False,no_validation_reason='test fixture has no meaningful executable validation')
+      store=create_store(root); tid=store.path.parent.name; store.configure_task(tid,'limit',[],requires_validation=False, request_anchor='limit')
       reg=ProcessRegistry(root,tid,'token')
       with mock.patch('codex_loop_runtime.service.MAX_MANAGED_PROCESSES',1):
         first=reg.dispatch({'token':'token','task_id':tid,'op':'spawn','argv':['sleep','10'],'cwd':str(root)})

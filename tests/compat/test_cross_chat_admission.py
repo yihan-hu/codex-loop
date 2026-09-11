@@ -19,22 +19,19 @@ class CrossChatAdmissionTests(unittest.TestCase):
             return
         path = Path(state["state_path"])
         for candidate in (path, path.with_suffix(".capabilities.json")):
-            try:
-                candidate.unlink()
-            except FileNotFoundError:
-                pass
+            candidate.unlink(missing_ok=True)
 
-    def test_frontmatter_admits_short_routing_sensitive_intents(self):
+    def test_frontmatter_admits_routing_sensitive_and_resume_work(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         match = re.search(r'^description: "(.*)"$', skill, re.MULTILINE)
         self.assertIsNotNone(match)
         description = match.group(1).lower()
         for required in (
             "repository/filesystem",
-            "install/update/deploy",
-            "one/two-step",
-            "pull main and install",
-            "prior-chat authorization",
+            "skill update/deploy",
+            "web/local routing",
+            "multi-step",
+            "resume",
         ):
             self.assertIn(required, description)
 

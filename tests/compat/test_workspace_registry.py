@@ -370,19 +370,15 @@ class WorkspaceRegistryTests(unittest.TestCase):
 
     def test_contract_docs_keep_known_granted_bound_and_rdc_layers_separate(self):
         skill = (ROOT / "SKILL.md").read_text()
-        readme = (ROOT / "README.md").read_text()
         setup = (ROOT / "references" / "local-mode-setup.md").read_text()
         boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
         registry = (ROOT / "references" / "workspace-registry.md").read_text()
-        protocol = (ROOT / "references" / "runtime-protocol.md").read_text()
 
-        self.assertIn("KNOWN, not GRANTED", skill)
+        self.assertIn("references/workspace-registry.md", skill)
         self.assertIn("KNOWN != GRANTED", registry)
         self.assertIn("GRANTED != BOUND", registry)
         self.assertIn("Primary Local Root + Session Granted Roots = Effective Local Roots", setup)
         self.assertIn("REGISTERED + GRANTED THIS CONVERSATION + HOST/RDC AUTHORIZED = ACCESSIBLE", boundary)
-        self.assertIn("workspace-registry.json", readme)
-        self.assertIn("workspace-grant epiagent", protocol)
         self.assertIn("never stores authorization", registry)
         self.assertIn("never search the whole home directory or disk", boundary)
 

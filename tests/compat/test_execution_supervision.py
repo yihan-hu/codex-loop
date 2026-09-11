@@ -97,20 +97,16 @@ class CompletionSeparationTests(unittest.TestCase):
         store.configure_task(
             store.path.parent.name,
             "run tests",
-            ["tests pass"], request_anchor="run tests",
+            ["tests pass"],
             profile="feature",
             requires_validation=True,
             requires_clean_process_exit=clean_exit,
-        )
+        request_anchor="run tests")
         capture_baseline(root, store)
-        store.set_criterion(0, "pass", "authoritative test outcome recorded")
         return store
 
     def record(self, root: Path, store, observation: ExecutionObservation):
-        plan = store.create_validation_plan(0, ["pytest", "-q"], cwd=root)
-        return store.record_host_validation(
-            plan["plan_id"],
-            0,
+        return store.record_observed_validation(
             ["pytest", "-q"],
             observation.exit_code,
             cwd=root,

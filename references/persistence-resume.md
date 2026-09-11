@@ -1,59 +1,42 @@
-# Deterministic durable resume
+# Lightweight durable resume
 
-Persistence is recovery evidence, never a second current-truth store. Resume therefore **forks historical state under current reality** rather than restoring an old task database in place.
+Resume restores durable intent, then lets the model re-observe current reality. Do not reconstruct a lifecycle state machine.
 
 ## Flow
 
 ```text
-EXPORT -> VALIDATE -> RESUME PLAN -> OBSERVE CURRENT REALITY -> RECONCILE -> REHYDRATE -> RESUMED
+VALIDATE MANIFEST -> OBSERVE CURRENT REALITY -> RECONCILE -> RESTORE REQUEST/PLAN -> CONTINUE
 ```
 
-Commands:
+`persistence-resume-plan` requests only facts that can become stale outside the manifest, such as workspace presence, expected Git HEAD/tree, and unresolved consequential external actions. The host supplies those observations.
 
-```bash
-python3 scripts/codex_loop.py persistence-resume-plan --manifest state-only.json
-python3 scripts/codex_loop.py persistence-resume --cwd REPO \
-  --manifest state-only.json \
-  --observations-json observations.json
-```
+A v4 resume restores:
 
-`resume-plan` returns the facts that the host must re-observe, including workspace presence, expected repository HEAD/tree when known, and unresolved external-action states. The host supplies observations; the runtime does not invent connector/Git facts.
+- request anchor and ordered steers;
+- objective and acceptance text;
+- optional three-state plan;
+- profile and validation requirement;
+- workspace lineage;
+- unresolved external-action lineage after real provider reconciliation.
 
-## Freshness reset
+It does **not** restore semantic PASS state. Historical validation remains historical. The resumed model should inspect the repository/tool state, update the plan if needed, then continue from the smallest useful next action.
 
-Resume creates a **new task/freshness domain**. Current-schema manifests preserve the immutable request anchor, ordered user steer texts, working objective, criterion definitions, profile, validation requirement, clean-process requirement, and privacy-safe external-action lineage. Steer texts remain request authority but reopen as `pending` because old integration evidence cannot be fresh in the new workspace generation. It does not restore current proof:
+If current source commit/tree differs from the manifest, report `SOURCE_DIVERGED` and bind the new task to current reality. Do not pretend old validation still applies.
 
-- previous criterion PASS -> new criterion `pending`;
-- previous validation -> `HISTORICAL`;
-- previous final review -> `HISTORICAL`;
-- previous objective audit -> `HISTORICAL`;
-- previous steer acknowledgement -> new steer `pending`;
-- previous capability/permission state -> re-observe.
-
-`resume_lineage` records the source manifest hash, prior task/generation, a new resume epoch, and new task identity. Current workspace facts always win.
-
-Persistence schema v3 is the first schema that carries request authority explicitly. A v1/v2 manifest may still be validated/migrated for inspection, but if it lacks an original request anchor `persistence-resume` returns `NEEDS_RECONCILIATION` without creating a task. Never substitute its stored objective summary for the missing user request. Recover the original request from an authoritative host/history source first, then start a new current task with that request as `--request-anchor`.
-
-## Source divergence
-
-If persisted source commit/tree differs from the current observation, return `SOURCE_DIVERGED`, bind the new task to the current workspace, and keep old source-bound evidence historical. Do not continue old assumptions as if the source were unchanged.
-
-## External actions
-
-A persisted `dispatched` or `outcome_unknown` non-idempotent action is never retried merely because its terminal outcome is missing. `resume-plan` requires a real provider observation. On resume, the runtime reconstructs a hashed lineage identity (`resume-sha256:...`) only for bookkeeping; it never reconstructs the secret/raw external identity.
-
-Current `terminal_success`/`terminal_failure` observations reconcile the old dispatch. Missing or `outcome_unknown` observations remain unresolved and block normal completion. An unresolved historical terminal failure remains a failure unless current evidence resolves it.
-
-Possible resume status values are `RESUMED`, `NEEDS_RECONCILIATION`, `SOURCE_DIVERGED`, `EXTERNAL_ACTION_UNRESOLVED`, or rejection by manifest/observation validation.
+For a persisted non-idempotent action in `dispatched` or `outcome_unknown`, observe the provider before any retry. Missing terminal evidence remains unresolved.
 
 ## Workspace Cache restore ordering
 
-When a new conversation also restores a Drive Workspace Cache, restore the capsule **before** `persistence-resume` source reconciliation:
+When a Workspace Cache is also used:
 
 ```text
-validate capsule -> restore fresh Git workspace -> verify exact HEAD/tree + state fingerprint -> bind workspace
-  -> create/upload consumed receipt -> attempt exact capsule cleanup
-  -> observe current workspace/external reality -> persistence-resume-plan -> persistence-resume
+validate capsule
+-> restore fresh Git workspace
+-> verify exact HEAD/tree/worktree fingerprint
+-> bind workspace
+-> observe current external reality
+-> persistence-resume-plan
+-> persistence-resume
 ```
 
-A successful workspace restore creates current source reality; it does not make prior state-only PASS/validation/audit evidence fresh. If Drive deletion of the consumed capsule fails, keep `WORKSPACE_RESTORED` and record `CACHE_CLEANUP_PENDING`; later bounded cache operations retry cleanup opportunistically. Never re-select a cache ID that has a matching consumption receipt as an automatic restore candidate.
+A successful cache restore establishes current source reality; it does not make historical validation current. Cleanup failure after a verified restore is cleanup residue, not a reason to invalidate the restored workspace.

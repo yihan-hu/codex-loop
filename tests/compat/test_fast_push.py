@@ -31,9 +31,9 @@ def init_repo(root: Path) -> str:
 def make_store(root: Path):
     store = create_store(root)
     store.configure_task(
-        store.path.parent.name, "fast push", ["fast path works"], request_anchor="fast push",
-        requires_validation=False, no_validation_reason="fixture exercises publish bookkeeping",
-    )
+        store.path.parent.name, "fast push", ["fast path works"],
+        requires_validation=False,
+    request_anchor="fast push")
     store.set_meta("workspace_binding", capture_workspace_binding(root))
     capture_baseline(root, store)
     return store
@@ -47,11 +47,9 @@ class FastPushTests(unittest.TestCase):
             git(root, "add", "tracked.txt")
             self.assertTrue(sync_generation(root, store))
             generation = store.generation()
-            store.set_criterion(0, "pass", "content reviewed")
             git(root, "commit", "-qm", "change")
             self.assertFalse(sync_generation(root, store))
             self.assertEqual(store.generation(), generation)
-            self.assertEqual(store.criteria()[0]["evidence_generation"], generation)
 
     def test_reset_to_different_content_stales_generation(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -66,9 +64,9 @@ class FastPushTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); base = init_repo(root); store = make_store(root)
             (root / "tracked.txt").write_text("changed\n"); git(root, "add", "tracked.txt")
-            sync_generation(root, store); store.set_criterion(0, "pass", "reviewed")
             git(root, "commit", "-qm", "change")
-            self.assertFalse(sync_generation(root, store))
+            sync_generation(root, store)
+            store.record_observed_validation(["pytest", "-q"], 0, cwd=root, evidence="publish validation passed")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, source_only=True)
             self.assertTrue(plan["ready"]); self.assertTrue(plan["source_only"]); self.assertNotIn("release_id", plan)
             target = plan["target"]
@@ -83,6 +81,7 @@ class FastPushTests(unittest.TestCase):
     def test_release_publish_still_requires_receipt_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); base = init_repo(root); store = make_store(root)
+            store.record_observed_validation(["pytest", "-q"], 0, cwd=root, evidence="publish validation passed")
             with self.assertRaisesRegex(RuntimeError, "no release receipt"):
                 publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base)
 

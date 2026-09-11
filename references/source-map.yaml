@@ -207,12 +207,6 @@
       "local": "scripts/upstream/shell_snapshot/powershell_snapshot.ps1",
       "mode": "EXACT_EXTRACT",
       "upstream": "codex-rs/shell-command/src/shell_snapshot.rs#powershell_snapshot_script"
-    },
-    {
-      "git_blob_sha1": "62391c523cab01022a32c6bb685292ed1e8d3205",
-      "local": "references/upstream-codex-goal-continuation.md",
-      "mode": "EXACT_VENDOR",
-      "upstream": "codex-rs/ext/goal/templates/goals/continuation.md"
     }
   ],
   "ports": [
@@ -221,9 +215,7 @@
       "local": "scripts/codex_loop_runtime/output_buffer.py",
       "mode": "LOCAL_RUNTIME_PORT",
       "tests": {
-        "local": [
-          "tests/compat/test_output_buffer.py"
-        ],
+        "local": [],
         "upstream": [
           "codex-rs/core/src/unified_exec/head_tail_buffer_tests.rs"
         ]
@@ -237,9 +229,7 @@
       "local": "scripts/codex_loop_runtime/output_stream.py",
       "mode": "LOCAL_RUNTIME_PORT",
       "tests": {
-        "local": [
-          "tests/compat/test_output_buffer.py"
-        ],
+        "local": [],
         "upstream": [
           "codex-rs/core/src/unified_exec/async_watcher_tests.rs"
         ]
@@ -253,10 +243,7 @@
       "local": "scripts/codex_loop_runtime/process_manager.py",
       "mode": "HYBRID",
       "tests": {
-        "local": [
-          "tests/compat/test_service_session.py",
-          "tests/compat/test_process_limits.py"
-        ],
+        "local": [],
         "upstream": [
           "codex-rs/core/src/unified_exec/process_manager_tests.rs"
         ]
@@ -272,9 +259,7 @@
       "local": "scripts/codex_loop_runtime/instructions.py",
       "mode": "LOCAL_RUNTIME_PORT",
       "tests": {
-        "local": [
-          "tests/compat/test_instructions.py"
-        ],
+        "local": [],
         "upstream": [
           "codex-rs/core/src/agents_md_tests.rs"
         ]
@@ -289,9 +274,7 @@
       "local": "scripts/codex_loop_runtime/command_identity.py",
       "mode": "LOCAL_RUNTIME_PORT",
       "tests": {
-        "local": [
-          "tests/compat/test_command_safety.py"
-        ],
+        "local": [],
         "upstream": [
           "codex-rs/core/src/command_canonicalization_tests.rs"
         ]
@@ -306,9 +289,7 @@
       "local": "scripts/codex_loop_runtime/command_safety.py",
       "mode": "HYBRID",
       "tests": {
-        "local": [
-          "tests/compat/test_command_safety.py"
-        ],
+        "local": [],
         "upstream": []
       },
       "upstream": [
@@ -316,14 +297,12 @@
       ]
     },
     {
-      "divergence": "Uses filesystem/Git reconciliation plus local mutation journal instead of Codex patch delta objects. The current working focus may declare an expected change surface; changed paths outside it are projected as scope_drift for immediate semantic review, but drift is advisory and never a completion blocker or mutation permission. Small ignored inputs are bounded-content monitored/protected; oversized or unreadable ignored paths are surfaced explicitly as opaque and block completion unless a current-generation explicit freshness waiver accepts that uncertainty. Git probes force file-mode observation so core.filemode=false cannot hide chmod freshness changes.",
+      "divergence": "Uses filesystem/Git reconciliation plus a local mutation journal instead of Codex patch delta objects. It reports actual changed paths, protected pre-existing work, and bounded ignored-path observations; semantic scope judgment is model-owned. Git probes force file-mode observation so core.filemode=false cannot hide chmod changes.",
       "local": "scripts/codex_loop_runtime/change_tracker.py",
       "mode": "HYBRID",
       "scope": "local_journal_plus_workspace_reconciliation",
       "tests": {
-        "local": [
-          "tests/compat/test_state_completion.py"
-        ],
+        "local": [],
         "upstream": []
       },
       "upstream": [
@@ -331,17 +310,12 @@
       ]
     },
     {
-      "divergence": "SQLite task-local subset only: a privacy-scrubbed immutable request anchor plus ordered user steers define the effective request, while the working objective/criteria are execution aids; one in-progress working focus carries the current subgoal, non-goals, and optional expected change surface. Acceptance/steer evidence is generation-bound; validation uses exact argv plus actual cwd and one-time plans without persisting raw arguments, and a failing result may be recorded as unrelated_to_request only with semantic evidence bound to the current effective-request hash so later steers invalidate that judgment; freshness waivers bind the current generation and exact opaque-path set; non-idempotent external actions use stable-identity deduplication and dispatch-boundary states; release receipts bind artifact SHA-256 to Git commit/tree and generation; Git mutation authorization is scope-specific; process/external/checkpoint bookkeeping remains task-private; conversation/thread persistence and unfinished-turn suspension remain host-owned.",
+      "divergence": "Private task-local state keeps only durable execution facts: immutable request anchor, ordered steers, optional Codex-style pending/in_progress/completed plan, acceptance text, direct validation observations, protected-work baseline, and consequential external/process state. There is no criterion PASS, steer acknowledgement, validation-plan handshake, or semantic lifecycle state machine.",
       "local": "scripts/codex_loop_runtime/state.py",
       "mode": "HYBRID",
       "scope": "portable_subset_only",
       "tests": {
-        "local": [
-          "tests/compat/test_state_completion.py",
-          "tests/compat/test_audit_boundaries.py",
-          "tests/compat/test_modified_design_reaudit.py",
-          "tests/compat/test_release_lineage.py"
-        ],
+        "local": [],
         "upstream": []
       },
       "upstream": [
@@ -353,26 +327,11 @@
       ]
     },
     {
-      "divergence": "Lifecycle capability projection is a Codex Loop local extension over existing deterministic state. Skill admission enters the objective lifecycle directly; this module only derives active optional capabilities/requirements and does not implement a second admission classifier, model scheduler, planning engine, or host orchestration authority.",
-      "local": "scripts/codex_loop_runtime/lifecycle.py",
-      "mode": "LOCAL_EXTENSION",
-      "tests": {
-        "local": [
-          "tests/compat/test_lifecycle.py",
-          "tests/compat/test_context_projection.py"
-        ],
-        "upstream": []
-      },
-      "upstream": []
-    },
-    {
       "divergence": "Checkpoint/re-entry protocol, not actual host context compaction.",
       "local": "scripts/codex_loop_runtime/checkpoint.py",
       "mode": "BEHAVIORAL_PORT",
       "tests": {
-        "local": [
-          "tests/compat/test_checkpoint.py"
-        ],
+        "local": [],
         "upstream": []
       },
       "upstream": [
@@ -381,16 +340,11 @@
       ]
     },
     {
-      "divergence": "Deterministic local stop gate plus Codex Loop local lineage invariant: the completion audit is fresh only for the effective-request hash (immutable request anchor plus ordered steers) and current workspace generation. Working-objective rewrites do not change request authority. Acceptance and steer evidence, validation, diff review, unresolved external/process state, Git mutation scope, and canonical-workspace identity are checked locally. It cannot force host model scheduling, Git/network transport, or Codex session turn suspension/recovery.",
+      "divergence": "Deterministic finish guard only. It checks machine-observable blockers such as unfinished durable-plan steps, missing required current validation, unresolved external/process state, protected/read-only mutation, and workspace binding mismatch. Semantic final acceptance is model-owned.",
       "local": "scripts/codex_loop_runtime/completion.py",
       "mode": "HYBRID",
       "tests": {
-        "local": [
-          "tests/compat/test_state_completion.py",
-          "tests/compat/test_audit_boundaries.py",
-          "tests/compat/test_modified_design_reaudit.py",
-          "tests/compat/test_release_lineage.py"
-        ],
+        "local": [],
         "upstream": []
       },
       "upstream": [
@@ -403,12 +357,7 @@
       "local": "scripts/codex_loop_runtime/write_transaction.py",
       "mode": "LOCAL_RUNTIME_PORT",
       "tests": {
-        "local": [
-          "tests/compat/test_write_transaction.py",
-          "tests/compat/test_special_files.py",
-          "tests/compat/test_audit_boundaries.py",
-          "tests/compat/test_modified_design_reaudit.py"
-        ],
+        "local": [],
         "upstream": []
       },
       "upstream": [
@@ -422,9 +371,7 @@
       "local": "scripts/codex_loop_runtime/environment.py",
       "mode": "LOCAL_RUNTIME_PORT",
       "tests": {
-        "local": [
-          "tests/compat/test_environment.py"
-        ],
+        "local": [],
         "upstream": []
       },
       "upstream": [
@@ -437,10 +384,7 @@
       "local": "scripts/codex_loop_runtime/shell_snapshot.py",
       "mode": "HOST_ADAPTER",
       "tests": {
-        "local": [
-          "tests/compat/test_shell_snapshot.py",
-          "tests/compat/test_modified_design_reaudit.py"
-        ],
+        "local": [],
         "upstream": []
       },
       "upstream": [
@@ -461,7 +405,6 @@
     "scripts/codex_loop_runtime/host_config.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/instructions.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/interaction_routing.py": "HOST_ADAPTER",
-    "scripts/codex_loop_runtime/lifecycle.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/model_relay.py": "LOCAL_EXTENSION",
     "scripts/codex_loop_runtime/output_buffer.py": "LOCAL_RUNTIME_PORT",
     "scripts/codex_loop_runtime/output_stream.py": "LOCAL_RUNTIME_PORT",

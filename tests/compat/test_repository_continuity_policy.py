@@ -8,12 +8,15 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class RepositoryContinuityPolicyTests(unittest.TestCase):
-    def test_skill_routes_repository_entry_hot_before_cold_acquisition(self):
+    def test_skill_loads_repository_continuity_only_for_repository_routing(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("Repository continuity gate — HOT before WARM before COLD", skill)
-        self.assertIn("`HOT_REUSE` is the normal path", skill)
-        self.assertIn("Only `COLD_ACQUIRE_REQUIRED`", skill)
-        self.assertIn("A moved remote HEAD is synchronization state", skill)
+        continuity = (ROOT / "references" / "repository-continuity.md").read_text(encoding="utf-8")
+        self.assertIn("references/repository-continuity.md", skill)
+        self.assertIn("Keep routing checks at the action boundary", skill)
+        self.assertIn("HOT -> WARM -> COLD", continuity)
+        self.assertIn("`HOT_REUSE` always wins", continuity)
+        self.assertIn("COLD_ACQUIRE_REQUIRED", continuity)
+        self.assertIn("REMOTE_HEAD_MOVED != SOURCE_IDENTITY_STALE", continuity)
 
     def test_source_acquisition_is_cold_only(self):
         text = (ROOT / "references" / "source-acquisition.md").read_text(encoding="utf-8")

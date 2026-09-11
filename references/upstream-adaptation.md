@@ -1,49 +1,36 @@
-# Upstream Codex goal adaptation
+# Upstream Codex adaptation
 
-Codex Loop adopts the completion-audit semantics from the public OpenAI Codex goal continuation template before adding local policy.
+Codex Loop now follows Codex primarily by **removing orchestration**, not by cloning the Codex runtime. The ChatGPT host remains authoritative for model sampling, tools, sandboxing, approvals, and conversation context.
 
-## Exact upstream resource
+## Working plan
 
-- Repository: `openai/codex`
-- Upstream path: `codex-rs/ext/goal/templates/goals/continuation.md`
-- Observed upstream `main`: `2008d27e98d7b46170d2d464b36dbf97008611b8`
-- Exact file Git blob SHA-1: `62391c523cab01022a32c6bb685292ed1e8d3205`
-- Local exact copy: `references/upstream-codex-goal-continuation.md`
-- License: Apache License 2.0, as already carried by this repository
+Public Codex uses a very small plan model: each step is `pending`, `in_progress`, or `completed`, with at most one current `in_progress` step. Codex Loop ports that shape directly as optional working memory. It does not add semantic lifecycle states around those steps.
 
-Verify the local copy with `git hash-object references/upstream-codex-goal-continuation.md`; it must equal the blob above.
+Relevant upstream surface: `codex-rs/core/src/tools/handlers/plan_spec.rs` and the base instructions that describe `update_plan`.
 
-## Directly adopted semantics
+## Review
 
-Use the upstream `Completion audit` section as the normative completion rule:
+Public Codex supports reviewing uncommitted changes, a base-branch diff, a commit, or custom instructions. Its review rubric favors discrete actionable bugs, rejects speculative/nit findings, and prefers zero findings when nothing meaningful should be fixed.
 
-- treat completion as unproven before the audit;
-- derive requirements again from the authoritative user request and referenced current specifications/instructions;
-- identify authoritative evidence for every explicit requirement, numbered item, named artifact, command, test, gate, invariant, and deliverable;
-- match verification scope to requirement scope;
-- treat uncertain, indirect, incomplete, or missing evidence as not achieved;
-- never use intent, partial progress, memory, or a plausible final answer as proof of completion.
+Codex Loop uses the same behavioral rule through `references/codex-review.md`. Review stays optional and normally singular.
 
-## Thin host adapter
+Relevant upstream surfaces: `codex-rs/prompts/src/review_request.rs` and `codex-rs/prompts/templates/review/rubric.md`.
 
-The ChatGPT Skill host does not expose Codex's `update_goal` primitive. Codex Loop therefore keeps the upstream completion semantics but records the audit in its private task runtime with `objective-audit` and requires a fresh passing audit before `completion` may return `PASS` for newly CLI-bootstrapped tasks.
+## Resume and retained context
 
-The audit is bound to `effective_request_sha256` plus the current workspace generation. The effective request is the immutable request anchor plus ordered user steers. A later steer changes that request hash, and a later workspace mutation changes generation, so either makes prior completion evidence stale. Rewriting a working objective summary does not alter request authority.
+Public Codex persists rollouts and reconstructs session state on resume; its context manager keeps host-owned retained context separate from the replaceable model window. Codex Loop adopts the invariant rather than porting the Rust runtime wholesale:
 
-Working bootstrap criteria remain execution aids and do not replace the upstream-style objective audit.
+- the request/steers/short plan are durable facts when persistence is enabled;
+- ordinary model history remains host-owned;
+- resume re-observes current workspace/external reality before continuing;
+- historical validation is not promoted to current proof.
 
-## Coding-precision semantics observed upstream
+Relevant upstream surfaces: `codex-rs/rollout/src/recorder.rs`, `codex-rs/core/src/session/rollout_reconstruction.rs`, and `codex-rs/core/src/context_manager/history.rs`.
 
-The completion resource above remains the exact vendored normative resource. Separately, the precision behavior in this release was spot-checked against public Codex `main` at `33bdf976ccd1130823d4fe041e4d5075ab511d67` on 2026-09-11; this targeted observation does not advance the repository-wide frozen source-map audit pin.
+## Existing-code execution style
 
-- `codex-rs/protocol/src/protocol.rs` blob `81d799b61578e5e8140b7ecf90079b38b8ee501b` explicitly marks model-visible user requests with `USER_MESSAGE_BEGIN = "## My request for Codex:"`. Codex Loop adapts that retained-request authority to the ChatGPT host as a task-private immutable, privacy-scrubbed `request_anchor`; ordered later user steers extend the effective request rather than rewriting the anchor.
-- `codex-rs/protocol/src/plan_tool.rs` blob `affb4c1896b604356984fa0e1202178e961c8bbb` defines plan steps with `pending`, `in_progress`, and `completed` status. The Codex base instructions require exactly one `in_progress` plan step while work remains. Codex Loop ports only the useful working-memory invariant: one current `in_progress` focus, with optional non-goals and expected change surface, rather than cloning the full plan/tool runtime.
-- `codex-rs/protocol/src/prompts/base_instructions/default.md` blob `907ff8b877026871b088f01f4366cea36e1f02cd` instructs existing-code work to be surgical/minimal, not to fix unrelated bugs or broken tests, to use patch-style editing, and to validate from the most specific changed behavior toward broader checks. Codex Loop adopts those behavioral rules directly while leaving actual host patch/sandbox/tool authority with ChatGPT or the active execution host.
-
-`expected_change_surface` and `scope_drift` are Codex Loop local extensions. They make the existing deterministic change tracker useful as an attention signal, but they do not create a new mutation gate or substitute for semantic diff review.
+Use surgical edits, do not widen scope to unrelated cleanup, and validate the most specific changed behavior before broader checks. Let the model choose the execution path instead of encoding a fixed checker DAG.
 
 ## Intentionally not emulated
 
-Do not invent local equivalents for upstream host primitives merely to imitate their names. In particular, this adaptation does not add a domain-workflow dependency registry, domain-specific completion handshake, automatic goal continuation, Codex token-budget accounting, or `update_goal` emulation when the ChatGPT host does not expose equivalent authority.
-
-When an objective names another Skill or workflow, Codex Loop remains domain-agnostic: the audit may require authoritative evidence that the named workflow reached its required end state, but Codex Loop does not duplicate or interpret that workflow's internal semantics.
+Do not recreate Codex's full session runtime, model loop, token manager, sandbox, approval engine, or tool dispatcher inside the Skill. Do not retain the former Codex Loop objective-audit, criterion-PASS, steer-ack, validation-plan, focus/scope-drift, or repeated-fresh-review protocols. Host-native equivalents and model judgment are preferred whenever they already solve the problem.

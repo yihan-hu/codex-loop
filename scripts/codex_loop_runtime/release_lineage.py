@@ -447,10 +447,9 @@ def _ancestor_status(root: Path, ancestor: str, descendant: str) -> bool:
 
 def _require_publish_audit_readiness(store: Any) -> None:
     generation = store.generation()
-    if bool(store.get_meta("requires_validation", True)):
-        validation = store.validation_state_for_generation(generation)
-        if int(validation.get("passed_count", 0)) < 1 or int(validation.get("failed_count", 0)) > 0:
-            raise RuntimeError("publish requires current-generation passing validation with no unresolved blocking validation failure")
+    validation = store.validation_state_for_generation(generation)
+    if int(validation.get("passed_count", 0)) < 1 or int(validation.get("failed_count", 0)) > 0:
+        raise RuntimeError("publish requires current-generation passing validation with no failing validation result")
 
 
 def publish_plan(

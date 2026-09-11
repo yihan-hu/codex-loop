@@ -49,11 +49,11 @@ def ready_store(root: Path) -> StateStore:
     store.configure_task(
         root.name,
         "publication router",
-        ["route publication"], request_anchor="publication router",
+        ["route publication"],
         requires_validation=False,
-        no_validation_reason="test fixture exercises deterministic publication routing",
-    )
+    request_anchor="publication router")
     store.set_meta("workspace_binding", capture_workspace_binding(root))
+    store.record_observed_validation(["pytest", "-q"], 0, cwd=root, evidence="publication fixture validation passed")
     return store
 
 

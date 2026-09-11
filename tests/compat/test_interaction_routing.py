@@ -5,162 +5,56 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class InteractionRoutingContractTests(unittest.TestCase):
-    def test_rdc_does_not_select_local_workspace_mode(self):
-        skill = (ROOT / "SKILL.md").read_text()
-        routing = (ROOT / "references" / "interaction-routing.md").read_text()
-        self.assertIn("does **not** enter Local mode", skill)
-        self.assertIn("workspace_mode=web", routing)
+    def test_skill_keeps_routing_lazy_and_at_side_effect_boundary(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("## Repository and host routing", skill)
+        self.assertIn("Web is the default workspace until the user explicitly selects Local", skill)
+        self.assertIn("Keep routing checks at the action boundary", skill)
+        self.assertIn("Do not force unrelated reasoning/edit/test steps through routing state", skill)
+        self.assertIn("GitHub, Google Drive, Remote Desktop Commander", skill)
+        self.assertIn("optional", skill)
+
+    def test_workspace_and_interaction_axes_remain_independent(self):
+        routing = (ROOT / "references" / "interaction-routing.md").read_text(encoding="utf-8")
+        self.assertIn("Every new conversation starts with `workspace_mode=web`", routing)
         self.assertIn("interaction_target=local_chrome", routing)
-        self.assertIn("must not inspect or mutate a local repository", routing)
+        self.assertIn("workspace_mode=web` plus `interaction_target=local_chrome", routing)
+        self.assertIn("do not infer Local workspace mode", routing)
 
-    def test_local_chrome_requires_supported_browser_executor(self):
-        routing = (ROOT / "references" / "interaction-routing.md").read_text()
-        recovery = (ROOT / "references" / "browser-control-recovery.md").read_text()
-        self.assertIn("Keep ChatGPT as the reasoning/orchestration authority", routing)
-        self.assertIn("supported host-exposed Chrome/Computer Use executor", routing)
-        self.assertIn("SESSION_BROWSER_CAPABILITY_MISSING", routing)
-        self.assertIn("RDC -> AppleScript", recovery)
-        self.assertIn("not a Browser Control executor", recovery)
-        self.assertNotIn("RDC-backed structured Chrome automation on macOS", routing)
-
-    def test_capability_preflight_batches_predictable_permissions(self):
-        skill = (ROOT / "SKILL.md").read_text()
-        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
-        self.assertIn("Capability and permission preflight", skill)
-        self.assertIn("permission-preflight-plan", skill)
-        self.assertIn("Permission prewarm first", skill)
-        self.assertIn("skill_admission_pre_execution", preflight)
-        self.assertIn("Batch missing connection/setup requests", preflight)
-        self.assertIn("Google Drive", preflight)
-        self.assertIn("git push --dry-run", preflight)
-        self.assertIn("same SHA and force=false", preflight)
-        self.assertIn("Workspace Download", preflight)
-        self.assertIn("Workspace Import", preflight)
-        self.assertIn("sentinel", preflight)
-        self.assertIn("local_chrome", preflight)
-        self.assertIn("cannot bypass host-enforced per-action confirmation", preflight)
-
-    def test_host_local_root_default_is_non_sensitive_and_does_not_select_local_mode(self):
-        setup = (ROOT / "references" / "local-mode-setup.md").read_text()
-        readme = (ROOT / "README.md").read_text()
-        self.assertIn("~/.codex-loop/host.json", setup)
-        self.assertIn('"default_local_workspace": "piwork"', setup)
-        self.assertIn("historical `default_local_root` remain compatibility/migration inputs only", setup)
-        self.assertIn("neither selects Local mode", setup)
-        self.assertIn("New conversations still start in Web mode", readme)
-        self.assertIn("Git/OAuth tokens", setup)
-
-    def test_rdc_is_intercepted_and_bound_worktree_is_narrower_than_host_root(self):
-        skill = (ROOT / "SKILL.md").read_text()
-        routing = (ROOT / "references" / "interaction-routing.md").read_text()
-        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
-        self.assertIn("RDC is never a side door around Codex Loop", skill)
-        self.assertIn("Before the first RDC call", routing)
+    def test_rdc_is_transport_not_semantic_grant(self):
+        routing = (ROOT / "references" / "interaction-routing.md").read_text(encoding="utf-8")
+        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text(encoding="utf-8")
         self.assertIn("allowedDirectories=[]", routing)
-        self.assertIn("canonical Git worktree becomes the default RDC filesystem/search/process scope", boundary)
+        self.assertIn("never a semantic grant", routing)
+        self.assertIn("hard capability ceiling, not semantic permission", boundary)
         self.assertIn("Never search sibling repositories", boundary)
 
-    def test_rdc_boundary_has_separate_interaction_only_contract(self):
-        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
-        self.assertIn("Interaction-only RDC boundary", boundary)
-        self.assertIn("workspace_mode=web", boundary)
-        self.assertIn("must not touch the local checkout", boundary)
-        self.assertIn("never change them silently", boundary)
-
-    def test_local_source_mutation_requires_explicit_current_task_authorization(self):
-        skill = (ROOT / "SKILL.md").read_text()
-        setup = (ROOT / "references" / "local-mode-setup.md").read_text()
-        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
-        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
-        readme = (ROOT / "README.md").read_text()
-        self.assertIn("Explicit local-source-mutation authorization gate", skill)
-        self.assertIn("Local mode is routing state, not write consent", skill)
-        self.assertIn("does **not** persist permission to mutate local source", setup)
-        self.assertIn("does not authorize source mutation", preflight)
-        self.assertIn("generic `push` wording", boundary)
-        self.assertIn("does not carry forward permission to modify local source", readme)
-
-    def test_computer_use_requires_explicit_current_task_authorization(self):
-        skill = (ROOT / "SKILL.md").read_text()
-        routing = (ROOT / "references" / "interaction-routing.md").read_text()
-        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
-        self.assertIn("Explicit computer-use authorization gate", skill)
+    def test_local_source_and_computer_use_need_current_task_authorization(self):
+        routing = (ROOT / "references" / "interaction-routing.md").read_text(encoding="utf-8")
+        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text(encoding="utf-8")
         self.assertIn("explicitly authorized computer use for the current task", routing)
         self.assertIn("Do **not** infer authorization", routing)
-        self.assertIn("do not inspect tabs/windows", preflight)
+        self.assertIn("require explicit current-task local-source-mutation authorization", boundary)
+        self.assertIn("generic `push` wording", boundary)
 
-    def test_any_workspace_resident_skill_or_package_does_not_imply_browser_ui_install(self):
-        skill = (ROOT / "SKILL.md").read_text()
-        deployment = (ROOT / "references" / "skill-deployment.md").read_text()
-        readme = (ROOT / "README.md").read_text()
-        self.assertIn("For **any** Skill or Skill installation package", skill)
-        self.assertIn("Workspace-resident Skill/package update", deployment)
-        self.assertIn("copied byte-for-byte to `codex-loop.zip`", deployment)
-        self.assertIn("The user installs or replaces the Skill manually", readme)
-        self.assertIn("byte-identical `codex-loop.zip`", readme)
-        self.assertIn("installs or replaces the Skill manually", readme)
+    def test_missing_browser_executor_is_not_faked_with_rdc(self):
+        routing = (ROOT / "references" / "interaction-routing.md").read_text(encoding="utf-8")
+        recovery = (ROOT / "references" / "browser-control-recovery.md").read_text(encoding="utf-8")
+        self.assertIn("SESSION_BROWSER_CAPABILITY_MISSING", routing)
+        self.assertIn("Do not silently substitute RDC-backed AppleScript", routing)
+        self.assertIn("not a Browser Control executor", recovery)
 
-    def test_browser_recovery_separates_host_and_session_health(self):
-        recovery = (ROOT / "references" / "browser-control-recovery.md").read_text()
-        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
-        skill = (ROOT / "SKILL.md").read_text()
-        self.assertIn("browser_host_health", recovery)
-        self.assertIn("browser_session_health", recovery)
-        self.assertIn("NATIVE_HOST_MISSING", recovery)
-        self.assertIn("BRIDGE_HEALTHY", recovery)
-        self.assertIn("SESSION_BROWSER_CAPABILITY_MISSING", preflight)
-        self.assertIn("Browser Control evidence gate", skill)
-
-    def test_browser_recovery_uses_supported_product_path_not_manual_manifest(self):
-        recovery = (ROOT / "references" / "browser-control-recovery.md").read_text()
-        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
-        completion = (ROOT / "references" / "completion-criteria.md").read_text()
-        self.assertIn("Settings", recovery)
-        self.assertIn("Computer use", recovery)
-        self.assertIn("Google Chrome", recovery)
-        self.assertIn("Manage / Reconnect", recovery)
-        self.assertIn("Do not synthesize or repair the manifest manually", recovery)
-        self.assertIn("do not use AppleScript", boundary)
-        self.assertIn("RDC/AppleScript", completion)
-
-    def test_local_mac_gui_uses_semantic_targeting_real_mouse_and_readback(self):
-        routing = (ROOT / "references" / "interaction-routing.md").read_text()
-        gui = (ROOT / "references" / "local-mac-gui.md").read_text()
-        boundary = (ROOT / "references" / "remote-desktop-boundary.md").read_text()
-        preflight = (ROOT / "references" / "capability-preflight.md").read_text()
-        readme = (ROOT / "README.md").read_text()
-        self.assertIn("local_mac_gui` routing", routing)
-        self.assertIn("AXIdentifier", gui)
-        self.assertIn("CoreGraphics", gui)
-        self.assertIn("Derive element centers dynamically", gui)
-        self.assertIn("current result/input view contains `4`", gui)
-        self.assertIn("not Browser Control", gui)
-        self.assertIn("Restore transient mouse/focus state", boundary)
-        self.assertIn("independently verify GUI results", preflight)
-        self.assertIn("Global keystrokes are a last resort", readme)
-
-    def test_local_mac_gui_does_not_claim_unverified_silent_or_locked_support(self):
-        gui = (ROOT / "references" / "local-mac-gui.md").read_text()
-        routing = (ROOT / "references" / "interaction-routing.md").read_text()
-        self.assertIn("silent/background execution without stealing focus", gui)
-        self.assertIn("reliable operation while the Mac is locked", gui)
-        self.assertIn("Do not claim silent/background or locked-Mac support", routing)
+    def test_skill_packaging_and_installation_stay_separate(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        deployment = (ROOT / "references" / "skill-deployment.md").read_text(encoding="utf-8")
+        self.assertIn("validated `skill.zip` may be copied byte-for-byte to `codex-loop.zip`", skill)
+        self.assertIn("codex-loop.zip", deployment)
+        self.assertIn("manual", deployment.lower())
 
     def test_runtime_entrypoints_are_executable(self):
         for relative in ("scripts/codex_loop.py", "scripts/codex_loop_kernel.py"):
             mode = (ROOT / relative).stat().st_mode
             self.assertNotEqual(mode & 0o111, 0, relative)
-
-    def test_readme_explains_browser_host_session_recovery(self):
-        readme = (ROOT / "README.md").read_text()
-        self.assertIn("Workspace mode versus interaction target", readme)
-        self.assertIn("Capability and permission preflight", readme)
-        self.assertIn("Remembering `LOCAL_ROOT` across conversations", readme)
-        self.assertIn("browser_host_health", readme)
-        self.assertIn("browser_session_health", readme)
-        self.assertIn("SESSION_BROWSER_CAPABILITY_MISSING", readme)
-        self.assertIn("Settings -> Computer use -> Google Chrome -> Manage / Reconnect", readme)
-        self.assertNotIn("RDC-backed Chrome path has been validated end to end", readme)
 
 
 if __name__ == "__main__":

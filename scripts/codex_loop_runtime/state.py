@@ -25,6 +25,7 @@ PROFILES = {
 MAX_REQUEST_AUTHORITY_CHARS = 65536
 READ_ONLY_PROFILES = {"code_review", "investigation"}
 NO_WRITE_PROFILES = READ_ONLY_PROFILES | {"command_only"}
+PLAN_STATUSES = {"pending", "in_progress", "completed"}
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 SCHEMA = """
@@ -32,10 +33,7 @@ CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS criteria (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ordinal INTEGER NOT NULL UNIQUE,
-    text TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    evidence TEXT,
-    evidence_generation INTEGER
+    text TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS baseline (
     path TEXT PRIMARY KEY,
@@ -55,15 +53,6 @@ CREATE TABLE IF NOT EXISTS mutations (
     override_reason TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE IF NOT EXISTS validation_plans (
-    plan_id TEXT PRIMARY KEY,
-    generation INTEGER NOT NULL,
-    command_json TEXT NOT NULL,
-    cwd TEXT NOT NULL,
-    consumed INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    consumed_at TEXT
-);
 CREATE TABLE IF NOT EXISTS validations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     generation INTEGER NOT NULL,
@@ -82,12 +71,8 @@ CREATE TABLE IF NOT EXISTS validations (
     cleanup_evidence TEXT,
     warnings_json TEXT NOT NULL DEFAULT '[]',
     legacy_inferred INTEGER NOT NULL DEFAULT 1,
-    disposition TEXT NOT NULL DEFAULT 'blocking',
-    disposition_evidence TEXT,
-    disposition_request_sha256 TEXT,
     source TEXT NOT NULL DEFAULT 'local_runtime',
     evidence TEXT,
-    plan_id TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS external_actions (
@@ -123,11 +108,7 @@ CREATE TABLE IF NOT EXISTS processes (
 CREATE TABLE IF NOT EXISTS steers (
     steer_id TEXT PRIMARY KEY,
     text TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT 'pending',
-    evidence TEXT,
-    acked_generation INTEGER,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS release_receipts (
     release_id TEXT PRIMARY KEY,
@@ -367,63 +348,7 @@ class StateStore:
         _ensure_private_dir(self.path.parent)
         with self.connect() as db:
             db.executescript(SCHEMA)
-            # New non-idempotent deduplication is enforced transactionally so legacy task
-            # databases containing duplicate identities remain inspectable/cleanable.
             db.execute("DROP INDEX IF EXISTS external_non_idempotent_identity")
-            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(external_actions)")}
-            if "failure_resolved" not in columns:
-                db.execute("ALTER TABLE external_actions ADD COLUMN failure_resolved INTEGER NOT NULL DEFAULT 0")
-            if "failure_resolution_evidence" not in columns:
-                db.execute("ALTER TABLE external_actions ADD COLUMN failure_resolution_evidence TEXT")
-            criteria_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(criteria)")}
-            if "evidence_generation" not in criteria_columns:
-                db.execute("ALTER TABLE criteria ADD COLUMN evidence_generation INTEGER")
-            steer_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(steers)")}
-            if "acked_generation" not in steer_columns:
-                db.execute("ALTER TABLE steers ADD COLUMN acked_generation INTEGER")
-            validation_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(validations)")}
-            if "cwd" not in validation_columns:
-                db.execute("ALTER TABLE validations ADD COLUMN cwd TEXT NOT NULL DEFAULT ''")
-            if "plan_id" not in validation_columns:
-                db.execute("ALTER TABLE validations ADD COLUMN plan_id TEXT")
-            validation_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(validations)")}
-            validation_additions = {
-                "observed_exit_code": "INTEGER",
-                "workload_status": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
-                "workload_evidence_kind": "TEXT NOT NULL DEFAULT 'none'",
-                "workload_evidence": "TEXT",
-                "workload_adapter": "TEXT",
-                "process_status": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
-                "process_evidence": "TEXT",
-                "cleanup_status": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
-                "cleanup_evidence": "TEXT",
-                "warnings_json": "TEXT NOT NULL DEFAULT '[]'",
-                "legacy_inferred": "INTEGER NOT NULL DEFAULT 1",
-                "disposition_request_sha256": "TEXT",
-            }
-            for column, declaration in validation_additions.items():
-                if column not in validation_columns:
-                    db.execute(f"ALTER TABLE validations ADD COLUMN {column} {declaration}")
-            db.execute(
-                "UPDATE validations SET observed_exit_code=exit_code WHERE observed_exit_code IS NULL AND legacy_inferred=1"
-            )
-            db.execute(
-                "UPDATE validations SET workload_status=CASE WHEN passed=1 THEN 'PASSED' ELSE 'FAILED' END "
-                "WHERE workload_status='UNKNOWN' AND legacy_inferred=1"
-            )
-            db.execute(
-                "UPDATE validations SET workload_evidence_kind='machine_authoritative', workload_evidence=COALESCE(workload_evidence,evidence), "
-                "process_status=CASE WHEN exit_code=0 THEN 'EXITED_CLEAN' ELSE 'EXITED_NONZERO' END, "
-                "process_evidence=COALESCE(process_evidence,evidence), cleanup_status='NOT_REQUIRED' WHERE legacy_inferred=1"
-            )
-            mutation_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(mutations)")}
-            if "override_reason" not in mutation_columns:
-                db.execute("ALTER TABLE mutations ADD COLUMN override_reason TEXT")
-            process_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(processes)")}
-            if "failure_resolved" not in process_columns:
-                db.execute("ALTER TABLE processes ADD COLUMN failure_resolved INTEGER NOT NULL DEFAULT 0")
-            if "failure_resolution_evidence" not in process_columns:
-                db.execute("ALTER TABLE processes ADD COLUMN failure_resolution_evidence TEXT")
         _chmod(self.path, 0o600)
 
     @contextmanager
@@ -478,8 +403,7 @@ class StateStore:
         *,
         request_anchor: str,
         profile: str = "regular",
-        requires_validation: bool = True,
-        no_validation_reason: str | None = None,
+        requires_validation: bool = False,
         requires_clean_process_exit: bool = False,
     ) -> None:
         task_id = validate_task_id(task_id)
@@ -499,30 +423,21 @@ class StateStore:
         auto_criterion = not clean_criteria
         if auto_criterion:
             clean_criteria = [objective]
-        no_validation_reason = scrub_persisted_text(no_validation_reason, limit=4096)
-        if not requires_validation and not (no_validation_reason and no_validation_reason.strip()):
-            raise ValueError("disabling validation requires a concise reason")
         with self.connect() as db:
-            for table in ("criteria", "baseline", "mutations", "validation_plans", "validations", "external_actions", "checkpoints", "processes", "steers", "release_receipts", "isolation_events", "isolations"):
+            for table in ("criteria", "baseline", "mutations", "validations", "external_actions", "checkpoints", "processes", "steers", "release_receipts", "isolation_events", "isolations"):
                 db.execute(f"DELETE FROM {table}")
             db.execute("DELETE FROM metadata")
             db.executemany(
-                "INSERT INTO criteria(ordinal,text,status) VALUES(?,?, 'pending')",
+                "INSERT INTO criteria(ordinal,text) VALUES(?,?)",
                 [(i, text) for i, text in enumerate(clean_criteria)],
             )
         self.set_meta("task_id", task_id)
         self.set_meta("request_anchor", request_anchor)
         self.set_meta("objective", objective)
-        self.set_meta("working_focus", {
-            "current_subgoal": objective,
-            "status": "in_progress",
-            "non_goals": [],
-            "expected_change_surface": [],
-        })
+        self.set_meta("plan", [])
         self.set_meta("profile", profile)
         self.set_meta("criteria_auto_generated", auto_criterion)
         self.set_meta("requires_validation", bool(requires_validation))
-        self.set_meta("no_validation_reason", no_validation_reason)
         self.set_meta("requires_clean_process_exit", bool(requires_clean_process_exit))
         self.set_meta("generation", 0)
         self.set_meta("plan_revision", 0)
@@ -534,7 +449,7 @@ class StateStore:
     def request_steers(self) -> list[dict[str, Any]]:
         with self.connect() as db:
             rows = db.execute(
-                "SELECT steer_id,text,state,created_at FROM steers ORDER BY created_at,rowid"
+                "SELECT steer_id,text,created_at FROM steers ORDER BY created_at,rowid"
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -550,52 +465,43 @@ class StateStore:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
-    @staticmethod
-    def _normalize_change_surface_entry(value: str) -> str:
-        clean = (scrub_persisted_text(value, limit=1024) or "").strip().replace("\\", "/")
-        if not clean:
-            raise ValueError("expected change surface entries must not be empty")
-        if clean.startswith("/") or re.match(r"^[A-Za-z]:/", clean):
-            raise ValueError("expected change surface entries must be workspace-relative")
-        is_prefix = clean.endswith("/")
-        parts = [part for part in clean.split("/") if part not in {"", "."}]
-        if not parts or any(part == ".." for part in parts):
-            raise ValueError("expected change surface entries must stay inside the workspace")
-        normalized = "/".join(parts)
-        return normalized + "/" if is_prefix else normalized
+    def plan(self) -> list[dict[str, str]]:
+        value = self.get_meta("plan", [])
+        if not isinstance(value, list):
+            return []
+        result: list[dict[str, str]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            step = str(item.get("step", "")).strip()
+            status = str(item.get("status", "pending"))
+            if step and status in PLAN_STATUSES:
+                result.append({"step": step, "status": status})
+        return result
 
-    def set_working_focus(
-        self,
-        current_subgoal: str,
-        *,
-        non_goals: list[str] | None = None,
-        expected_change_surface: list[str] | None = None,
-    ) -> dict[str, Any]:
+    def set_plan(self, items: list[dict[str, Any]]) -> list[dict[str, str]]:
+        """Store a Codex-style thin plan: pending/in_progress/completed only."""
         self.ensure_active()
-        subgoal = (scrub_persisted_text(current_subgoal, limit=4096) or "").strip()
-        if not subgoal:
-            raise ValueError("working focus requires one non-empty current subgoal")
-        goals = [
-            (scrub_persisted_text(item, limit=2048) or "").strip()
-            for item in list(non_goals or [])[:32]
-        ]
-        goals = [item for item in goals if item]
-        surface = [
-            self._normalize_change_surface_entry(item)
-            for item in list(expected_change_surface or [])[:64]
-        ]
-        focus = {
-            "current_subgoal": subgoal,
-            "status": "in_progress",
-            "non_goals": goals,
-            "expected_change_surface": list(dict.fromkeys(surface)),
-        }
-        self.set_meta("working_focus", focus)
-        return focus
-
-    def working_focus(self) -> dict[str, Any]:
-        value = self.get_meta("working_focus", {})
-        return dict(value) if isinstance(value, dict) else {}
+        if len(items) > 32:
+            raise ValueError("plan may contain at most 32 steps")
+        clean: list[dict[str, str]] = []
+        in_progress = 0
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise ValueError(f"plan item {index} must be an object")
+            step = (scrub_persisted_text(str(item.get("step", "")), limit=2048) or "").strip()
+            status = str(item.get("status", "pending")).strip()
+            if not step:
+                raise ValueError(f"plan item {index} requires non-empty step text")
+            if status not in PLAN_STATUSES:
+                raise ValueError(f"plan item {index} has invalid status: {status}")
+            in_progress += status == "in_progress"
+            clean.append({"step": step, "status": status})
+        if in_progress > 1:
+            raise ValueError("plan may contain at most one in_progress step")
+        self.set_meta("plan", clean)
+        self.set_meta("plan_revision", int(self.get_meta("plan_revision", 0)) + 1)
+        return clean
 
     def cancel(self, reason: str | None = None) -> None:
         clean_reason = scrub_persisted_text(reason, limit=2048)
@@ -643,19 +549,7 @@ class StateStore:
 
     def criteria(self) -> list[dict[str, Any]]:
         with self.connect() as db:
-            return [dict(row) for row in db.execute("SELECT ordinal,text,status,evidence,evidence_generation FROM criteria ORDER BY ordinal")]
-
-    def set_criterion(self, ordinal: int, status: str, evidence: str | None = None) -> None:
-        if status not in {"pending", "pass", "fail", "blocked"}:
-            raise ValueError("invalid criterion status")
-        clean = scrub_persisted_text(evidence, limit=4096)
-        if status == "pass" and not (clean and clean.strip()):
-            raise ValueError("passing an acceptance criterion requires concise observable evidence")
-        evidence_generation = self.generation() if status == "pass" else None
-        with self.connect() as db:
-            cur = db.execute("UPDATE criteria SET status=?,evidence=?,evidence_generation=? WHERE ordinal=?", (status, clean, evidence_generation, int(ordinal)))
-            if cur.rowcount != 1:
-                raise ValueError(f"criterion {ordinal} does not exist")
+            return [dict(row) for row in db.execute("SELECT ordinal,text FROM criteria ORDER BY ordinal")]
 
     def replace_baseline(self, entries: list[tuple[str, str, int, int, bool]]) -> None:
         with self.connect() as db:
@@ -714,21 +608,8 @@ class StateStore:
         rec["sha256"] = identity.digest
         return cwd_norm, rec
 
-    def create_validation_plan(self, generation: int, argv: list[str], *, cwd: str | Path) -> dict[str, Any]:
-        self.ensure_active()
-        generation = int(generation)
-        if generation != self.generation():
-            raise RuntimeError(f"cannot plan validation for stale generation {generation}; current generation is {self.generation()}")
-        cwd_norm, rec = self._validation_record(argv, cwd)
-        plan_id = uuid.uuid4().hex
-        with self.connect() as db:
-            db.execute(
-                "INSERT INTO validation_plans(plan_id,generation,command_json,cwd,consumed) VALUES(?,?,?,?,0)",
-                (plan_id, generation, json.dumps(rec, sort_keys=True), cwd_norm),
-            )
-        return {"plan_id": plan_id, "generation": generation, "cwd": cwd_norm, "identity": rec["sha256"]}
-
     def _insert_validation_observation(
+
         self,
         *,
         generation: int,
@@ -736,7 +617,6 @@ class StateStore:
         cwd_norm: str,
         source: str,
         evidence: str,
-        plan_id: str | None,
         observation: ExecutionObservation,
     ) -> int:
         observation = validate_observation(observation)
@@ -750,8 +630,8 @@ class StateStore:
                 "generation,command_json,cwd,exit_code,observed_exit_code,passed,"
                 "workload_status,workload_evidence_kind,workload_evidence,workload_adapter,"
                 "process_status,process_evidence,cleanup_status,cleanup_evidence,warnings_json,legacy_inferred,"
-                "source,evidence,plan_id"
-                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "source,evidence"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     int(generation), encoded_command, cwd_norm, compatibility_exit, observed_exit,
                     int(observation.workload_passed), rec["workload_status"], rec["workload_evidence_kind"],
@@ -759,7 +639,7 @@ class StateStore:
                     scrub_persisted_text(rec.get("workload_adapter"), limit=256), rec["process_status"],
                     scrub_persisted_text(rec.get("process_evidence"), limit=4096), rec["cleanup_status"],
                     scrub_persisted_text(rec.get("cleanup_evidence"), limit=4096), warnings_json,
-                    int(bool(rec.get("legacy_inferred"))), source, evidence, plan_id,
+                    int(bool(rec.get("legacy_inferred"))), source, evidence,
                 ),
             )
             return int(cur.lastrowid)
@@ -774,8 +654,6 @@ class StateStore:
         source: str = "local_runtime",
         evidence: str | None = None,
     ) -> int:
-        if source != "local_runtime":
-            raise ValueError("host-observed validation must consume a validation plan via record_host_validation")
         clean_evidence = scrub_persisted_text(evidence, limit=4096)
         if not clean_evidence:
             clean_evidence = f"local runtime observed exit code {int(exit_code)}"
@@ -787,14 +665,12 @@ class StateStore:
             cwd_norm=cwd_norm,
             source=source,
             evidence=clean_evidence,
-            plan_id=None,
             observation=observation,
         )
 
-    def record_host_validation(
+    def record_observed_validation(
+
         self,
-        plan_id: str,
-        generation: int,
         argv: list[str],
         exit_code: int | None = None,
         *,
@@ -802,89 +678,36 @@ class StateStore:
         evidence: str,
         observation: ExecutionObservation | None = None,
     ) -> int:
+        """Record one host-observed validation without a prior bookkeeping plan."""
         self.ensure_active()
         clean_evidence = scrub_persisted_text(evidence, limit=4096)
         if not (clean_evidence and clean_evidence.strip()):
             raise ValueError("host-observed validation requires concise observable evidence")
         if observation is None:
             if exit_code is None:
-                raise ValueError("legacy host validation requires exit_code when no rich execution observation is supplied")
+                raise ValueError("validation requires exit_code when no rich execution observation is supplied")
             observation = legacy_observation(int(exit_code), clean_evidence)
         else:
             observation = validate_observation(observation)
             if exit_code is not None and observation.exit_code != int(exit_code):
                 raise ValueError("exit_code disagrees with the rich execution observation")
-        plan_id = validate_task_id(plan_id)
-        generation = int(generation)
         cwd_norm, rec = self._validation_record(argv, cwd)
-        encoded = json.dumps(rec, sort_keys=True)
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT generation,command_json,cwd,consumed FROM validation_plans WHERE plan_id=?", (plan_id,)
-            ).fetchone()
-            if row is None:
-                raise ValueError("host validation plan does not exist")
-            if bool(row["consumed"]):
-                raise ValueError("host validation plan has already been consumed")
-            if generation != self.generation() or generation != int(row["generation"]):
-                raise RuntimeError(
-                    f"host validation is stale: planned generation {int(row['generation'])}, observed generation {generation}, current generation {self.generation()}"
-                )
-            if cwd_norm != str(row["cwd"]):
-                raise ValueError("host validation cwd does not match the planned cwd")
-            if encoded != str(row["command_json"]):
-                raise ValueError("host validation command identity does not match the planned command")
-            rec_observation = observation.to_record()
-            observed_exit = rec_observation["exit_code"]
-            compatibility_exit = int(observed_exit) if observed_exit is not None else 0
-            warnings_json = json.dumps(rec_observation["warnings"], ensure_ascii=True, sort_keys=True)
-            cur = db.execute(
-                "INSERT INTO validations("
-                "generation,command_json,cwd,exit_code,observed_exit_code,passed,"
-                "workload_status,workload_evidence_kind,workload_evidence,workload_adapter,"
-                "process_status,process_evidence,cleanup_status,cleanup_evidence,warnings_json,legacy_inferred,"
-                "source,evidence,plan_id"
-                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'host_observed',?,?)",
-                (
-                    generation, encoded, cwd_norm, compatibility_exit, observed_exit, int(observation.workload_passed),
-                    rec_observation["workload_status"], rec_observation["workload_evidence_kind"],
-                    scrub_persisted_text(rec_observation.get("workload_evidence"), limit=4096),
-                    scrub_persisted_text(rec_observation.get("workload_adapter"), limit=256),
-                    rec_observation["process_status"], scrub_persisted_text(rec_observation.get("process_evidence"), limit=4096),
-                    rec_observation["cleanup_status"], scrub_persisted_text(rec_observation.get("cleanup_evidence"), limit=4096),
-                    warnings_json, int(bool(rec_observation.get("legacy_inferred"))), clean_evidence, plan_id,
-                ),
-            )
-            db.execute(
-                "UPDATE validation_plans SET consumed=1,consumed_at=CURRENT_TIMESTAMP WHERE plan_id=? AND consumed=0",
-                (plan_id,),
-            )
-            return int(cur.lastrowid)
+        return self._insert_validation_observation(
+            generation=self.generation(),
+            encoded_command=json.dumps(rec, sort_keys=True),
+            cwd_norm=cwd_norm,
+            source="host_observed",
+            evidence=clean_evidence,
+            observation=observation,
+        )
 
     def latest_validation(self) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute("SELECT * FROM validations ORDER BY id DESC LIMIT 1").fetchone()
         return None if row is None else dict(row)
 
-    def resolve_validation(self, validation_id: int, disposition: str, evidence: str) -> None:
-        if disposition != "unrelated_to_request":
-            raise ValueError("only unrelated_to_request validation disposition is supported")
-        clean = scrub_persisted_text(evidence, limit=4096)
-        if not (clean and clean.strip()):
-            raise ValueError("unrelated_to_request validation disposition requires observable evidence")
-        with self.connect() as db:
-            row = db.execute("SELECT passed FROM validations WHERE id=?", (int(validation_id),)).fetchone()
-            if row is None:
-                raise ValueError(f"validation {validation_id} does not exist")
-            if bool(row["passed"]):
-                raise ValueError("passing validation cannot be marked unrelated_to_request")
-            db.execute(
-                "UPDATE validations SET disposition=?,disposition_evidence=?,disposition_request_sha256=? WHERE id=?",
-                (disposition, clean, self.effective_request_sha256(), int(validation_id)),
-            )
-
-    def validation_state_for_generation(self, generation: int) -> dict[str, Any]:
+    def validation_state_for_generation(
+self, generation: int) -> dict[str, Any]:
         with self.connect() as db:
             rows = db.execute("SELECT * FROM validations WHERE generation=? ORDER BY id", (int(generation),)).fetchall()
         latest: dict[str, dict[str, Any]] = {}
@@ -899,18 +722,7 @@ class StateStore:
         current = list(latest.values())
         legacy_identity = [x for x in current if not str(x.get("cwd") or "").strip()]
         eligible = [x for x in current if str(x.get("cwd") or "").strip()]
-        request_sha256 = self.effective_request_sha256()
-        nonblocking = [
-            x for x in eligible
-            if x.get("disposition") == "unrelated_to_request"
-            and str(x.get("disposition_request_sha256") or "") == request_sha256
-        ]
-        nonblocking_ids = {int(x["id"]) for x in nonblocking}
-        stale_nonblocking = [
-            x for x in eligible
-            if x.get("disposition") == "unrelated_to_request" and int(x["id"]) not in nonblocking_ids
-        ]
-        blocking = [x for x in eligible if int(x["id"]) not in nonblocking_ids]
+        blocking = eligible
         for item in current:
             try:
                 item["warnings"] = json.loads(item.get("warnings_json") or "[]")
@@ -925,7 +737,6 @@ class StateStore:
         supervision_partial = [x for x in blocking if str(x.get("process_status") or "UNKNOWN") == "UNKNOWN" or str(x.get("cleanup_status") or "UNKNOWN") == "UNSUPPORTED"]
         warning_codes = sorted(
             {warning for item in blocking for warning in item.get("warnings", [])}
-            | ({"STALE_UNRELATED_VALIDATION_DISPOSITION"} if stale_nonblocking else set())
         )
         return {
             "commands": current,
@@ -937,10 +748,6 @@ class StateStore:
             "orphaned_count": len(orphaned),
             "supervision_partial_count": len(supervision_partial),
             "warning_codes": warning_codes,
-            "nonblocking_count": len(nonblocking),
-            "nonblocking": nonblocking,
-            "stale_nonblocking_count": len(stale_nonblocking),
-            "stale_nonblocking": stale_nonblocking,
             "legacy_identity_count": len(legacy_identity),
             "legacy_identity": legacy_identity,
         }
@@ -1369,62 +1176,12 @@ class StateStore:
             raise ValueError("steer text must not be empty")
         steer_id = uuid.uuid4().hex
         with self.connect() as db:
-            db.execute("INSERT INTO steers(steer_id,text,state) VALUES(?,?, 'pending')", (steer_id, clean))
+            db.execute("INSERT INTO steers(steer_id,text) VALUES(?,?)", (steer_id, clean))
         self.set_meta("plan_revision", int(self.get_meta("plan_revision", 0)) + 1)
         return steer_id
 
-    def pending_steers(self) -> list[dict[str, Any]]:
-        with self.connect() as db:
-            return [dict(row) for row in db.execute("SELECT steer_id,text,state,evidence,created_at FROM steers WHERE state='pending' ORDER BY created_at")]
-
-    def integrated_steers(self) -> list[dict[str, Any]]:
-        with self.connect() as db:
-            return [dict(row) for row in db.execute("SELECT steer_id,text,state,evidence,acked_generation,created_at,updated_at FROM steers WHERE state='acked' ORDER BY updated_at")]
-
-    def stale_steers(self) -> list[dict[str, Any]]:
-        generation = self.generation()
-        with self.connect() as db:
-            return [dict(row) for row in db.execute(
-                "SELECT steer_id,text,state,evidence,acked_generation,created_at,updated_at FROM steers WHERE state='acked' AND COALESCE(acked_generation,-1)<>? ORDER BY updated_at",
-                (generation,),
-            )]
-
-    def ack_steer(self, steer_id: str, evidence: str) -> None:
-        clean = scrub_persisted_text(evidence, limit=4096) or ""
-        if not clean.strip():
-            raise ValueError("acknowledging a steer requires concise evidence of integration")
-        generation = self.generation()
-        with self.connect() as db:
-            row = db.execute("SELECT state,acked_generation FROM steers WHERE steer_id=?", (steer_id,)).fetchone()
-            if row is None:
-                raise ValueError(f"unknown steer id: {steer_id}")
-            if row["state"] == "acked" and int(row["acked_generation"] if row["acked_generation"] is not None else -1) == generation:
-                raise ValueError(f"steer is already acknowledged at generation {generation}: {steer_id}")
-            if row["state"] not in {"pending", "acked"}:
-                raise ValueError(f"steer cannot be acknowledged from state {row['state']}: {steer_id}")
-            db.execute(
-                "UPDATE steers SET state='acked',evidence=?,acked_generation=?,updated_at=CURRENT_TIMESTAMP WHERE steer_id=?",
-                (clean, generation, steer_id),
-            )
-
-
-    def set_freshness_waiver(self, opaque_paths: list[str], reason: str) -> dict[str, Any]:
-        self.ensure_active()
-        clean_reason = scrub_persisted_text(reason, limit=4096) or ""
-        if not clean_reason.strip():
-            raise ValueError("freshness waiver requires a concise reason")
-        normalized = sorted({str(x) for x in opaque_paths if str(x)})
-        if not normalized:
-            raise ValueError("freshness waiver requires at least one opaque path")
-        waiver = {"generation": self.generation(), "opaque_paths": normalized, "reason": clean_reason}
-        self.set_meta("freshness_waiver", waiver)
-        return waiver
-
-    def freshness_waiver(self) -> dict[str, Any] | None:
-        value = self.get_meta("freshness_waiver")
-        return value if isinstance(value, dict) else None
-
-    def prune_successful_processes(self, keep: int = 64) -> int:
+    def prune_successful_processes(
+self, keep: int = 64) -> int:
         keep = max(0, int(keep))
         with self.connect() as db:
             rows = db.execute(

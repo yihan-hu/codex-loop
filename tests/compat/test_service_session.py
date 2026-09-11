@@ -2,8 +2,17 @@ import json, os, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 SKILL=Path(__file__).resolve().parents[2]; CLI=SKILL/'scripts'/'codex_loop.py'
 sys.path.insert(0,str(SKILL/'scripts'))
+def _current_args(parts):
+ parts=list(parts)
+ if parts and parts[0]=='bootstrap':
+  if '--no-validation' in parts: parts.remove('--no-validation')
+  if '--no-validation-reason' in parts:
+   i=parts.index('--no-validation-reason'); del parts[i:i+2]
+  if '--request-anchor' not in parts and '--objective' in parts:
+   objective=parts[parts.index('--objective')+1]; parts += ['--request-anchor', objective]
+ return parts
 def call(root,*args,check=True):
- parts=list(args);
+ parts=_current_args(args);
  if parts and parts[0] not in {'bootstrap','command-check','source-verify'} and '--task-id' not in parts: parts=[parts[0],'--cwd',str(root),'--use-active-task',*parts[1:]]
  else: parts=[parts[0],'--cwd',str(root),*parts[1:]]
  p=subprocess.run([sys.executable,str(CLI),*parts],stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=check); return json.loads(p.stdout or b'{}'),p
@@ -11,7 +20,7 @@ class ServiceTests(unittest.TestCase):
  @unittest.skipIf(os.name=='nt','PTY test Unix')
  def test_spawn_poll_terminate_and_private_endpoint(self):
   with tempfile.TemporaryDirectory() as tmp:
-   root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); b,_=call(root,'bootstrap','--objective','process test', '--request-anchor', 'process test','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
+   root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); b,_=call(root,'bootstrap','--objective','process test','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
    try:
     r,_=call(root,'spawn','--','sleep','10'); h=r['data']['handle']; endpoint=Path(tempfile.gettempdir())/'codex-loop'; matches=list(endpoint.glob(f'*/tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
     if os.name!='nt': self.assertEqual(matches[0].stat().st_mode & 0o777,0o600)
@@ -22,7 +31,7 @@ class ServiceTests(unittest.TestCase):
  @unittest.skipIf(os.name=='nt','PTY test Unix')
  def test_reader_drains_tail_after_short_process(self):
   with tempfile.TemporaryDirectory() as tmp:
-   root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','drain', '--request-anchor', 'drain','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); call(root,'service-start')
+   root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); call(root,'bootstrap','--objective','drain','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); call(root,'service-start')
    try:
     r,_=call(root,'spawn','--','echo','tail-marker'); h=r['data']['handle']; deadline=time.time()+3; out=None
     while time.time()<deadline:
@@ -37,7 +46,7 @@ class ServiceTests(unittest.TestCase):
  def test_service_spawn_cwd_cannot_escape_workspace(self):
   from codex_loop_runtime.service import request as service_request
   with tempfile.TemporaryDirectory() as tmp:
-   root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); b,_=call(root,'bootstrap','--objective','cwd guard', '--request-anchor', 'cwd guard','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
+   root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); b,_=call(root,'bootstrap','--objective','cwd guard','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
    try:
     response=service_request(root,tid,{"op":"spawn","argv":["pwd"],"cwd":"/tmp"})
     self.assertFalse(response['ok']); self.assertIn('outside workspace',response['error']['message'])
@@ -47,7 +56,7 @@ class ServiceTests(unittest.TestCase):
  def test_spawn_preserves_calling_subdirectory_cwd(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); sub=root/'nested'; sub.mkdir()
-   b,_=call(root,'bootstrap','--objective','cwd fidelity', '--request-anchor', 'cwd fidelity','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']
+   b,_=call(root,'bootstrap','--objective','cwd fidelity','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']
    call(root,'service-start','--task-id',tid)
    try:
     proc=subprocess.run([sys.executable,str(CLI),'spawn','--cwd',str(sub),'--task-id',tid,'--','pwd'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
@@ -67,7 +76,7 @@ class ServiceTests(unittest.TestCase):
   from codex_loop_runtime.service import MAX_REQUEST_WIRE_BYTES, MAX_RESPONSE_WIRE_BYTES, request as service_request
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
-   b,_=call(root,'bootstrap','--objective','wire budget', '--request-anchor', 'wire budget','--no-validation','--no-validation-reason','fixture'); tid=b['data']['task_id']; call(root,'service-start')
+   b,_=call(root,'bootstrap','--objective','wire budget','--no-validation','--no-validation-reason','fixture'); tid=b['data']['task_id']; call(root,'service-start')
    try:
     argv=['echo', *(['\\'*(60*1024)]*10)]
     encoded=json.dumps({'op':'spawn','argv':argv,'cwd':str(root),'task_id':tid,'token':'x'},ensure_ascii=True).encode('ascii')
@@ -87,9 +96,9 @@ class ServiceTests(unittest.TestCase):
    long_tmp=root/('x'*180); long_tmp.mkdir()
    env=dict(os.environ); env['TMPDIR']=str(long_tmp)
    def run(*parts):
-    proc=subprocess.run([sys.executable,str(CLI),*parts],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,check=True)
+    proc=subprocess.run([sys.executable,str(CLI),*_current_args(parts)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,check=True)
     return json.loads(proc.stdout or b'{}')
-   boot=run('bootstrap','--cwd',str(root),'--objective','long socket fallback', '--request-anchor', 'long socket fallback','--no-validation','--no-validation-reason','fixture')
+   boot=run('bootstrap','--cwd',str(root),'--objective','long socket fallback','--no-validation','--no-validation-reason','fixture')
    tid=boot['data']['task_id']; run('service-start','--cwd',str(root),'--use-active-task')
    try:
     matches=list((long_tmp/'codex-loop').glob(f'*/tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
@@ -106,7 +115,7 @@ class ServiceStartFailClosedTests(unittest.TestCase):
   from codex_loop_runtime.state import state_dir_for
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
-   b,_=call(root,'bootstrap','--objective','duplicate guard', '--request-anchor', 'duplicate guard','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']
+   b,_=call(root,'bootstrap','--objective','duplicate guard','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']
    directory=state_dir_for(root,tid,create=False)
    endpoint=directory/'service.json'
    endpoint.write_text(json.dumps({'kind':'unix','path':str(directory/'runtime.sock'),'pid':os.getpid(),'task_id':tid,'token':'x'}))
@@ -121,7 +130,7 @@ class ServiceOwnerLockTests(unittest.TestCase):
   from codex_loop_runtime.state import state_dir_for
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
-   b,_=call(root,'bootstrap','--objective','owner lock', '--request-anchor', 'owner lock','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']
+   b,_=call(root,'bootstrap','--objective','owner lock','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']
    directory=state_dir_for(root,tid,create=False)
    fd=_acquire_owner_lock(directory,nonblocking=True); self.assertIsNotNone(fd)
    try:
@@ -151,7 +160,7 @@ class ServiceDefenseInDepthTests(unittest.TestCase):
   from codex_loop_runtime.service import request as service_request
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
-   b,_=call(root,'bootstrap','--objective','service safety', '--request-anchor', 'service safety','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
+   b,_=call(root,'bootstrap','--objective','service safety','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
    try:
     response=service_request(root,tid,{"op":"spawn","argv":[sys.executable,"-c","print('hidden')"],"cwd":str(root)})
     self.assertFalse(response['ok']); self.assertIn('safe_known',response['error']['message'])
@@ -164,7 +173,7 @@ class ServiceDefenseInDepthTests(unittest.TestCase):
   from codex_loop_runtime.state import open_store
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
-   b,_=call(root,'bootstrap','--objective','cancelled helper safety', '--request-anchor', 'cancelled helper safety','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
+   b,_=call(root,'bootstrap','--objective','cancelled helper safety','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
    try:
     spawned=service_request(root,tid,{"op":"spawn","argv":["cat"],"cwd":str(root)})
     self.assertTrue(spawned['ok']); handle=spawned['data']['handle']
@@ -184,7 +193,7 @@ def test_cancelled_service_start_does_not_touch_stale_endpoint_metadata():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
-        boot, _ = call(root, 'bootstrap', '--objective', 'cancelled service metadata', '--request-anchor', 'cancelled service metadata', '--no-validation','--no-validation-reason','test fixture has no meaningful executable validation')
+        boot, _ = call(root, 'bootstrap', '--objective', 'cancelled service metadata', '--no-validation','--no-validation-reason','test fixture has no meaningful executable validation')
         task_id = boot['data']['task_id']
         call(root, 'cancel', '--task-id', task_id, '--reason', 'stop')
         store = open_store(root, task_id)
@@ -207,7 +216,7 @@ class ProcessRetentionBoundTests(unittest.TestCase):
   from codex_loop_runtime.state import create_store
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
-   store=create_store(root); store.configure_task(store.path.parent.name,'retention',[], request_anchor='retention',requires_validation=False,no_validation_reason='fixture'); capture_baseline(root,store)
+   store=create_store(root); store.configure_task(store.path.parent.name,'retention',[],requires_validation=False, request_anchor='retention'); capture_baseline(root,store)
    reg=ProcessRegistry(root,store.task_id,'token')
    for _ in range(80):
     spawned=reg.dispatch({'token':'token','task_id':store.task_id,'op':'spawn','argv':['true'],'cwd':str(root)})

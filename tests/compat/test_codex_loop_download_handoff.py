@@ -64,14 +64,12 @@ class CodexLoopDownloadHandoffTests(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         deployment = (ROOT / "references" / "skill-deployment.md").read_text(encoding="utf-8")
-        runtime = (ROOT / "references" / "runtime-protocol.md").read_text(encoding="utf-8")
-        for text in (skill, readme, deployment, runtime):
+        for text in (skill, readme, deployment):
             self.assertIn("skill.zip", text)
             self.assertIn("codex-loop.zip", text)
-        self.assertIn("expose only that exact `codex-loop.zip`", skill)
+        self.assertIn("byte-for-byte", skill)
         self.assertIn("byte-for-byte", readme)
         self.assertIn("never recompress", deployment)
-        self.assertIn("identical SHA-256", runtime)
 
 
 if __name__ == "__main__":

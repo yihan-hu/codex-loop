@@ -17,7 +17,6 @@ if str(SCRIPT_DIR) not in sys.path:
 import codex_loop_kernel as kernel
 from codex_loop_context_projection import build_working
 from codex_loop_runtime.change_tracker import sync_generation
-from codex_loop_runtime.completion import record_objective_audit
 from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
 from codex_loop_runtime.deployment_manifest import verify_installed_skill
@@ -146,7 +145,6 @@ HOST_ADAPTER_COMMANDS = (
     ('drive-cache-unregister', 'remove a cache folder path from host-local config'),
     ('drive-cache-list', 'list host-local registered Codex Loop Drive cache folders'),
     ('drive-cache-cleanup-plan', 'return exact owned >=3-day registered cache objects ready for automatic cleanup'),
-    ('objective-audit', 'record requirement-by-requirement completion evidence'),
     ('workspace-register', 'register a private host workspace alias'),
     ('workspace-registry-list', 'list private host workspace aliases'),
     ('workspace-resolve', 'resolve a registered workspace under current grants'),
@@ -191,33 +189,10 @@ def _command_after_double_dash(argv: list[str]) -> list[str]:
     return command
 
 
-def _matching_plans(store, generation: int, command: list[str], cwd: Path):
-    cwd_norm, rec = store._validation_record(command, cwd)
-    encoded = json.dumps(rec, sort_keys=True)
-    with store.connect() as db:
-        rows = db.execute(
-            'SELECT plan_id FROM validation_plans '
-            'WHERE generation=? AND command_json=? AND cwd=? AND consumed=0 '
-            'ORDER BY created_at,plan_id',
-            (int(generation), encoded, cwd_norm),
-        ).fetchall()
-    return cwd_norm, rec, rows
-
-
-def _resolve_plan(store, generation: int, command: list[str], cwd: Path) -> dict:
-    cwd_norm, rec, rows = _matching_plans(store, generation, command, cwd)
-    if not rows:
-        raise ValueError('no unconsumed validation plan matches the current generation/cwd/command; run validate first')
-    if len(rows) > 1:
-        raise RuntimeError('multiple unconsumed validation plans match the current generation/cwd/command; use an explicit plan id for low-level recovery')
-    return {'plan_id': str(rows[0]['plan_id']), 'generation': int(generation), 'cwd': cwd_norm, 'identity': rec['sha256']}
-
-
 def _cmd_next(argv: list[str]) -> int:
     cwd, root, store = _scope_from_argv(argv)
     working = build_working(root, cwd, store)
-    lifecycle = working.get("lifecycle") or {}
-    working["progress"] = progress_policy(str(lifecycle.get("mode", "durable")))
+    working["progress"] = progress_policy("durable")
     emit_ok(working)
     return 0
 
@@ -304,35 +279,20 @@ def _cmd_validate(argv: list[str]) -> int:
     if continuation.get('active') and continuation.get('revalidation_forbidden'):
         raise RuntimeError(
             'redundant validation is forbidden during a fresh publish-only continuation; '
-            'reuse the current validation evidence and run web-publish-plan. '
-            'Content mutation automatically invalidates this continuation.'
+            'reuse the current validation evidence and run web-publish-plan'
         )
     safety = assess_command(command)
     if safety.classification.value == 'safe_known':
         return _delegate(argv)
-    generation = store.generation()
-    cwd_norm, rec, rows = _matching_plans(store, generation, command, cwd)
-    if len(rows) > 1:
-        raise RuntimeError('multiple unconsumed validation plans match this generation/cwd/command; use an explicit plan id for low-level recovery')
-    if rows:
-        plan_id = str(rows[0]['plan_id'])
-        reused = True
-    else:
-        plan = store.create_validation_plan(generation, command, cwd=cwd)
-        plan_id = plan['plan_id']
-        reused = False
-    payload = {
+    emit_ok({
         'executed': False,
         'requires_host_visible_execution': True,
         'safety': safety,
         'identity': identify(command, cwd),
-        'cwd': cwd_norm,
+        'cwd': str(cwd),
         'execution_policy': execution_policy(),
-        'next': 'run the exact validation through the host tool, observe workload and process outcomes independently, then record authoritative workload/process/cleanup evidence with validation-record; legacy exit-code-only recording remains a compatibility path',
-    }
-    if '--debug-bookkeeping' in argv:
-        payload.update({'generation': generation, 'plan_id': plan_id, 'plan_reused': reused})
-    emit_ok(payload)
+        'next': 'run the exact validation through the host tool, then record the observed result with validation-record',
+    })
     return 0
 
 
@@ -341,9 +301,7 @@ def _cmd_validation_record(argv: list[str]) -> int:
     p.add_argument('--cwd')
     p.add_argument('--task-id')
     p.add_argument('--use-active-task', action='store_true')
-    p.add_argument('--plan-id')
     p.add_argument('--command-json', required=True)
-    p.add_argument('--generation', type=int)
     p.add_argument('--exit-code', type=int)
     p.add_argument('--evidence')
     p.add_argument('--workload-status', choices=[x.value for x in WorkloadStatus])
@@ -367,11 +325,6 @@ def _cmd_validation_record(argv: list[str]) -> int:
     command = json.loads(args.command_json)
     if not (isinstance(command, list) and command and all(isinstance(x, str) for x in command)):
         raise ValueError('--command-json must be a non-empty JSON array of strings')
-    generation = store.generation()
-    if args.generation is not None and args.generation != generation:
-        raise RuntimeError(f'host validation is stale: observed generation {args.generation} but current generation is {generation}; rerun validation')
-    inferred = args.plan_id is None
-    plan_id = args.plan_id or _resolve_plan(store, generation, command, cwd)['plan_id']
     rich_requested = any(value is not None for value in (
         args.workload_status, args.workload_evidence_kind, args.workload_evidence, args.workload_adapter,
         args.process_status, args.process_evidence, args.cleanup_status, args.cleanup_evidence,
@@ -379,7 +332,7 @@ def _cmd_validation_record(argv: list[str]) -> int:
     observation = None
     if rich_requested:
         if args.workload_status is None or args.workload_evidence_kind is None or args.process_status is None:
-            raise ValueError('rich execution recording requires --workload-status, --workload-evidence-kind, and --process-status')
+            raise ValueError('rich execution recording requires workload status/evidence kind and process status')
         observation = observation_from_strings(
             workload_status=args.workload_status,
             workload_evidence_kind=args.workload_evidence_kind,
@@ -395,12 +348,12 @@ def _cmd_validation_record(argv: list[str]) -> int:
         evidence = args.evidence or args.workload_evidence or args.process_evidence or args.cleanup_evidence
     else:
         if args.exit_code is None:
-            raise ValueError('legacy validation recording requires --exit-code, or provide the rich workload/process execution fields')
+            raise ValueError('validation recording requires --exit-code, or rich workload/process fields')
         evidence = args.evidence
     if not (evidence and str(evidence).strip()):
         raise ValueError('validation-record requires concise observable evidence')
-    validation_id = store.record_host_validation(
-        plan_id, generation, command, args.exit_code, cwd=cwd, evidence=str(evidence), observation=observation
+    validation_id = store.record_observed_validation(
+        command, args.exit_code, cwd=cwd, evidence=str(evidence), observation=observation
     )
     record = store.latest_validation() or {}
     emit_ok({
@@ -411,10 +364,8 @@ def _cmd_validation_record(argv: list[str]) -> int:
         'process_status': record.get('process_status'),
         'cleanup_status': record.get('cleanup_status'),
         'warnings': json.loads(record.get('warnings_json') or '[]'),
-        'bookkeeping_inferred': inferred,
     })
     return 0
-
 
 
 def _path_from(raw: str, cwd: Path) -> Path:
@@ -1025,43 +976,6 @@ def _cmd_drive_cache_cleanup_plan(argv: list[str]) -> int:
     return 0
 
 
-def _cmd_objective_audit(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py objective-audit')
-    p.add_argument('--cwd')
-    p.add_argument('--task-id')
-    p.add_argument('--audit-json')
-    args = p.parse_args(argv[1:])
-    _cwd_path, root, store = _scope_from_argv(argv)
-    store.ensure_active()
-    sync_generation(root, store)
-    if args.audit_json is not None:
-        raw_text = args.audit_json
-    else:
-        payload = sys.stdin.buffer.read(64 * 1024 + 1)
-        if len(payload) > 64 * 1024:
-            raise ValueError('objective audit JSON exceeds 64 KiB')
-        try:
-            raw_text = payload.decode('utf-8')
-        except UnicodeDecodeError as exc:
-            raise ValueError('objective audit stdin must be valid UTF-8 JSON') from exc
-    if not raw_text.strip():
-        raise ValueError('objective audit requires JSON via --audit-json or stdin')
-    try:
-        raw = json.loads(raw_text)
-    except json.JSONDecodeError as exc:
-        raise ValueError('objective audit must be valid JSON') from exc
-    audit = record_objective_audit(store, raw)
-    unresolved = [item for item in audit['requirements'] if item['status'] != 'proven']
-    emit_ok({
-        'status': 'PASS' if not unresolved else 'CONTINUE',
-        'generation': audit['generation'],
-        'effective_request_sha256': audit['effective_request_sha256'],
-        'requirements_count': len(audit['requirements']),
-        'unresolved_count': len(unresolved),
-        'upstream_blob': audit['upstream_blob'],
-    })
-    return 0
-
 def _cmd_workspace_register(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py workspace-register')
     p.add_argument('--name', required=True)
@@ -1229,8 +1143,6 @@ def main() -> int:
             return _cmd_drive_cache_list(argv)
         if argv[0] == 'drive-cache-cleanup-plan':
             return _cmd_drive_cache_cleanup_plan(argv)
-        if argv[0] == 'objective-audit':
-            return _cmd_objective_audit(argv)
         if argv[0] == 'workspace-register':
             return _cmd_workspace_register(argv)
         if argv[0] == 'workspace-registry-list':

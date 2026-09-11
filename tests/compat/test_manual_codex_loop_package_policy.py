@@ -12,23 +12,21 @@ class ManualCodexLoopPackagePolicyTests(unittest.TestCase):
         self.assertFalse((ROOT / "skills" / "codex-loop-install").exists())
         self.assertFalse((ROOT / "scripts" / "build_self_update_bridge.py").exists())
 
-    def test_docs_define_fresh_artifact_then_manual_upload_as_default_delivery(self):
+    def test_docs_keep_packaging_and_manual_installation_separate(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         deployment = (ROOT / "references" / "skill-deployment.md").read_text(encoding="utf-8")
-        runtime = (ROOT / "references" / "runtime-protocol.md").read_text(encoding="utf-8")
         install_path = "Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer"
-        for text in (skill, readme, deployment, runtime):
+        self.assertIn("skill.zip", skill)
+        self.assertIn("codex-loop.zip", skill)
+        self.assertIn("byte-for-byte", skill)
+        for text in (readme, deployment):
             self.assertIn("skill.zip", text)
             self.assertIn("codex-loop.zip", text)
             self.assertIn(install_path, text)
+            self.assertIn("fresh current-conversation", text.lower())
             self.assertNotIn("Skills/Library interface", text)
             self.assertNotIn("Library not found", text)
-        self.assertIn("fresh current-conversation", skill.lower())
-        self.assertIn("fresh current-conversation", readme.lower())
-        self.assertIn("fresh current-conversation", deployment.lower())
-        self.assertIn("fresh current-conversation", runtime.lower())
-        self.assertIn("Do not construct, infer, or reuse a Library URL/reference", skill)
         self.assertIn("Do not claim installation", deployment)
 
     def test_self_install_runtime_commands_are_removed(self):
