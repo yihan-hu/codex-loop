@@ -147,6 +147,10 @@ def _next_actions(facts: dict[str, Any], validation_status: str) -> list[dict[st
         return actions
     if facts["changes"].get("unexpected_protected_changes"):
         add("blocker", "reconcile protected user work", "pre-existing user changes were modified unexpectedly")
+    if store.unresolved_external_count() or store.unresolved_external_failure_count():
+        add("required", "reconcile unresolved external actions before further side effects", "external action state must be reconciled before continuation can safely dispatch another side effect")
+    if store.running_process_count() or store.unresolved_process_failure_count():
+        add("required", "clean up or reconcile managed processes", "task-owned process state is unresolved")
     plan = store.plan()
     current = next((x for x in plan if x["status"] == "in_progress"), None)
     pending = next((x for x in plan if x["status"] == "pending"), None)
@@ -156,10 +160,6 @@ def _next_actions(facts: dict[str, Any], validation_status: str) -> list[dict[st
         add("work", pending["step"], "next Codex-style plan step")
     if validation_status in {"missing", "stale"}:
         add("verify", "run the smallest relevant validation", f"validation is {validation_status}")
-    if store.unresolved_external_count() or store.unresolved_external_failure_count():
-        add("required", "reconcile unresolved external actions", "external outcome affects completion")
-    if store.running_process_count() or store.unresolved_process_failure_count():
-        add("required", "clean up or reconcile managed processes", "task-owned process state is unresolved")
     if decision.status.value == "PASS":
         return [{
             "kind": "finish",
@@ -222,25 +222,45 @@ def build_lifecycle_working(store: StateStore, *, workspace_status: dict[str, An
     reasons: list[str] = []
     actions: list[dict[str, str]] = []
     workspace_status = workspace_status or {"bound": False, "available": False, "reason": "lifecycle has no workspace binding"}
-    if workspace_status.get("recovery_required"):
+    recovery_required = bool(workspace_status.get("recovery_required"))
+    active_isolation = store.active_isolation()
+    unresolved_external = store.unresolved_external_count() + store.unresolved_external_failure_count()
+    unresolved_process = store.running_process_count() + store.unresolved_process_failure_count()
+    validation_required = validation_status in {"missing", "stale"}
+    unfinished_plan = [x for x in plan if x["status"] != "completed"]
+
+    if recovery_required:
         reasons.append(str(workspace_status.get("reason") or "bound workspace requires recovery"))
         actions.append({
             "kind": "blocker",
             "action": "recover and verify the bound workspace, then rebind this same lifecycle",
             "reason": reasons[-1],
         })
+    if active_isolation is not None:
+        reasons.append("delegated work is still active")
+        if not actions:
+            actions.append({"kind": "required", "action": "finish or abort the active isolated task", "reason": reasons[-1]})
+    if unresolved_external:
+        reasons.append("external action state is unresolved")
+        if not actions:
+            actions.append({"kind": "required", "action": "reconcile unresolved external actions before further side effects", "reason": reasons[-1]})
+    if unresolved_process:
+        reasons.append("task-owned process state is unresolved")
+        if not actions:
+            actions.append({"kind": "required", "action": "clean up or reconcile managed processes", "reason": reasons[-1]})
+    if unfinished_plan:
+        reasons.append(f"plan has {len(unfinished_plan)} unfinished step(s)")
+    if validation_required:
+        reasons.append(f"validation is {validation_status}")
+
     current = next((x for x in plan if x["status"] == "in_progress"), None)
     pending = next((x for x in plan if x["status"] == "pending"), None)
     if not actions and current:
         actions.append({"kind": "work", "action": current["step"], "reason": "current Codex-style plan step"})
     elif not actions and pending:
         actions.append({"kind": "work", "action": pending["step"], "reason": "next Codex-style plan step"})
-    if validation_status in {"missing", "stale"} and not actions:
+    if validation_required and not actions:
         actions.append({"kind": "verify", "action": "run the smallest relevant validation", "reason": f"validation is {validation_status}"})
-    if (store.unresolved_external_count() or store.unresolved_external_failure_count()) and not actions:
-        actions.append({"kind": "required", "action": "reconcile unresolved external actions", "reason": "external outcome affects completion"})
-    if (store.running_process_count() or store.unresolved_process_failure_count()) and not actions:
-        actions.append({"kind": "required", "action": "clean up or reconcile managed processes", "reason": "task-owned process state is unresolved"})
     if not actions:
         actions.append({
             "kind": "finish",
@@ -261,7 +281,7 @@ def build_lifecycle_working(store: StateStore, *, workspace_status: dict[str, An
         "plan": plan,
         "workspace": workspace_status,
         "state": {
-            "completion": "BLOCKED" if workspace_status.get("recovery_required") else ("CONTINUE" if reasons or any(x["status"] != "completed" for x in plan) else "PASS"),
+            "completion": "BLOCKED" if recovery_required else ("CONTINUE" if reasons else "PASS"),
             "validation": validation_status,
             "changed_paths": [],
             "completion_reasons": reasons,
