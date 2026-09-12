@@ -2,6 +2,17 @@
 
 Codex Loop now follows Codex primarily by **removing orchestration**, not by cloning the Codex runtime. The ChatGPT host remains authoritative for model sampling, tools, sandboxing, approvals, and conversation context.
 
+## Execution authority context
+
+Public Codex keeps user authorization, project instructions, and workspace state in the agent/harness context rather than making them conditional on a plan or review workflow. Codex Loop ports the same separation without recreating the full Codex session runtime:
+
+- the host conversation keeps the initial user request plus later user corrections authoritative; model-written objectives never replace them;
+- stateless `orient` exposes that request anchor together with applicable repository instructions and pre-existing Git work before mutation;
+- stateless `instructions` reloads a deeper repository-instruction scope before first touch;
+- durable bootstrap remains optional and persists the same authority/baseline only when resume or stronger machine reconciliation is useful.
+
+Relevant upstream surfaces: `codex-rs/core/src/context_manager/history.rs`, `codex-rs/core/src/context_manager/history_user_authorization.rs`, `codex-rs/core/src/agents_md.rs`, and the base coding instructions covering dirty work and surgical precision.
+
 ## Working plan
 
 Public Codex uses a very small plan model: each step is `pending`, `in_progress`, or `completed`, with at most one current `in_progress` step. Codex Loop ports that shape directly as optional working memory. It does not add semantic lifecycle states around those steps.
@@ -20,7 +31,7 @@ Relevant upstream surfaces: `codex-rs/prompts/src/review_request.rs` and `codex-
 
 Public Codex persists rollouts and reconstructs session state on resume; its context manager keeps host-owned retained context separate from the replaceable model window. Codex Loop adopts the invariant rather than porting the Rust runtime wholesale:
 
-- the request/steers/short plan are durable facts when persistence is enabled;
+- request/steers remain authority in host context at all times and become durable facts when persistence is enabled;
 - ordinary model history remains host-owned;
 - resume re-observes current workspace/external reality before continuing;
 - historical validation is not promoted to current proof.

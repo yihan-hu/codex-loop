@@ -29,6 +29,7 @@ from codex_loop_runtime.execution_supervision import (
     observation_from_strings,
 )
 from codex_loop_runtime.interaction_routing import resolve_interaction_target
+from codex_loop_runtime.instructions import discover
 from codex_loop_runtime.routing_state import (
     DEPLOYMENT_TARGETS,
     HOST_SURFACES,
@@ -99,7 +100,7 @@ from codex_loop_runtime.workspace_cache import (
     workspace_cache_cleanup_plan,
 )
 from codex_loop_runtime.state import active_task_id, open_store
-from codex_loop_runtime.workspace import repo_root
+from codex_loop_runtime.workspace import git_state, repo_root
 from codex_loop_runtime.workspace_registry import (
     grant_workspace,
     list_workspaces,
@@ -112,6 +113,8 @@ from codex_loop_runtime.workspace_registry import (
 
 
 HOST_ADAPTER_COMMANDS = (
+    ('orient', 'capture request authority, repository instructions, and pre-existing work without durable bootstrap'),
+    ('instructions', 'load applicable repository instructions without durable bootstrap'),
     ('next', 'project the bounded working set for the active durable task'),
     ('host-config', 'show or update the unified private Host Profile'),
     ('progress-config', 'compatibility facade for private progress-visibility preferences'),
@@ -187,6 +190,50 @@ def _command_after_double_dash(argv: list[str]) -> list[str]:
     if not command:
         raise ValueError('a command is required after --')
     return command
+
+
+def _instruction_rows(cwd: Path, fallbacks: list[str]) -> list[dict[str, str]]:
+    return [item.__dict__ for item in discover(cwd, fallback_filenames=tuple(fallbacks))]
+
+
+def _cmd_orient(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py orient')
+    p.add_argument('--cwd')
+    p.add_argument('--request-anchor', required=True)
+    p.add_argument('--fallback', action='append', default=[])
+    args = p.parse_args(argv[1:])
+    cwd = _cwd(args.cwd)
+    root = repo_root(cwd)
+    git = git_state(root)
+    is_git = bool(git.get('is_git'))
+    probe_degraded = bool(git.get('probe_degraded', False))
+    emit_ok({
+        'request_anchor': args.request_anchor,
+        'root': str(root),
+        'cwd': str(cwd),
+        'instructions': _instruction_rows(cwd, args.fallback),
+        'preexisting_work': {
+            'is_git': is_git,
+            'head': git.get('head'),
+            'branch': git.get('branch'),
+            'status': list(git.get('status', [])),
+            'protected_paths': list(git.get('protected_paths', [])),
+            'probe_degraded': probe_degraded,
+            'safe_to_mutate': not (is_git and probe_degraded),
+        },
+        'rule': 'the user request defines WHAT; repository instructions and pre-existing user work constrain HOW; none of these require durable task state',
+    })
+    return 0
+
+
+def _cmd_instructions(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py instructions')
+    p.add_argument('--cwd')
+    p.add_argument('--fallback', action='append', default=[])
+    args = p.parse_args(argv[1:])
+    cwd = _cwd(args.cwd)
+    emit_ok(_instruction_rows(cwd, args.fallback))
+    return 0
 
 
 def _cmd_next(argv: list[str]) -> int:
@@ -1071,6 +1118,10 @@ def main() -> int:
             return _delegate(argv)
         if argv[0] in {'-h', '--help'}:
             return _print_top_level_help()
+        if argv[0] == 'orient':
+            return _cmd_orient(argv)
+        if argv[0] == 'instructions':
+            return _cmd_instructions(argv)
         if argv[0] == 'next':
             return _cmd_next(argv)
         if argv[0] == 'host-config':

@@ -35,8 +35,28 @@ def main() -> None:
         git(repo, "config", "user.email", "smoke@example.com")
         git(repo, "config", "user.name", "Codex Loop Smoke")
         (repo / "sample.txt").write_text("hello\n", encoding="utf-8")
-        git(repo, "add", "sample.txt")
+        (repo / "AGENTS.md").write_text("root instruction\n", encoding="utf-8")
+        nested = repo / "nested"
+        nested.mkdir()
+        (nested / "AGENTS.override.md").write_text("nested instruction\n", encoding="utf-8")
+        git(repo, "add", "sample.txt", "AGENTS.md", "nested/AGENTS.override.md")
         git(repo, "commit", "-qm", "init")
+
+        (repo / "sample.txt").write_text("user work\n", encoding="utf-8")
+        orient = run(
+            "orient", "--cwd", str(nested),
+            "--request-anchor", "Inspect only the requested sample behavior.",
+        )
+        assert orient["request_anchor"] == "Inspect only the requested sample behavior."
+        assert [item["contents"] for item in orient["instructions"]] == [
+            "root instruction\n", "nested instruction\n"
+        ]
+        assert "sample.txt" in orient["preexisting_work"]["protected_paths"]
+        assert orient["preexisting_work"]["safe_to_mutate"] is True
+        instructions = run("instructions", "--cwd", str(nested))
+        assert [item["contents"] for item in instructions] == [
+            "root instruction\n", "nested instruction\n"
+        ]
 
         run(
             "bootstrap", "--cwd", str(repo),

@@ -2,6 +2,25 @@
 
 Use `python3 scripts/codex_loop.py ...`. Runtime task state is private and outside the repository.
 
+## Always-on orientation
+
+Repository/filesystem work begins with a stateless authority observation; no task id or durable bootstrap is required:
+
+```bash
+python3 scripts/codex_loop.py orient --cwd REPO \
+  --request-anchor 'exact current user request'
+```
+
+The result returns the request anchor unchanged, applicable root-to-cwd repository instructions, and the current Git dirty/protected-path snapshot. Treat `safe_to_mutate=false` as a requirement to obtain trustworthy host-visible workspace state before mutation.
+
+Load a more-specific repository instruction scope before first touching files there:
+
+```bash
+python3 scripts/codex_loop.py instructions --cwd PATH
+```
+
+Both commands are stateless. They establish execution authority in the host context; they do not create a durable Codex Loop task.
+
 ## Durable task bootstrap
 
 Use only when durable state is useful:

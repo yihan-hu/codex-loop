@@ -11,6 +11,27 @@ Once Codex Loop is selected, enter its standard lifecycle directly. Do not run a
 
 Use `scripts/codex_loop.py` from this Skill as the stable runtime entry point. Runtime state belongs in the private system temp directory, never in the target repository.
 
+## Always-on execution authority
+
+Keep task authority separate from optional durable task state. Preserve the initial user request and later user corrections as the scope authority; do not replace them with a broader model-written objective.
+
+For repository or filesystem work, orient before the first mutation without bootstrapping a durable task:
+
+```bash
+python3 scripts/codex_loop.py orient --cwd REPO \
+  --request-anchor 'EXACT CURRENT USER REQUEST'
+```
+
+Use the returned repository instructions and pre-existing work as active constraints. Treat returned `protected_paths` as user-owned work: do not revert, overwrite, or normalize them unless the requested change requires touching that path, and then preserve unrelated hunks. If `safe_to_mutate` is false, obtain a trustworthy host-visible workspace/Git observation before mutating.
+
+Repository instructions are scoped. Before first touching a file under a deeper directory whose instruction scope has not been loaded, read that scope directly without creating task state:
+
+```bash
+python3 scripts/codex_loop.py instructions --cwd PATH
+```
+
+`orient` and stateless `instructions` are observation steps, not lifecycle gates and not durable state. For non-repository work, keep the same request-authority rule and use the relevant host/domain context instead.
+
 ## Default execution model
 
 Use this happy path unless the task itself requires more rigor:
@@ -34,15 +55,16 @@ Before finishing, do one semantic review against the actual current state:
 1. Re-read the user's effective request, including later corrections.
 2. Inspect the final artifact/diff/state that matters.
 3. Check that every substantive change is directly justified by the request or a necessary dependency; remove unrelated or merely beneficial changes.
-4. Run the minimum relevant validation that has not already been run on the current state.
-5. If a material requirement remains unsatisfied, continue working.
-6. Otherwise finish and report the important evidence and any real limitation.
+4. Check the final change against the orientation snapshot and applicable repository instructions; preserve pre-existing user work and unrelated hunks.
+5. Run the minimum relevant validation that has not already been run on the current state.
+6. If a material requirement remains unsatisfied, continue working.
+7. Otherwise finish and report the important evidence and any real limitation.
 
 The runtime `completion` command checks deterministic blockers only. It does not certify semantic correctness.
 
 ## Thin task state
 
-Lifecycle admission and durable runtime state are separate concerns. Selection already entered the Codex Loop lifecycle; bootstrap durable state only when resume, long-running coordination, protected-work tracking, managed processes, publication, or external-action reconciliation will actually help.
+Lifecycle admission and durable runtime state are separate concerns. Selection already entered the Codex Loop lifecycle and always-on orientation already established request/repository/workspace authority. Bootstrap durable state only when resume, long-running coordination, machine-persisted protected-work tracking, managed processes, publication, or external-action reconciliation will actually help.
 
 Bootstrap:
 
