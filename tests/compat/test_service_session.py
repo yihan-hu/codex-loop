@@ -22,7 +22,7 @@ class ServiceTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); b,_=call(root,'bootstrap','--objective','process test','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
    try:
-    r,_=call(root,'spawn','--','sleep','10'); h=r['data']['handle']; endpoint=Path(tempfile.gettempdir())/'codex-loop'; matches=list(endpoint.glob(f'*/tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
+    r,_=call(root,'spawn','--','sleep','10'); h=r['data']['handle']; endpoint=Path(tempfile.gettempdir())/'codex-loop'; matches=list(endpoint.glob(f'tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
     if os.name!='nt': self.assertEqual(matches[0].stat().st_mode & 0o777,0o600)
     call(root,'terminate',h); p,_=call(root,'poll',h); self.assertTrue(p['data']['has_exited']); self.assertTrue(p['data']['output_drained'])
    finally:
@@ -101,7 +101,7 @@ class ServiceTests(unittest.TestCase):
    boot=run('bootstrap','--cwd',str(root),'--objective','long socket fallback','--no-validation','--no-validation-reason','fixture')
    tid=boot['data']['task_id']; run('service-start','--cwd',str(root),'--use-active-task')
    try:
-    matches=list((long_tmp/'codex-loop').glob(f'*/tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
+    matches=list((long_tmp/'codex-loop').glob(f'tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
     endpoint=json.loads(matches[0].read_text()); self.assertEqual(endpoint['kind'],'tcp'); self.assertEqual(endpoint['host'],'127.0.0.1'); self.assertEqual(endpoint.get('fallback'),'unix_path_too_long')
    finally:
     run('service-stop','--cwd',str(root),'--use-active-task')

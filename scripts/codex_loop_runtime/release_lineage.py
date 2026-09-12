@@ -185,7 +185,7 @@ def require_workspace_binding(root: Path, store: Any) -> dict[str, Any]:
     binding = store.get_meta("workspace_binding")
     status = workspace_binding_status(root, binding)
     if not status.get("bound"):
-        raise RuntimeError("task predates canonical workspace binding; bootstrap a new task in the canonical Git working tree")
+        raise RuntimeError("lifecycle has no canonical workspace binding; orient the existing lifecycle in the canonical Git working tree")
     if not status.get("matches"):
         raise RuntimeError("canonical workspace binding mismatch: " + "; ".join(status.get("reasons", [])))
     return dict(status["binding"])

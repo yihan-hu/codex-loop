@@ -1,8 +1,8 @@
 # Codex Loop
 
-Codex Loop is a ChatGPT Skill that applies Codex-style objective continuation to non-trivial multi-step work across domains while keeping ChatGPT as the host for reasoning, tools, approvals, connectors, and conversation state.
+Codex Loop is a ChatGPT Skill that gives every selected objective one lightweight Codex-style lifecycle while keeping ChatGPT as the host for reasoning, tools, approvals, connectors, and conversation state.
 
-It uses broad invocation with adaptive direct-vs-durable lifecycle assessment. Trivial one-step work stays lightweight; dependency-bearing work can preserve objective state, evidence, review, external actions, and completion across multiple stages without launching Codex CLI or another model runtime.
+Selection always creates the lifecycle. Simple work stays lightweight because plans, workspace binding, checkpoints, persistence, extra review, managed processes, and external-action bookkeeping are activated only when needed—not because the lifecycle itself is optional.
 
 ## Runtime control plane v2
 
@@ -38,7 +38,7 @@ Use Codex Loop for objectives such as:
 - remembering stable local workspace aliases without turning remembered paths into standing access permission;
 - keeping repository `workspace_mode` independent from browser/computer `interaction_target`;
 - controlling a user's local Chrome through a supported Browser/Chrome bridge attached to the current conversation, with separate host-health and session-capability recovery;
-- prewarming predictable GitHub/Drive host permission boundaries at Skill admission, including Git-object and persistent-ref writes for Web publication;
+- resolving GitHub/Drive permissions only when the objective reaches a side-effect boundary that needs them;
 - publishing Web-mode workspace source through verified Drive staging + GitHub Actions, or Local-mode source through native Git;
 - packaging ChatGPT Skills;
 - packaging an updated Codex Loop workspace into an official validated `skill.zip`, then exposing the same bytes as `codex-loop.zip` through a fresh current-conversation artifact;
@@ -57,9 +57,9 @@ The user installs or replaces the Skill manually through `Plugins -> Plugin Dire
 
 ## Quick start
 
-Codex Loop is designed for **implicit invocation**. In normal use, you should not need to type `@Codex Loop` or name the Skill. ChatGPT should select it broadly for non-trivial objectives that plausibly contain multiple dependent steps or need durable evidence/state, iterative review, delegation, external-action bookkeeping, managed processes, or cross-tool coordination. That includes research, analysis, writing, scientific work, artifact creation, operations, repository/software development, Git lifecycle work, Skill maintenance, and Computer Use. Skill admission enters the objective lifecycle directly; planning, durable workspace state, validation, delegation, persistence, and managed-process machinery remain lazy and activate only when the objective needs them.
+Codex Loop is designed for **implicit invocation**. In normal use, you should not need to type `@Codex Loop` or name the Skill. Once selected, ChatGPT immediately creates one lifecycle for the objective and keeps the user's request plus later corrections authoritative across turns. Planning, workspace binding, validation bookkeeping, delegation, checkpoints, cross-chat persistence, and managed-process machinery remain lazy and activate only when the objective needs them.
 
-Short follow-ups such as `revise`, `verify`, `export`, `push`, `sync`, or `open this in Chrome` should continue through Codex Loop when the active objective is clear from context. Automatic invocation does **not** bypass permissions: predictable GitHub/Drive permission prompts are deliberately surfaced at Skill admission, while local source mutation and actual Computer Use remain explicitly authorized per task under the existing safety gates.
+Short follow-ups such as `continue`, `继续`, `revise`, `verify`, `export`, `push`, `sync`, or `open this in Chrome` continue the existing lifecycle when the active objective is clear. A continuation first inspects the retained lifecycle state and current external reality; it does not create a replacement lifecycle or redo completed work. Automatic invocation does **not** bypass permissions: side-effect permissions are resolved when the task actually reaches that boundary.
 
 For repository or Skill-development requests, **Web mode** is the default development location in every new conversation. Pure research, writing, analysis, artifact, or operations objectives do not need Web/Local repository routing unless a later step actually becomes development-location-sensitive.
 
@@ -98,7 +98,7 @@ Once Local mode is selected, later repository tasks in the same conversation kee
 
 ## Adaptive progress visibility
 
-Codex Loop increases user-visible progress for real multi-step/durable objectives by default so a long Web task does not look stalled. The built-in enhanced policy uses an approximate **15-second / 3-substantive-tool-call** cadence (whichever comes first), plus immediate concise updates for material findings or blockers. Trivial/direct tasks remain low-noise. This is host-facing guidance: ChatGPT owns actual message timing and tool dispatch.
+Codex Loop increases user-visible progress for substantive multi-step objectives by default so a long Web task does not look stalled. The built-in enhanced policy uses an approximate **15-second / 3-substantive-tool-call** cadence (whichever comes first), plus immediate concise updates for material findings or blockers. Lightweight tasks remain low-noise. This is host-facing guidance: ChatGPT owns actual message timing and tool dispatch.
 
 The preference is user-specific and is never committed. `python3 scripts/codex_loop.py progress-config` shows the effective values; `progress-config --mode enhanced --interval-seconds 20 --tool-call-interval 4` writes overrides atomically to `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`). The supported modes are `enhanced`, `standard`, and `quiet`; upfront planning and material-event updates can be toggled independently. `progress-config --reset` removes only the progress override and returns to built-in defaults. See `references/progress-visibility.md`.
 
@@ -205,7 +205,7 @@ The three states stay separate:
 ```text
 KNOWN    I know where the workspace is.
 GRANTED  This conversation may use that exact registered workspace.
-BOUND    The current durable task uses one canonical Git working tree.
+BOUND    The current lifecycle uses one canonical Git working tree.
 ```
 
 A request such as `modify EpiAgent` does not by itself grant the path. If the alias is registered but not granted, Codex Loop asks for current-conversation path permission instead of asking for the path again. Host/RDC authorization is still required after the semantic grant, and host denial always wins.
@@ -246,7 +246,7 @@ This path is **not Browser Control** and does not satisfy Browser capability che
 
 ## Capability and permission preflight
 
-At Skill admission, Codex Loop reads the explicit request just far enough to identify predictable external capability classes, resolves only the routing needed to choose the representative probe, and runs the **real permission smoke before repository acquisition or substantive execution**. A Web `push` prewarms both Git-object write and the later persistent-ref `update_ref` boundary; Drive write/delete uses an exact create/read/delete sentinel. Full task review can happen afterward.
+Codex Loop resolves external capability checks at the side-effect boundary that actually needs them. Read-only reasoning, inspection, editing, and validation should not trigger unrelated permission probes merely because a later external action is predictable.
 
 When the bundled runtime is available, the host can make that stage explicit:
 
@@ -260,7 +260,7 @@ python3 scripts/codex_loop.py permission-preflight-plan \
 
 The command only plans probes; it does **not** grant or persist permission. ChatGPT must then execute each probe through the live host integration. Seeing a connector in the tool list, reading its schema, or observing a cached `connected=true`-style flag does not count.
 
-Typical probes are deliberately low-risk: Local GitHub publication uses `git push --dry-run`; Web GitHub publication combines live push-capable repository permission readback with one Git-database create-blob/write-object call containing fixed empty content that remains unreferenced, so no tree/commit/ref or source is changed; GitHub Actions uses only an audited read-only/ref-nonmutating workflow job (for this repository, `Workspace Download`, never `Workspace Import`); Drive write access creates one uniquely named non-sensitive sentinel, reads back its exact ID/metadata, and deletes that exact sentinel immediately. A repository permission readback alone may prove access, but does not count as prewarming the host's write approval.
+Typical probes are deliberately low-risk: Local GitHub publication uses `git push --dry-run`; Web GitHub publication combines live push-capable repository permission readback with one Git-database create-blob/write-object call containing fixed empty content that remains unreferenced, so no tree/commit/ref or source is changed; GitHub Actions uses only an audited read-only/ref-nonmutating workflow job (for this repository, `Workspace Download`, never `Workspace Import`); Drive write access creates one uniquely named non-sensitive sentinel, reads back its exact ID/metadata, and deletes that exact sentinel immediately. A repository permission readback alone may prove access, but does not prove the later host write boundary; probe that boundary only when the side effect is imminent.
 
 For push-triggered Web publication, the common early host-permission set is `github_push + google_drive_write`; GitHub Actions is proved after the request push by observing the matching run/receipt rather than by requiring a separate Actions write probe. For tasks that do not publish, Codex Loop does not request those permissions just because the integrations exist. Live successful observations may be reused during the current task/session while they remain valid.
 
@@ -436,7 +436,7 @@ Switch back to Web mode for the next task.
 
 The deterministic runtime tracks repository/task facts such as workspace binding, mutation generation, validation evidence, acceptance criteria, review freshness, process state, and external-action state. ChatGPT still decides what to do and dispatches the actual host tools.
 
-The normal durable lifecycle is:
+The normal lifecycle is:
 
 ```text
 assess -> observe -> act -> integrate -> validate -> review -> evidence -> completion gate

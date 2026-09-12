@@ -31,13 +31,14 @@ def restore(root: Path, cwd: Path, store: StateStore) -> dict[str, Any]:
     changed = sync_generation(root, store)
     current_instructions = discover(cwd)
     saved = checkpoint['summary']
-    saved_hashes = {str(x.get('path')): x.get('sha256') for x in saved.get('instructions', [])}
-    current_hashes = {x.path: x.sha256 for x in current_instructions}
+    saved_entries = saved.get('instructions', {}).get('entries', []) if isinstance(saved.get('instructions'), dict) else saved.get('instructions', [])
+    saved_hashes = {str(x.get('path')): (x.get('sha256'), bool(x.get('complete', True))) for x in saved_entries}
+    current_hashes = {x.path: (x.sha256, x.complete) for x in current_instructions.entries}
     return {
         'checkpoint': checkpoint,
         'reconciled_external_workspace_change': changed,
         'current_generation': store.generation(),
         'instruction_drift': saved_hashes != current_hashes,
-        'current_instructions': [{'path': x.path, 'sha256': x.sha256, 'provenance': x.provenance} for x in current_instructions],
+        'current_instructions': {'entries': [{'path': x.path, 'sha256': x.sha256, 'complete': x.complete, 'provenance': x.provenance} for x in current_instructions.entries], 'complete': current_instructions.complete, 'truncated_paths': list(current_instructions.truncated_paths)},
         'rule': 'current workspace/tool facts override stale checkpoint assumptions',
     }

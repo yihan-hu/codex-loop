@@ -44,16 +44,16 @@ class ProgressVisibilityTests(unittest.TestCase):
             self.assertFalse(data["repository_persisted"])
             self.assertFalse((home / "host.json").exists())
 
-            durable, _ = call(home, "progress-policy", "--lifecycle-mode", "durable")
-            self.assertEqual(durable["data"]["visibility_mode"], "enhanced")
-            self.assertTrue(durable["data"]["periodic_updates"])
-            self.assertEqual(durable["data"]["interval_seconds"], 15)
-            self.assertEqual(durable["data"]["tool_call_interval"], 3)
+            substantive, _ = call(home, "progress-policy", "--work-shape", "substantive")
+            self.assertEqual(substantive["data"]["visibility_mode"], "enhanced")
+            self.assertTrue(substantive["data"]["periodic_updates"])
+            self.assertEqual(substantive["data"]["interval_seconds"], 15)
+            self.assertEqual(substantive["data"]["tool_call_interval"], 3)
 
-            direct, _ = call(home, "progress-policy", "--lifecycle-mode", "direct")
-            self.assertEqual(direct["data"]["visibility_mode"], "low_noise")
-            self.assertFalse(direct["data"]["periodic_updates"])
-            self.assertFalse(direct["data"]["emit_upfront_plan"])
+            lightweight, _ = call(home, "progress-policy", "--work-shape", "lightweight")
+            self.assertEqual(lightweight["data"]["visibility_mode"], "low_noise")
+            self.assertFalse(lightweight["data"]["periodic_updates"])
+            self.assertFalse(lightweight["data"]["emit_upfront_plan"])
 
 
 
@@ -104,7 +104,7 @@ class ProgressVisibilityTests(unittest.TestCase):
             path.write_text(original)
             os.chmod(path, 0o600)
 
-            policy, _ = call(home, "progress-policy", "--lifecycle-mode", "durable")
+            policy, _ = call(home, "progress-policy", "--work-shape", "substantive")
             self.assertEqual(policy["data"]["visibility_mode"], "enhanced")
             self.assertIn("invalid_host_config_json_using_defaults", policy["data"]["config"]["warnings"])
 
@@ -125,7 +125,7 @@ class ProgressVisibilityTests(unittest.TestCase):
                 path.symlink_to(target)
             except (OSError, NotImplementedError):
                 self.skipTest("symlinks unavailable")
-            policy, _ = call(home, "progress-policy", "--lifecycle-mode", "durable")
+            policy, _ = call(home, "progress-policy", "--work-shape", "substantive")
             self.assertEqual(policy["data"]["visibility_mode"], "enhanced")
             self.assertTrue(any(x.startswith("unsafe_host_config_using_defaults:") for x in policy["data"]["config"]["warnings"]))
 

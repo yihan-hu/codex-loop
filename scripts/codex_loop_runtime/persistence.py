@@ -10,7 +10,7 @@ from typing import Any
 
 from .change_tracker import capture_baseline
 from .release_lineage import capture_workspace_binding
-from .state import MAX_REQUEST_AUTHORITY_CHARS, StateStore, create_store, scrub_persisted_text, set_active_task
+from .state import MAX_REQUEST_AUTHORITY_CHARS, StateStore, create_store, open_store, scrub_persisted_text, set_active_task, validate_task_id
 
 SCHEMA_VERSION = 4
 BACKENDS = {"off", "google_drive"}
@@ -297,7 +297,7 @@ def build_resume_plan(manifest: dict[str, Any], *, now: datetime | None = None) 
         "required_observations": required,
         "unresolved_external_actions": unresolved,
         "freshness_rules": {"validation": "HISTORICAL", "external_actions": "REOBSERVE_IF_UNRESOLVED"},
-        "rule": "restore the objective/plan, then let current repository and external reality win",
+        "rule": "restore the same lifecycle id and retained authority/plan, then let current repository and external reality win",
     }
 
 
@@ -335,25 +335,34 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
     manifest = validate_state_manifest(manifest)
     observations = _validate_observations(observations)
     root = root.resolve()
-    if not observations["workspace_presence"]:
-        return {"status": "NEEDS_RECONCILIATION", "created_task": False, "reason": "workspace is not present"}
     task = manifest["task"]
-    store = create_store(root)
+    task_id = validate_task_id(str(task.get("task_id") or ""))
+    try:
+        open_store(None, task_id)
+    except RuntimeError as exc:
+        if "unknown codex-loop task" not in str(exc):
+            raise
+    else:
+        raise RuntimeError("this lifecycle already exists locally; use next/authority instead of persistence-resume")
+
+    store = create_store(None, task_id=task_id)
+    baseline_files = 0
     try:
         store.configure_task(
-            store.path.parent.name, str(task["objective"]), list(manifest["acceptance"]),
+            task_id, str(task["objective"]), list(manifest["acceptance"]),
             request_anchor=str(task["request_anchor"]), profile=str(task.get("profile") or "regular"),
             requires_validation=bool(task.get("requires_validation", False)),
             requires_clean_process_exit=bool(task.get("requires_clean_process_exit", False)),
         )
         store.set_plan(list(manifest["plan"]))
-        store.set_meta("workspace_binding", capture_workspace_binding(root))
-        baseline_files = capture_baseline(root, store)
         for text in manifest["steers"]:
             store.record_steer(str(text))
-
-        expected_commit = manifest["workspace"].get("source_commit") or manifest["workspace"].get("base_commit")
-        expected_tree = manifest["workspace"].get("source_tree") or manifest["workspace"].get("base_tree")
+        expected_workspace = dict(manifest["workspace"])
+        expected_commit = expected_workspace.get("source_commit") or expected_workspace.get("base_commit")
+        expected_tree = expected_workspace.get("source_tree") or expected_workspace.get("base_tree")
+        expected_repository = str(expected_workspace.get("repository") or "").strip()
+        if expected_commit or expected_tree or expected_repository:
+            store.set_meta("resume_expected_workspace", expected_workspace)
         observed_commit = observations.get("repository_head")
         observed_tree = observations.get("repository_tree")
         source_diverged = bool(
@@ -365,6 +374,13 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
             missing_source.append("repository_head")
         if expected_tree and observed_tree is None:
             missing_source.append("repository_tree")
+
+        workspace_identity_verified = bool(expected_commit or expected_tree) and not source_diverged and not missing_source
+        if observations["workspace_presence"] and workspace_identity_verified:
+            store.set_meta("workspace_binding", capture_workspace_binding(root))
+            store.set_meta("workspace_cwd", str(root))
+            baseline_files = capture_baseline(root, store)
+            set_active_task(root, store.task_id)
 
         observed_actions = {(x["kind"], x["identity_sha256"]): x for x in observations["external_actions"]}
         unresolved_external = []
@@ -409,18 +425,29 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
             if obs["state"] == "terminal_failure":
                 unresolved_external.append({"kind": old["kind"], "identity_sha256": identity_hash, "state": "terminal_failure"})
 
-        store.set_meta("resume_lineage", {"resumed": True, "resume_source_manifest_sha256": _canonical_sha256(manifest), "resume_source_task": task.get("task_id")})
+        store.set_meta("resume_lineage", {"resumed": True, "resume_source_manifest_sha256": _canonical_sha256(manifest), "resume_source_task": task_id})
         store.set_meta("historical_recovery_evidence", {"validation": "HISTORICAL", "historical": manifest["historical"]})
-        set_active_task(root, store.task_id)
     except Exception:
         shutil.rmtree(store.path.parent, ignore_errors=True)
         raise
 
-    status = "SOURCE_DIVERGED" if source_diverged else ("EXTERNAL_ACTION_UNRESOLVED" if unresolved_external else ("NEEDS_RECONCILIATION" if missing_source else "RESUMED"))
+    if not observations["workspace_presence"]:
+        status = "NEEDS_RECONCILIATION"
+    elif source_diverged:
+        status = "SOURCE_DIVERGED"
+    elif unresolved_external:
+        status = "EXTERNAL_ACTION_UNRESOLVED"
+    elif missing_source:
+        status = "NEEDS_RECONCILIATION"
+    elif observations["workspace_presence"] and expected_repository and not workspace_identity_verified:
+        status = "NEEDS_RECONCILIATION"
+    else:
+        status = "RESUMED"
     return {
         "status": status, "created_task": True, "task_id": store.task_id, "state": str(store.path),
         "baseline_files": baseline_files, "source_diverged": source_diverged,
         "missing_source_observations": missing_source, "unresolved_external_actions": unresolved_external,
         "plan": store.plan(), "historical_validation": "HISTORICAL",
-        "rule": "objective and plan resume; current repository/tool/external reality is authoritative",
+        "workspace_bound": bool(store.get_meta("workspace_binding")),
+        "rule": "the original lifecycle id, request, steers, and plan resume; current repository/tool/external reality is authoritative",
     }

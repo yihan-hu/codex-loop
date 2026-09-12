@@ -67,7 +67,7 @@ If the planner returns `WEB_LOCAL_SYNC_REQUIREMENTS_UNMET`, satisfy only the nam
 6. Through Remote Desktop Commander, download that exact Drive object into the explicitly authorized destination path. Do not search the host for a convenient alternative path.
 7. On the local host require exact byte size, SHA-256, and `git bundle verify` success before considering the transfer complete.
 8. If the user only asked to save/synchronize the bytes, stop with Web still authoritative. If the user separately asks to import/update a local canonical repository, require the ordinary local workspace grant + current-task local-source-mutation authorization before changing repository refs/worktrees.
-9. If the user separately chooses to continue development locally, only then record `route-transition --workspace-mode local --selection-evidence "..."` and bind the durable task to that canonical local worktree.
+9. If the user separately chooses to continue development locally, only then record `route-transition --workspace-mode local --selection-evidence "..."` and bind the same lifecycle to that canonical local worktree.
 10. After verified local consumption, permanently delete the exact Drive staging object. Never broaden cleanup to sibling files/folders.
 
 ## Publication fallback

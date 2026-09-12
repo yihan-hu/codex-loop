@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +18,17 @@ class InstructionEntry:
     path: str
     contents: str
     sha256: str
+    complete: bool
     provenance: str = "workspace_instruction"
+
+
+@dataclass(frozen=True)
+class InstructionDiscovery:
+    entries: tuple[InstructionEntry, ...]
+    complete: bool
+    truncated_paths: tuple[str, ...]
+    max_bytes: int
+    bytes_read: int
 
 
 def _search_dirs(root: Path, cwd: Path) -> list[Path]:
@@ -64,7 +73,7 @@ def discover(
     *,
     fallback_filenames: tuple[str, ...] = (),
     max_bytes: int = 32 * 1024,
-) -> list[InstructionEntry]:
+) -> InstructionDiscovery:
     if max_bytes < 0:
         raise ValueError("max_bytes must be non-negative")
     cwd_path = Path(cwd).resolve()
@@ -79,18 +88,28 @@ def discover(
         if name not in candidates:
             candidates.append(name)
 
-    remaining = max_bytes
-    entries: list[InstructionEntry] = []
+    selected_paths: list[tuple[Path, Path]] = []
     for directory in _search_dirs(root, cwd_path):
-        selected: tuple[Path, Path] | None = None
         for name in candidates:
             selected = _candidate(directory / name, root)
             if selected is not None:
+                selected_paths.append(selected)
                 break
-        if selected is None or remaining <= 0:
+
+    remaining = max_bytes
+    entries: list[InstructionEntry] = []
+    truncated: list[str] = []
+    bytes_read = 0
+    for lexical, read_target in selected_paths:
+        if remaining <= 0:
+            truncated.append(str(lexical))
             continue
-        lexical, read_target = selected
-        data = read_target.read_bytes()[:remaining]
+        with read_target.open("rb") as handle:
+            probe = handle.read(remaining + 1)
+        entry_complete = len(probe) <= remaining
+        data = probe if entry_complete else probe[:remaining]
+        if not entry_complete:
+            truncated.append(str(lexical))
         if not data:
             continue
         text = data.decode("utf-8", errors="replace")
@@ -100,7 +119,17 @@ def discover(
                     path=str(lexical),
                     contents=text,
                     sha256=hashlib.sha256(data).hexdigest(),
+                    complete=entry_complete,
                 )
             )
-            remaining -= len(data)
-    return entries
+        used = len(data)
+        bytes_read += used
+        remaining -= used
+
+    return InstructionDiscovery(
+        entries=tuple(entries),
+        complete=not truncated,
+        truncated_paths=tuple(truncated),
+        max_bytes=max_bytes,
+        bytes_read=bytes_read,
+    )

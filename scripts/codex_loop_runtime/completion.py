@@ -29,7 +29,8 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
     Semantic acceptance belongs to the model's final review. This function deliberately does not
     duplicate that review with criterion evidence, fresh-PASS counters, or an outer objective audit.
     """
-    if reconcile:
+    binding = store.get_meta("workspace_binding")
+    if reconcile and binding is not None:
         sync_generation(root, store)
 
     task_status = str(store.get_meta("task_status", "uninitialized"))
@@ -87,28 +88,32 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
     if unresolved_process_failures:
         reasons.append(f"{unresolved_process_failures} managed process failure(s) are unresolved")
 
-    binding = store.get_meta("workspace_binding")
     if binding is not None:
         binding_status = workspace_binding_status(root, binding)
         if not binding_status.get("matches"):
             blockers.append("canonical workspace binding no longer matches the current Git worktree")
+        change_state = changes(root, store)
+        if change_state.get("unexpected_protected_changes"):
+            blockers.append("protected pre-existing user changes were modified outside the runtime journal")
+        profile = str(store.get_meta("profile", "regular"))
+        changed_any = bool(
+            change_state.get("added") or change_state.get("modified")
+            or change_state.get("deleted") or change_state.get("renamed")
+        )
+        if profile in READ_ONLY_PROFILES and changed_any:
+            blockers.append(f"read-only task profile {profile} observed workspace changes")
+        if profile == "command_only" and changed_any:
+            blockers.append("command_only profile observed workspace changes")
+        if change_state.get("git", {}).get("probe_degraded"):
+            warnings.append("Git observation is degraded")
     else:
-        binding_status = {"bound": False, "matches": False, "reason": "workspace binding not recorded"}
-
-    change_state = changes(root, store)
-    if change_state.get("unexpected_protected_changes"):
-        blockers.append("protected pre-existing user changes were modified outside the runtime journal")
-    profile = str(store.get_meta("profile", "regular"))
-    changed_any = bool(
-        change_state.get("added") or change_state.get("modified")
-        or change_state.get("deleted") or change_state.get("renamed")
-    )
-    if profile in READ_ONLY_PROFILES and changed_any:
-        blockers.append(f"read-only task profile {profile} observed workspace changes")
-    if profile == "command_only" and changed_any:
-        blockers.append("command_only profile observed workspace changes")
-    if change_state.get("git", {}).get("probe_degraded"):
-        warnings.append("Git observation is degraded")
+        binding_status = {"bound": False, "matches": True, "reason": "lifecycle has no workspace binding"}
+        change_state = {
+            "root": None, "generation": generation, "tracking_active": False,
+            "added": [], "modified": [], "deleted": [], "renamed": [],
+            "protected_paths": [], "agent_owned_paths": [], "unexpected_protected_changes": [],
+            "ignored_watch": {"watched_paths": [], "opaque_paths": []}, "git": {"is_git": False},
+        }
 
     status = CompletionStatus.BLOCKED if blockers else (CompletionStatus.CONTINUE if reasons else CompletionStatus.PASS)
     return CompletionDecision(

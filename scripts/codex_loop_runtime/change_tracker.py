@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .release_lineage import capture_workspace_binding
 from .state import StateStore
 from .workspace import FileSnapshot, git_state, ignored_watch_state, snapshot_files, workspace_fingerprint
 
@@ -20,6 +21,9 @@ def capture_baseline(root: Path, store: StateStore) -> int:
         (item.path, item.sha256, item.size, item.mode, item.path in protected)
         for item in files
     ])
+    if store.get_meta("workspace_binding") is None:
+        store.set_meta("workspace_binding", capture_workspace_binding(root))
+    store.set_meta("baseline_enabled", True)
     store.set_meta("baseline_git", git)
     store.set_meta("protected_paths", sorted(protected))
     store.set_meta("workspace_fingerprint", workspace_fingerprint(root))
@@ -29,6 +33,8 @@ def capture_baseline(root: Path, store: StateStore) -> int:
 
 
 def sync_generation(root: Path, store: StateStore) -> bool:
+    if not bool(store.get_meta("baseline_enabled", False)):
+        return False
     root = root.resolve()
     current = workspace_fingerprint(root)
     previous = store.get_meta("workspace_fingerprint")
@@ -50,6 +56,32 @@ def _map_current(items: list[FileSnapshot]) -> dict[str, FileSnapshot]:
 
 def changes(root: Path, store: StateStore) -> dict[str, Any]:
     root = root.resolve()
+    if not bool(store.get_meta("baseline_enabled", False)):
+        git_now = git_state(root)
+        return {
+            "root": str(root),
+            "generation": store.generation(),
+            "tracking_active": False,
+            "added": [],
+            "modified": [],
+            "deleted": [],
+            "renamed": [],
+            "protected_paths": sorted(store.protected_paths()),
+            "agent_owned_paths": sorted(store.mutation_paths()),
+            "unexpected_protected_changes": [],
+            "ignored_watch": store.get_meta("ignored_watch", {"watched_paths": [], "opaque_paths": []}),
+            "git": {
+                "is_git": bool(git_now.get("is_git")),
+                "head_now": git_now.get("head"),
+                "branch_now": git_now.get("branch"),
+                "status": git_now.get("status", []),
+                "repo_probe_failed": bool(git_now.get("repo_probe_failed")),
+                "status_probe_failed": bool(git_now.get("status_probe_failed")),
+                "head_probe_failed": bool(git_now.get("head_probe_failed")),
+                "branch_probe_failed": bool(git_now.get("branch_probe_failed")),
+                "probe_degraded": bool(git_now.get("probe_degraded")),
+            },
+        }
     baseline = store.baseline()
     current = _map_current(snapshot_files(root))
     base_paths = set(baseline)
@@ -97,6 +129,7 @@ def changes(root: Path, store: StateStore) -> dict[str, Any]:
     return {
         "root": str(root),
         "generation": store.generation(),
+        "tracking_active": True,
         "added": added,
         "modified": modified,
         "deleted": deleted,

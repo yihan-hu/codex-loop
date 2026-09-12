@@ -7,7 +7,7 @@ Codex Loop separates three states:
 ```text
 KNOWN    persistent registry identity/location
 GRANTED  explicit authorization for the current conversation
-BOUND    one durable task's canonical Git working tree
+BOUND    one lifecycle's canonical Git working tree
 ```
 
 A registered path is KNOWN, not GRANTED. See `workspace-registry.md` for the registry/session capability contract.
@@ -39,7 +39,7 @@ Primary Local Root + Session Granted Roots = Effective Local Roots
 
 The primary root is the workspace root chosen when the user explicitly enters Local mode. Additional registered workspaces may join the effective root set only after the user explicitly grants each one in the current conversation and RDC/host authorization is independently confirmed.
 
-Multiple effective roots do not merge repositories. Each durable task still binds to exactly one canonical Git working tree. A grant for one repository never grants its parent or sibling repositories.
+Multiple effective roots do not merge repositories. Each lifecycle still binds to exactly one canonical Git working tree. A grant for one repository never grants its parent or sibling repositories.
 
 ## Persistent workspace registry
 

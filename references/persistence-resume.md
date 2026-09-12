@@ -21,7 +21,7 @@ A v4 resume restores:
 
 It does **not** restore semantic PASS state. Historical validation remains historical. The resumed model should inspect the repository/tool state, update the plan if needed, then continue from the smallest useful next action.
 
-If current source commit/tree differs from the manifest, report `SOURCE_DIVERGED` and bind the new task to current reality. Do not pretend old validation still applies.
+If current source commit/tree differs from the manifest, report `SOURCE_DIVERGED` and keep the same lifecycle id and reconcile it to current reality. Do not pretend old validation still applies.
 
 For a persisted non-idempotent action in `dispatched` or `outcome_unknown`, observe the provider before any retry. Missing terminal evidence remains unresolved.
 

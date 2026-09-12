@@ -86,7 +86,7 @@ These are transport observations, not permission to mutate or repair payload byt
 
 ## Telemetry
 
-Keep only bounded metadata needed to diagnose the transfer: transfer ID, expected/decoded size, expected/actual SHA-256, normalized payload length, marker outcome, guard-match booleans, and failure class. Do not persist the Base64 payload in Codex Loop durable task state.
+Keep only bounded metadata needed to diagnose the transfer: transfer ID, expected/decoded size, expected/actual SHA-256, normalized payload length, marker outcome, guard-match booleans, and failure class. Do not persist the Base64 payload in Codex Loop lifecycle state.
 
 The guard is diagnostic and sacrificial. A guard mismatch alone does not make a byte-exact payload fail. Conversely, intact guards never override a payload size/hash mismatch.
 

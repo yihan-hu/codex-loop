@@ -428,24 +428,24 @@ def set_progress_config(
     return result
 
 
-def progress_policy(lifecycle_mode: str) -> dict[str, Any]:
-    if lifecycle_mode not in {"direct", "durable"}:
-        raise ValueError("lifecycle_mode must be direct or durable")
+def progress_policy(work_shape: str) -> dict[str, Any]:
+    if work_shape not in {"lightweight", "substantive"}:
+        raise ValueError("work_shape must be lightweight or substantive")
     config = effective_progress_config()
-    if lifecycle_mode == "direct":
+    if work_shape == "lightweight":
         return {
-            "lifecycle_mode": "direct",
+            "work_shape": "lightweight",
             "visibility_mode": "low_noise",
             "periodic_updates": False,
             "emit_upfront_plan": False,
             "material_event_updates": bool(config["material_event_updates"]),
             "config": config,
-            "instruction": "Keep trivial/direct work concise; do not add periodic progress messages.",
+            "instruction": "Keep lightweight work concise; do not add periodic progress messages.",
         }
     mode = str(config["mode"])
     if mode == "quiet":
         return {
-            "lifecycle_mode": "durable",
+            "work_shape": "substantive",
             "visibility_mode": "quiet",
             "periodic_updates": False,
             "emit_upfront_plan": False,
@@ -455,7 +455,7 @@ def progress_policy(lifecycle_mode: str) -> dict[str, Any]:
         }
     if mode == "standard":
         return {
-            "lifecycle_mode": "durable",
+            "work_shape": "substantive",
             "visibility_mode": "standard",
             "periodic_updates": "host_default",
             "emit_upfront_plan": bool(config["upfront_plan"]),
@@ -464,7 +464,7 @@ def progress_policy(lifecycle_mode: str) -> dict[str, Any]:
             "instruction": "Use the host's normal progress cadence while keeping updates concise and material.",
         }
     return {
-        "lifecycle_mode": "durable",
+        "work_shape": "substantive",
         "visibility_mode": "enhanced",
         "periodic_updates": True,
         "interval_seconds": int(config["interval_seconds"]),

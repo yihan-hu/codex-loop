@@ -44,7 +44,7 @@ observe exact repository + target branch/commit
 
 The standard workflow packages a Git bundle, not `git archive`. It uses full checkout history, creates a temporary export ref pointing at the exact workflow `HEAD`, logs the bundle's SHA-256/size plus exact commit/tree, uploads a `<repo-name>-source` artifact, and supports both branch pushes and `workflow_dispatch`. The temporary export ref is transport metadata only; after restore, set the intended branch/HEAD and verify exact commit/tree before binding the workspace.
 
-Before durable bootstrap or any source mutation, run the deterministic verifier from the fresh restored repository:
+Before workspace rebind or any source mutation, run the deterministic verifier from the fresh restored repository:
 
 ```bash
 python3 scripts/codex_loop.py source-acquisition-verify \

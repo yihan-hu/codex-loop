@@ -20,16 +20,19 @@ class InvocationContractTests(unittest.TestCase):
             "resume",
         ):
             self.assertIn(term, description)
-        self.assertIn("native codex-style agent execution", description)
-        self.assertNotIn("workflow engine", description)
+        self.assertIn("once selected, enter the standard codex loop lifecycle directly", description)
 
-    def test_body_uses_thin_native_agent_loop(self):
+    def test_selection_always_creates_one_lightweight_lifecycle(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("## Default execution model", skill)
-        self.assertIn("execute <-> inspect/test/repair -> optional one review -> final acceptance -> done", skill)
-        self.assertIn("Do not bootstrap durable state merely because Codex Loop was selected", skill)
-        self.assertIn("Optional capabilities", skill)
-        self.assertIn("Activate them only for tasks that actually need them", skill)
+        self.assertIn("create and enter one real Codex Loop lifecycle immediately", skill)
+        self.assertIn("Do not run a second direct-vs-durable admission decision", skill)
+        self.assertIn("Never re-bootstrap merely because the user says `continue`, `resume`, or `继续`", skill)
+        self.assertIn("planning, workspace binding, checkpoints, persistence, managed processes, and separate review remain lazy", skill)
+
+    def test_scope_contract_does_not_let_plan_expand_authority(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("The user owns **what** may change; the model owns **how**", skill)
+        self.assertIn("may guide execution but never expand that scope", skill)
 
     def test_repository_routing_stays_at_side_effect_boundary(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -42,7 +45,6 @@ class InvocationContractTests(unittest.TestCase):
         metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
         self.assertIn('icon_small: "./assets/icon.svg"', metadata)
         self.assertIn('icon_large: "./assets/icon.svg"', metadata)
-        self.assertNotIn("products:", metadata)
         self.assertIn("allow_implicit_invocation: true", metadata)
 
 

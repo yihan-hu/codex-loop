@@ -5,7 +5,7 @@ Codex Loop separates persistent knowledge of local workspace locations from perm
 ```text
 KNOWN    registry knows alias -> absolute path
 GRANTED  this conversation carries an explicit grant for that exact registry entry
-BOUND    one durable task is bound to one canonical Git working tree
+BOUND    one lifecycle is bound to one canonical Git working tree
 ```
 
 `KNOWN != GRANTED`, `GRANTED != BOUND`, and `KNOWN != BOUND`.
@@ -149,7 +149,7 @@ Primary Local Root + Session Granted Roots = Effective Local Roots
 
 The primary root is the development root explicitly selected for Local mode. Session-granted roots can add other registered repositories or development roots for this conversation after host/RDC authorization is confirmed.
 
-Multiple effective roots do not merge source baselines. Each durable task still binds through the existing `workspace-binding` mechanism to exactly one canonical Git working tree. Access to PiWork and EpiAgent at the same time does not make one repository a substitute for the other.
+Multiple effective roots do not merge source baselines. Each lifecycle still binds through the existing `workspace-binding` mechanism to exactly one canonical Git working tree. Access to PiWork and EpiAgent at the same time does not make one repository a substitute for the other.
 
 PiWork uses the same registry mechanism as every other persistent workspace. Register it as `kind=development_root`; do not keep a second PiWork-specific path table. `host.json` may name `piwork` as the preferred primary workspace alias, while older `default_local_root` configuration is treated only as a migration/compatibility input after explicit Local-mode intent.
 
@@ -161,7 +161,7 @@ PiWork uses the same registry mechanism as every other persistent workspace. Reg
 4. Knowing an alias never selects Local mode or filesystem access by itself.
 5. A grant applies only to the exact current registry fingerprint for that alias.
 6. Host/RDC enforcement always wins.
-7. One durable task binds to one canonical Git working tree.
+7. One lifecycle binds to one canonical Git working tree.
 8. Registry discovery never triggers whole-home or whole-disk search.
 9. Registry mutation invalidates old grants for the changed entry.
 10. Local source mutation and computer-use authorization remain separate task-scoped gates.

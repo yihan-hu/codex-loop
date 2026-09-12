@@ -15,7 +15,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import codex_loop_kernel as kernel
-from codex_loop_context_projection import build_working
+from codex_loop_context_projection import build_lifecycle_working, build_working
 from codex_loop_runtime.change_tracker import sync_generation
 from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
@@ -83,6 +83,7 @@ from codex_loop_runtime.web_publish import (
     web_publish_plan,
 )
 from codex_loop_runtime.publication_router import publication_enter
+from codex_loop_runtime.release_lineage import capture_workspace_binding, workspace_binding_status
 from codex_loop_runtime.source_acquisition import (
     FALLBACK_METHODS,
     source_acquisition_plan,
@@ -99,8 +100,8 @@ from codex_loop_runtime.workspace_cache import (
     validate_workspace_cache,
     workspace_cache_cleanup_plan,
 )
-from codex_loop_runtime.state import active_task_id, open_store
-from codex_loop_runtime.workspace import git_state, repo_root
+from codex_loop_runtime.state import active_task_id, open_store, set_active_task
+from codex_loop_runtime.workspace import git_state, repo_root, run_git
 from codex_loop_runtime.workspace_registry import (
     grant_workspace,
     list_workspaces,
@@ -113,12 +114,13 @@ from codex_loop_runtime.workspace_registry import (
 
 
 HOST_ADAPTER_COMMANDS = (
-    ('orient', 'capture request authority, repository instructions, and pre-existing work without durable bootstrap'),
-    ('instructions', 'load applicable repository instructions without durable bootstrap'),
-    ('next', 'project the bounded working set for the active durable task'),
+    ('orient', 'bind/orient the existing lifecycle to workspace authority and pre-existing work'),
+    ('instructions', 'load scoped repository instructions for the existing lifecycle'),
+    ('authority', 'return the complete retained user request and ordered steers'),
+    ('next', 'resume the same lifecycle from retained authority, plan, and current reality'),
     ('host-config', 'show or update the unified private Host Profile'),
     ('progress-config', 'compatibility facade for private progress-visibility preferences'),
-    ('progress-policy', 'resolve effective progress behavior for direct or durable work'),
+    ('progress-policy', 'resolve progress behavior for lightweight or substantive work'),
     ('route-init', 'initialize deterministic conversation-scoped routing state'),
     ('route-show', 'show deterministic conversation-scoped routing state'),
     ('route-transition', 'change workspace, interaction, or deployment routing with evidence gates'),
@@ -126,7 +128,7 @@ HOST_ADAPTER_COMMANDS = (
     ('permission-preflight-plan', 'plan only permission probes not covered by fresh scoped current-session observations'),
     ('permission-observation-record', 'record a scoped expiring host capability observation'),
     ('permission-observation-status', 'check freshness of a scoped current-session host capability observation'),
-    ('source-acquisition-verify', 'verify an exact Git-native Web restore before durable bootstrap'),
+    ('source-acquisition-verify', 'verify an exact Git-native Web workspace restore before lifecycle rebind'),
     ('repository-enter', 'reuse HOT Git state, restore verified WARM state, or require COLD acquisition'),
     ('web-publish-continuation-begin', 'freeze a publish-only continuation onto fresh validation and forbid redundant revalidation'),
     ('web-publish-bundle', 'build and bind a verified exact-identity Web Git bundle'),
@@ -138,7 +140,7 @@ HOST_ADAPTER_COMMANDS = (
     ('persistence-export', 'export private cross-conversation recovery state'),
     ('persistence-validate', 'validate a recovery manifest'),
     ('persistence-resume-plan', 'plan deterministic recovery observations'),
-    ('persistence-resume', 'reconcile current reality and create a fresh resumed task'),
+    ('persistence-resume', 'restore the same lifecycle id and reconcile current reality'),
     ('persistence-cleanup-plan', 'plan recovery-manifest cleanup'),
     ('workspace-cache-create', 'create an immutable 3-day Git/worktree Workspace Capsule for private Drive staging'),
     ('workspace-cache-validate', 'validate a Workspace Capsule and its exact Git/worktree identity'),
@@ -175,12 +177,22 @@ def _cwd(raw: str | None) -> Path:
 
 
 def _scope_from_argv(argv: list[str]) -> tuple[Path, Path, object]:
-    cwd = _cwd(argv[argv.index('--cwd') + 1] if '--cwd' in argv else None)
-    root = repo_root(cwd)
-    task_id = argv[argv.index('--task-id') + 1] if '--task-id' in argv else active_task_id(root)
+    explicit_cwd = _cwd(argv[argv.index('--cwd') + 1]) if '--cwd' in argv else None
+    task_id = argv[argv.index('--task-id') + 1] if '--task-id' in argv else None
+    if not task_id and explicit_cwd is not None:
+        task_id = active_task_id(repo_root(explicit_cwd))
     if not task_id:
-        raise RuntimeError('no active codex-loop task; run bootstrap or pass --task-id')
-    return cwd, root, open_store(root, task_id)
+        raise RuntimeError('no active codex-loop lifecycle; pass --task-id')
+    store = open_store(None, task_id)
+    binding = store.get_meta('workspace_binding')
+    if explicit_cwd is not None:
+        cwd = explicit_cwd
+    elif binding and binding.get('canonical_root'):
+        cwd = Path(store.get_meta('workspace_cwd', binding['canonical_root'])).resolve()
+    else:
+        cwd = _cwd(None)
+    root = repo_root(cwd)
+    return cwd, root, store
 
 
 def _command_after_double_dash(argv: list[str]) -> list[str]:
@@ -192,26 +204,114 @@ def _command_after_double_dash(argv: list[str]) -> list[str]:
     return command
 
 
-def _instruction_rows(cwd: Path, fallbacks: list[str]) -> list[dict[str, str]]:
-    return [item.__dict__ for item in discover(cwd, fallback_filenames=tuple(fallbacks))]
+def _instruction_payload(cwd: Path, fallbacks: list[str], max_bytes: int) -> dict[str, object]:
+    result = discover(cwd, fallback_filenames=tuple(fallbacks), max_bytes=max_bytes)
+    return {
+        'entries': [item.__dict__ for item in result.entries],
+        'complete': result.complete,
+        'truncated_paths': list(result.truncated_paths),
+        'max_bytes': result.max_bytes,
+        'bytes_read': result.bytes_read,
+    }
+
+
+def _verify_rebind(root: Path, expected: dict[str, object]) -> dict[str, object]:
+    root = root.resolve()
+    current = capture_workspace_binding(root)
+    if not current.get('is_git'):
+        raise RuntimeError('verified lifecycle rebind currently requires a Git workspace')
+    expected_commit = str(expected.get('source_commit') or expected.get('base_commit') or '').strip()
+    expected_tree = str(expected.get('source_tree') or expected.get('base_tree') or '').strip()
+    expected_origin = str(expected.get('origin_hint') or '').strip()
+    expected_repository = str(expected.get('repository') or '').strip().removesuffix('.git')
+    if not any((expected_commit, expected_tree, expected_origin, expected_repository)):
+        raise RuntimeError('verified lifecycle rebind requires a retained commit/tree or repository identity')
+    current_origin = str(current.get('origin_hint') or '').strip()
+    if not expected_commit and not expected_tree:
+        if expected_origin and current_origin != expected_origin:
+            raise RuntimeError('recovered workspace origin does not match the prior lifecycle binding')
+        if expected_repository and not expected_origin:
+            expected_repository_origin = f'github.com/{expected_repository}'
+            if current_origin != expected_repository_origin:
+                raise RuntimeError('recovered workspace repository does not match the retained lifecycle repository')
+    if expected_commit:
+        exists = run_git(root, ['cat-file', '-e', f'{expected_commit}^{{commit}}'])
+        if exists.returncode != 0:
+            raise RuntimeError('recovered workspace does not contain the lifecycle base commit')
+        if expected_tree:
+            tree = run_git(root, ['rev-parse', f'{expected_commit}^{{tree}}'])
+            observed_tree = tree.stdout.decode('utf-8', errors='replace').strip() if tree.returncode == 0 else ''
+            if observed_tree != expected_tree:
+                raise RuntimeError('recovered workspace base tree does not match the lifecycle source')
+        head = str(current.get('base_commit') or '').strip()
+        if head:
+            ancestor = run_git(root, ['merge-base', '--is-ancestor', expected_commit, head])
+            if ancestor.returncode != 0:
+                raise RuntimeError('recovered workspace history does not descend from the lifecycle base commit')
+    return current
 
 
 def _cmd_orient(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py orient')
+    p.add_argument('--task-id', required=True)
     p.add_argument('--cwd')
-    p.add_argument('--request-anchor', required=True)
     p.add_argument('--fallback', action='append', default=[])
+    p.add_argument('--max-bytes', type=int, default=32 * 1024)
+    p.add_argument('--rebind-verified', action='store_true')
     args = p.parse_args(argv[1:])
+    store = open_store(None, args.task_id)
+    store.ensure_active()
     cwd = _cwd(args.cwd)
     root = repo_root(cwd)
+    instruction_state = _instruction_payload(cwd, args.fallback, args.max_bytes)
     git = git_state(root)
     is_git = bool(git.get('is_git'))
     probe_degraded = bool(git.get('probe_degraded', False))
+    old_binding = store.get_meta('workspace_binding')
+    expected_resume = store.get_meta('resume_expected_workspace')
+    current_binding = capture_workspace_binding(root)
+    binding_ok = True
+    rebound = False
+
+    if old_binding:
+        status = workspace_binding_status(root, old_binding)
+        if not status.get('matches'):
+            binding_ok = False
+            if args.rebind_verified:
+                current_binding = _verify_rebind(root, old_binding)
+                binding_ok = True
+                rebound = True
+    elif expected_resume:
+        binding_ok = False
+        if args.rebind_verified:
+            current_binding = _verify_rebind(root, expected_resume)
+            binding_ok = True
+            rebound = True
+
+    if binding_ok:
+        if old_binding is None or rebound:
+            store.set_meta('workspace_binding', current_binding)
+        store.set_meta('workspace_cwd', str(cwd))
+        store.set_meta('orientation_git', git)
+        store.set_meta('protected_paths', list(git.get('protected_paths', [])))
+        store.set_meta('instruction_complete', bool(instruction_state['complete']))
+        set_active_task(root, store.task_id)
+        if rebound:
+            store.bump_generation()
+            store.set_meta('baseline_enabled', False)
+            store.set_meta('workspace_fingerprint', None)
+            store.set_meta('baseline_git', None)
+            store.set_meta('resume_expected_workspace', None)
+
+    safe_to_mutate = bool(binding_ok and instruction_state['complete'] and not (is_git and probe_degraded))
     emit_ok({
-        'request_anchor': args.request_anchor,
+        'task_id': store.task_id,
+        'request_anchor': store.request_anchor(),
         'root': str(root),
         'cwd': str(cwd),
-        'instructions': _instruction_rows(cwd, args.fallback),
+        'workspace_binding': current_binding if binding_ok else {'matches': False, 'prior': old_binding, 'candidate': current_binding},
+        'rebound': rebound,
+        'instructions': instruction_state,
         'preexisting_work': {
             'is_git': is_git,
             'head': git.get('head'),
@@ -219,27 +319,79 @@ def _cmd_orient(argv: list[str]) -> int:
             'status': list(git.get('status', [])),
             'protected_paths': list(git.get('protected_paths', [])),
             'probe_degraded': probe_degraded,
-            'safe_to_mutate': not (is_git and probe_degraded),
+            'safe_to_mutate': safe_to_mutate,
         },
-        'rule': 'the user request defines WHAT; repository instructions and pre-existing user work constrain HOW; none of these require durable task state',
+        'safe_to_mutate': safe_to_mutate,
+        'rule': 'continue this lifecycle; user authority, complete scoped instructions, and pre-existing work constrain execution',
     })
     return 0
 
 
 def _cmd_instructions(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py instructions')
+    p.add_argument('--task-id', required=True)
     p.add_argument('--cwd')
     p.add_argument('--fallback', action='append', default=[])
+    p.add_argument('--max-bytes', type=int, default=32 * 1024)
     args = p.parse_args(argv[1:])
+    store = open_store(None, args.task_id)
+    store.ensure_active()
     cwd = _cwd(args.cwd)
-    emit_ok(_instruction_rows(cwd, args.fallback))
+    binding = store.get_meta('workspace_binding')
+    if binding:
+        status = workspace_binding_status(repo_root(cwd), binding)
+        if not status.get('matches'):
+            raise RuntimeError('instruction scope is outside the lifecycle bound workspace; recover/rebind first')
+    emit_ok(_instruction_payload(cwd, args.fallback, args.max_bytes))
+    return 0
+
+
+def _cmd_authority(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py authority')
+    p.add_argument('--task-id', required=True)
+    args = p.parse_args(argv[1:])
+    store = open_store(None, args.task_id)
+    emit_ok({
+        'task_id': store.task_id,
+        'request_anchor': store.request_anchor(),
+        'steers': [str(item.get('text', '')) for item in store.request_steers()],
+        'complete': True,
+    })
     return 0
 
 
 def _cmd_next(argv: list[str]) -> int:
-    cwd, root, store = _scope_from_argv(argv)
-    working = build_working(root, cwd, store)
-    working["progress"] = progress_policy("durable")
+    p = argparse.ArgumentParser(prog='codex_loop.py next')
+    p.add_argument('--task-id', required=True)
+    p.add_argument('--cwd')
+    args = p.parse_args(argv[1:])
+    store = open_store(None, args.task_id)
+    store.ensure_active()
+    binding = store.get_meta('workspace_binding')
+    if not binding:
+        working = build_lifecycle_working(store)
+    else:
+        canonical = Path(str(binding.get('canonical_root') or ''))
+        if not canonical.exists():
+            working = build_lifecycle_working(store, workspace_status={
+                'bound': True, 'available': False, 'recovery_required': True,
+                'canonical_root': str(canonical),
+                'reason': 'the lifecycle bound workspace is no longer present',
+            })
+        else:
+            cwd = _cwd(args.cwd) if args.cwd else Path(store.get_meta('workspace_cwd', str(canonical))).resolve()
+            root = repo_root(cwd)
+            status = workspace_binding_status(root, binding)
+            if not status.get('matches'):
+                working = build_lifecycle_working(store, workspace_status={
+                    'bound': True, 'available': True, 'recovery_required': True,
+                    'canonical_root': str(canonical), 'details': status,
+                    'reason': 'the current workspace no longer matches the lifecycle binding',
+                })
+            else:
+                working = build_working(root, cwd, store)
+                working['workspace_status'] = {'bound': True, 'available': True, 'recovery_required': False, 'canonical_root': str(canonical)}
+    working['progress'] = progress_policy('substantive')
     emit_ok(working)
     return 0
 
@@ -311,9 +463,9 @@ def _cmd_progress_config(argv: list[str]) -> int:
 
 def _cmd_progress_policy(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py progress-policy')
-    p.add_argument('--lifecycle-mode', required=True, choices=['direct', 'durable'])
+    p.add_argument('--work-shape', required=True, choices=['lightweight', 'substantive'])
     args = p.parse_args(argv[1:])
-    emit_ok(progress_policy(args.lifecycle_mode))
+    emit_ok(progress_policy(args.work_shape))
     return 0
 
 
@@ -1122,6 +1274,8 @@ def main() -> int:
             return _cmd_orient(argv)
         if argv[0] == 'instructions':
             return _cmd_instructions(argv)
+        if argv[0] == 'authority':
+            return _cmd_authority(argv)
         if argv[0] == 'next':
             return _cmd_next(argv)
         if argv[0] == 'host-config':

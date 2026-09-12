@@ -5,32 +5,44 @@ description: "Lightweight durable objective layer for ChatGPT. Use for repositor
 
 # Codex Loop
 
-Treat Codex Loop as a thin durability and routing layer around the host model, not as a workflow engine. Let the host model reason, inspect, edit, test, and repair naturally. Codex Loop should mainly prevent loss of the objective, unsafe routing, duplicate high-impact external actions, and unreconciled task-owned process state.
+Treat Codex Loop as a thin lifecycle, durability, and routing layer around the host model, not as a workflow engine. Let the host model reason, inspect, edit, test, and repair naturally. Codex Loop should mainly preserve the user-authorized objective across turns, prevent unsafe routing, avoid duplicate high-impact external actions, and reconcile task-owned process state.
 
-Once Codex Loop is selected, enter its standard lifecycle directly. Do not run a second direct-vs-durable admission decision. The lifecycle itself stays lightweight; optional runtime machinery remains lazy.
+Once Codex Loop is selected, create and enter one real Codex Loop lifecycle immediately. Do not run a second direct-vs-durable admission decision and do not defer lifecycle creation until a repository or durable feature is needed. The lifecycle itself stays lightweight; planning, workspace binding, checkpoints, persistence, managed processes, and separate review remain lazy capabilities inside it.
 
 Use `scripts/codex_loop.py` from this Skill as the stable runtime entry point. Runtime state belongs in the private system temp directory, never in the target repository.
 
-## Always-on execution authority
+## Lifecycle admission
 
-Keep task authority separate from optional durable task state. Preserve the initial user request and later user corrections as the scope authority; do not replace them with a broader model-written objective.
-
-For repository or filesystem work, orient before the first mutation without bootstrapping a durable task:
+Every selected invocation begins by creating the lifecycle and retaining the exact current user request:
 
 ```bash
-python3 scripts/codex_loop.py orient --cwd REPO \
+python3 scripts/codex_loop.py bootstrap \
   --request-anchor 'EXACT CURRENT USER REQUEST'
+```
+
+Keep the returned `task_id` as the lifecycle identity for the rest of the objective. Lifecycle creation is workspace-independent; repository/filesystem tasks bind a workspace afterward with `orient`. Creating the lifecycle must not depend on repository acquisition, a plan, a checkpoint, or cross-chat persistence.
+
+Do not create a second lifecycle for an ordinary follow-up to the same objective. Never re-bootstrap merely because the user says `continue`, `resume`, or `继续`.
+
+## Always-on execution authority
+
+Keep lifecycle authority separate from optional capabilities. Preserve the initial user request and later user corrections as the scope authority; do not replace them with a broader model-written objective.
+
+For repository or filesystem work, bind/orient the existing lifecycle before the first mutation:
+
+```bash
+python3 scripts/codex_loop.py orient --task-id TASK --cwd REPO
 ```
 
 Use the returned repository instructions and pre-existing work as active constraints. Treat returned `protected_paths` as user-owned work: do not revert, overwrite, or normalize them unless the requested change requires touching that path, and then preserve unrelated hunks. If `safe_to_mutate` is false, obtain a trustworthy host-visible workspace/Git observation before mutating.
 
-Repository instructions are scoped. Before first touching a file under a deeper directory whose instruction scope has not been loaded, read that scope directly without creating task state:
+Repository instructions are scoped. Before first touching a file under a deeper directory whose instruction scope has not been loaded, read that scope inside the same lifecycle:
 
 ```bash
-python3 scripts/codex_loop.py instructions --cwd PATH
+python3 scripts/codex_loop.py instructions --task-id TASK --cwd PATH
 ```
 
-`orient` and stateless `instructions` are observation steps, not lifecycle gates and not durable state. For non-repository work, keep the same request-authority rule and use the relevant host/domain context instead.
+If repository-instruction discovery reports `complete=false`, do not mutate yet. Reload with a sufficient `--max-bytes` value until the applicable instruction set is complete. For non-repository work, keep the same request-authority rule and use the relevant host/domain context instead.
 
 ## Default execution model
 
@@ -62,20 +74,33 @@ Before finishing, do one semantic review against the actual current state:
 
 The runtime `completion` command checks deterministic blockers only. It does not certify semantic correctness.
 
-## Thin task state
+## Continuation and steering
 
-Lifecycle admission and durable runtime state are separate concerns. Selection already entered the Codex Loop lifecycle and always-on orientation already established request/repository/workspace authority. Bootstrap durable state only when resume, long-running coordination, machine-persisted protected-work tracking, managed processes, publication, or external-action reconciliation will actually help.
-
-Bootstrap:
+Treat `continue`, `resume`, `继续`, and equivalent follow-ups as continuation of the active lifecycle, not as a new objective. Before acting, recover the current lifecycle state:
 
 ```bash
-python3 scripts/codex_loop.py bootstrap --cwd REPO \
-  --request-anchor 'EXACT USER REQUEST' \
-  --objective 'concise working objective' \
-  --criterion 'optional acceptance condition'
+python3 scripts/codex_loop.py next --task-id TASK
 ```
 
-`request_anchor` plus ordered later `steer` entries remains the authoritative request. Objective and acceptance text are working aids, not a second specification.
+Use its request, plan, completion blockers, current workspace observations, and next action as the starting point. If it reports `authority_reload_required=true`, reload the complete user authority before continuing:
+
+```bash
+python3 scripts/codex_loop.py authority --task-id TASK
+```
+
+Then re-observe current repository/tool reality and continue from the smallest unfinished useful action. Do not repeat completed work merely because the user said `continue`.
+
+For every later task-relevant user message that changes or constrains the objective, record that exact correction before acting. Do not decide that a scope-changing user instruction is too small to retain:
+
+```bash
+python3 scripts/codex_loop.py steer --task-id TASK --text 'exact new user instruction'
+```
+
+A pure continuation request adds no new scope and does not need a steer record.
+
+## Thin lifecycle state
+
+Lifecycle state always exists once the Skill is selected. Keep it minimal: request anchor, ordered steers, lifecycle status, and only the machine state that the task actually uses. A model-written objective and acceptance text are working aids, not a second specification.
 
 ### Codex-style plan
 
@@ -88,36 +113,28 @@ For genuinely multi-step work, keep only a short plan with Codex's three statuse
 At most one step may be `in_progress`. Update several statuses in one call rather than recording lifecycle transitions after every action.
 
 ```bash
-python3 scripts/codex_loop.py plan --cwd REPO --plan-json '[
+python3 scripts/codex_loop.py plan --task-id TASK --plan-json '[
   {"step":"Inspect current implementation","status":"completed"},
   {"step":"Implement minimal fix","status":"in_progress"},
   {"step":"Run relevant tests","status":"pending"}
 ]'
 ```
 
-Use `next` as the lightweight resume capsule. It exposes the request, plan, acceptance text, changed paths, validation state, deterministic finish blockers, and the smallest useful next action.
+Use `next` as the lightweight continuation/resume capsule. It exposes the request, plan, acceptance text, changed paths, validation state, deterministic finish blockers, and the smallest useful next action.
 
 ```bash
-python3 scripts/codex_loop.py next --cwd REPO
+python3 scripts/codex_loop.py next --task-id TASK
 ```
 
 On resume, inspect current repository/tool state before acting. Do not redo a completed step unless current evidence shows it is stale.
 
-### User steering
-
-Record a material user correction once:
-
-```bash
-python3 scripts/codex_loop.py steer --cwd REPO --text 'new user instruction'
-```
-
-A steer is immediately authoritative. Do not require a separate steer acknowledgement or re-ack it after every workspace mutation.
+Steers are immediately authoritative. Do not require a separate steer acknowledgement or re-ack them after every workspace mutation.
 
 ## Validation
 
 Run tests/build/lint/typecheck through the normal host-visible execution path when they are relevant. Start with the smallest check that exercises the changed behavior; broaden only when useful.
 
-Durable `completion` does not require a recorded validation by default. Add `--require-validation` at bootstrap only when a current passing check must be a deterministic finish condition (publication paths impose their own validation requirement).
+Lifecycle `completion` does not require a recorded validation by default. Add `--require-validation` at lifecycle creation only when a current passing check must be a deterministic finish condition (publication paths impose their own validation requirement).
 
 `validate` may return a host-visible execution request. After the host runs the command, record the observed result directly; there is no plan-id handshake.
 
@@ -140,10 +157,10 @@ After a real finding is repaired, rerun only affected tests/checks. Escalate to 
 
 ## Deterministic completion blockers
 
-`completion` may block/continue for concrete machine-observable conditions such as:
+Before finishing any Codex Loop objective, run `completion --task-id TASK` after the semantic final acceptance review. `completion` may block/continue for concrete machine-observable conditions such as:
 
 - unfinished plan steps when a plan exists;
-- missing current validation when validation was explicitly required for the durable task;
+- missing current validation when validation was explicitly required for the lifecycle;
 - unresolved task-owned processes;
 - unresolved consequential external actions;
 - protected pre-existing user work modified unexpectedly;

@@ -128,9 +128,9 @@ def verify_restored_git_workspace(
 ) -> dict[str, Any]:
     """Verify that a fresh Web restore is the exact Git-native canonical source.
 
-    This is intentionally a pre-bootstrap attestation: the host restores the audited
+    This attests a recovered workspace before lifecycle rebind: the host restores the audited
     bundle, sets the canonical GitHub origin/branch, then this verifier proves that
-    the workspace can safely become the durable task baseline.
+    the same lifecycle can safely continue from this workspace.
     """
     root = Path(root).resolve()
     expected_commit = _full_sha(expected_commit, field="expected commit")
@@ -182,7 +182,7 @@ def verify_restored_git_workspace(
             "actual_commit": actual_commit or None,
             "actual_tree": actual_tree or None,
             "reasons": reasons,
-            "next": "stop before bootstrap or mutation; repair the Git-native acquisition path rather than rebinding a source-only snapshot",
+            "next": "stop before lifecycle rebind or mutation; repair the Git-native acquisition path rather than accepting a source-only snapshot",
         }
     return {
         "status": "PASS",
@@ -197,5 +197,5 @@ def verify_restored_git_workspace(
         "history_complete": True,
         "canonical_root": str(root),
         "workspace_binding": binding,
-        "next": "bootstrap the durable task in this exact workspace before any source mutation",
+        "next": "orient/rebind the existing lifecycle to this exact workspace before any source mutation",
     }

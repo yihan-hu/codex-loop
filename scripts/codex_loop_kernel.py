@@ -58,7 +58,7 @@ def _root(args: argparse.Namespace) -> tuple[Path, Path]:
 def _store(args: argparse.Namespace, *, create: bool = False):
     cwd, root = _root(args)
     if create:
-        store = create_store(root, task_id=getattr(args, "task_id", None))
+        store = create_store(None, task_id=getattr(args, "task_id", None))
     else:
         task_id = getattr(args, "task_id", None)
         if not task_id:
@@ -66,7 +66,7 @@ def _store(args: argparse.Namespace, *, create: bool = False):
                 task_id = active_task_id(root)
             else:
                 raise RuntimeError("explicit --task-id is required for task-scoped runtime commands; --use-active-task is human CLI convenience only")
-        store = open_store(root, task_id)
+        store = open_store(None, task_id)
     return cwd, root, store
 
 
@@ -92,32 +92,36 @@ def _capability_flags(values: list[str] | None) -> dict[str, bool] | None:
 
 
 def cmd_bootstrap(args: argparse.Namespace) -> None:
-    cwd, root = _root(args)
+    cwd = _cwd(getattr(args, "cwd", None)) if getattr(args, "cwd", None) else None
     if args.task_id:
         task_id = validate_task_id(args.task_id)
-        existing = root_state_dir(root) / "tasks" / task_id
-        if existing.exists() or existing.is_symlink():
+        try:
+            open_store(None, task_id)
+        except RuntimeError as exc:
+            if "unknown codex-loop task" not in str(exc):
+                raise
+        else:
             raise RuntimeError(f"task_id already exists and cannot be reset by bootstrap: {task_id}")
-    store = create_store(root, task_id=args.task_id)
+    store = create_store(None, task_id=args.task_id)
     task_id = store.path.parent.name
     try:
+        objective = str(args.objective or args.request_anchor)
         store.configure_task(
-            task_id, args.objective, args.criterion or [], request_anchor=args.request_anchor, profile=args.profile,
+            task_id, objective, args.criterion or [], request_anchor=args.request_anchor, profile=args.profile,
             requires_validation=args.require_validation,
             requires_clean_process_exit=args.require_clean_process_exit,
         )
-        store.set_meta("workspace_binding", capture_workspace_binding(root))
-        count = capture_baseline(root, store)
-        set_active_task(root, task_id)
+        if cwd is not None:
+            set_active_task(repo_root(cwd), task_id)
     except Exception:
         shutil.rmtree(store.path.parent, ignore_errors=True)
         raise
     emit_ok({
         "task_id": task_id,
-        "root": root,
-        "state": store.path,
-        "baseline_files": count,
-        "world_state": build_world_state(root, cwd, store, reconcile=False),
+        "state": str(store.path),
+        "request_anchor": store.request_anchor(),
+        "workspace_bound": False,
+        "rule": "lifecycle created; bind/orient a workspace only if the objective needs one",
     })
 
 
@@ -128,7 +132,14 @@ def cmd_snapshot(args: argparse.Namespace) -> None:
 
 def cmd_instructions(args: argparse.Namespace) -> None:
     cwd, _root_path, _store_obj = _store(args)
-    emit_ok([x.__dict__ for x in discover(cwd, fallback_filenames=tuple(args.fallback or []))])
+    result = discover(cwd, fallback_filenames=tuple(args.fallback or []))
+    emit_ok({
+        "entries": [x.__dict__ for x in result.entries],
+        "complete": result.complete,
+        "truncated_paths": list(result.truncated_paths),
+        "max_bytes": result.max_bytes,
+        "bytes_read": result.bytes_read,
+    })
 
 
 def cmd_command_check(args: argparse.Namespace) -> None:
@@ -625,7 +636,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex_loop.py")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--request-anchor", required=True); p.add_argument("--objective", required=True); p.add_argument("--criterion", action="append"); p.add_argument("--profile", default="regular"); p.add_argument("--require-validation", action="store_true"); p.add_argument("--require-clean-process-exit", action="store_true"); p.set_defaults(func=cmd_bootstrap)
+    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--request-anchor", required=True); p.add_argument("--objective"); p.add_argument("--criterion", action="append"); p.add_argument("--profile", default="regular"); p.add_argument("--require-validation", action="store_true"); p.add_argument("--require-clean-process-exit", action="store_true"); p.set_defaults(func=cmd_bootstrap)
     for name, func in [("snapshot", cmd_snapshot), ("instructions", cmd_instructions), ("changes", cmd_changes), ("completion", cmd_completion), ("checkpoint-restore", cmd_checkpoint_restore), ("service-start", cmd_service_start), ("service-stop", cmd_service_stop), ("shell-snapshot", cmd_shell_snapshot), ("cleanup", cmd_cleanup)]:
         p = sub.add_parser(name); _add_scope(p); p.set_defaults(func=func)
         if name == "instructions": p.add_argument("--fallback", action="append")

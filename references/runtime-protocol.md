@@ -2,42 +2,35 @@
 
 Use `python3 scripts/codex_loop.py ...`. Runtime task state is private and outside the repository.
 
-## Always-on orientation
+## Lifecycle admission and orientation
 
-Repository/filesystem work begins with a stateless authority observation; no task id or durable bootstrap is required:
+Every selected invocation creates one lifecycle immediately, before workspace acquisition or optional persistence:
 
 ```bash
-python3 scripts/codex_loop.py orient --cwd REPO \
+python3 scripts/codex_loop.py bootstrap \
   --request-anchor 'exact current user request'
 ```
 
-The result returns the request anchor unchanged, applicable root-to-cwd repository instructions, and the current Git dirty/protected-path snapshot. Treat `safe_to_mutate=false` as a requirement to obtain trustworthy host-visible workspace state before mutation.
+Keep the returned `task_id` for the objective. For repository/filesystem work, bind and orient that same lifecycle before the first mutation:
+
+```bash
+python3 scripts/codex_loop.py orient --task-id TASK --cwd REPO
+```
+
+The result returns applicable root-to-cwd repository instructions plus the current Git dirty/protected-path snapshot. If `instructions.complete=false` or `safe_to_mutate=false`, do not mutate until the applicable authority/context is complete.
 
 Load a more-specific repository instruction scope before first touching files there:
 
 ```bash
-python3 scripts/codex_loop.py instructions --cwd PATH
+python3 scripts/codex_loop.py instructions --task-id TASK --cwd PATH
 ```
 
-Both commands are stateless. They establish execution authority in the host context; they do not create a durable Codex Loop task.
-
-## Durable task bootstrap
-
-Use only when durable state is useful:
-
-```bash
-python3 scripts/codex_loop.py bootstrap --cwd REPO \
-  --request-anchor 'exact user request' \
-  --objective 'concise working objective' \
-  --criterion 'optional acceptance condition'
-```
-
-`--criterion` is acceptance text for the model; it is not a status/evidence gate. Recorded validation is optional unless `--require-validation` is explicitly set or a consequential path such as publication requires it.
+A later `continue` / `resume` / `继续` restores this same lifecycle with `next --task-id TASK`; it does not create a replacement lifecycle.
 
 ## Thin plan
 
 ```bash
-python3 scripts/codex_loop.py plan --cwd REPO --plan-json '[
+python3 scripts/codex_loop.py plan --task-id TASK --plan-json '[
   {"step":"Inspect implementation","status":"completed"},
   {"step":"Make minimal change","status":"in_progress"},
   {"step":"Run relevant tests","status":"pending"}
@@ -49,8 +42,8 @@ Allowed statuses are exactly `pending`, `in_progress`, and `completed`; at most 
 ## Working/resume view
 
 ```bash
-python3 scripts/codex_loop.py next --cwd REPO
-python3 scripts/codex_loop.py snapshot --cwd REPO
+python3 scripts/codex_loop.py next --task-id TASK
+python3 scripts/codex_loop.py snapshot --task-id TASK --cwd REPO
 ```
 
 `next` is the normal lightweight resume capsule: request anchor/steers, acceptance text, plan, changed paths, validation state, deterministic completion reasons, and suggested next action. Use `snapshot` only for deeper debugging/audit context.
@@ -58,14 +51,14 @@ python3 scripts/codex_loop.py snapshot --cwd REPO
 ## User steer
 
 ```bash
-python3 scripts/codex_loop.py steer --cwd REPO --text 'later user correction'
+python3 scripts/codex_loop.py steer --task-id TASK --text 'later user correction'
 ```
 
 The steer is authoritative immediately. There is no separate steer-ack command.
 
 ## Validation
 
-Recorded validation is optional for ordinary durable completion. Bootstrap with `--require-validation` only when a current pass must be a deterministic finish condition; publication has its own current-validation requirement.
+Recorded validation is optional for ordinary lifecycle completion. Create the lifecycle with `--require-validation` only when a current pass must be a deterministic finish condition; publication has its own current-validation requirement.
 
 ```bash
 python3 scripts/codex_loop.py validate --cwd REPO -- pytest tests/test_target.py
@@ -90,7 +83,7 @@ python3 scripts/codex_loop.py completion --cwd REPO
 The result is a deterministic guard only:
 
 - `PASS`: no modeled machine blocker remains; perform one model semantic final acceptance review and finish if the user's objective is satisfied.
-- `CONTINUE`: current machine state still has work such as unfinished durable plan, missing required validation, unresolved external action, or managed process cleanup.
+- `CONTINUE`: current machine state still has work such as unfinished plan, missing required validation, unresolved external action, or managed process cleanup.
 - `BLOCKED`: a hard state/safety invariant is violated, such as workspace binding mismatch or protected/read-only mutation.
 
 There is no `objective-audit`, `criterion --status pass`, `steer-ack`, or mandatory `focus` command in the normal protocol.

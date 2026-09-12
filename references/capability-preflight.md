@@ -1,28 +1,27 @@
 # Capability and permission preflight
 
-Use one bounded permission-smoke stage when the user's request already makes external integrations, host permissions, or local interaction capabilities predictable.
+Use one bounded permission-smoke stage only when an external side effect is imminent and the host permission must be proven before dispatch.
 
-The purpose is to make predictable permission prompts happen at **Skill admission**, before repository acquisition, substantive observation, mutation, or long execution. Do not wait for a full task review when the request already says `push`, names Google Drive, or otherwise makes the downstream capability obvious. Preflight does not weaken host security, grant itself permissions, or replace a later host-required per-action approval.
+Permission preflight is a side-effect-boundary check, not a Skill-admission ritual. Earlier knowledge that a later step may push, write Drive, or use local interaction may inform routing, but it does not authorize or require an early live probe. Preflight does not weaken host security, grant itself permissions, or replace a host-required per-action approval.
 
 ## Mandatory sequencing
 
-Do only the minimum interpretation and routing needed to identify the real permission boundary, then prewarm it immediately:
+At the imminent side-effect boundary, do only the minimum routing needed to identify and prove the required permission class:
 
 ```text
-Skill admission
-  -> parse explicit request for predictable external capabilities
-  -> resolve only the route needed to choose the representative probe
-  -> plan required permission probes
-  -> execute live host permission smoke tests
-  -> satisfy any permission/setup prompts
-  -> repository acquisition / substantive observe / act / validate
-  -> final change review
-  -> completion audit
+normal lifecycle work
+  -> reach an imminent external side effect
+  -> resolve only the route needed for that side effect
+  -> plan the minimum representative permission probe
+  -> execute the live host permission probe
+  -> satisfy any permission/setup prompt
+  -> dispatch the authorized side effect
+  -> re-observe its result and continue
 ```
 
-If a capability becomes predictable only later, prewarm it immediately when discovered. Do not defer it to the eventual external action.
+If a capability becomes predictable earlier, record the need but defer the live probe until the corresponding external action is imminent.
 
-After this minimal admission/routing step, call:
+At that side-effect boundary, call:
 
 ```bash
 python3 scripts/codex_loop.py permission-preflight-plan \
@@ -34,7 +33,7 @@ python3 scripts/codex_loop.py permission-preflight-plan \
 
 Use only capabilities actually implied by the reviewed workflow. A Drive-only task may omit `--session-id` when no routing-sensitive repository/browser/deployment action exists.
 
-The plan is advisory host-execution structure, not permission state. It intentionally writes no runtime permission record. Its returned phase is `skill_admission_pre_execution`.
+The plan is advisory host-execution structure, not permission state. It intentionally writes no runtime permission record. Its phase label is an implementation detail; the behavioral rule is that the plan is used only at the imminent side-effect boundary.
 
 ## Real-probe contract
 
@@ -72,7 +71,7 @@ live repository permission readback -> require push-capable access
   -> require the ref to remain unchanged
 ```
 
-The empty blob reaches the Git-object write boundary. The idempotent same-SHA ref update reaches the persistent-ref write boundary without moving the branch. Use only the already-observed current target SHA; never create a throwaway branch, commit, tag, issue, PR, or source mutation just to obtain approval. If the host lacks either bounded primitive, classify that permission class as not prewarmed rather than substituting a real ref move.
+The empty blob reaches the Git-object write boundary. The idempotent same-SHA ref update reaches the persistent-ref write boundary without moving the branch. Use only the already-observed current target SHA; never create a throwaway branch, commit, tag, issue, PR, or source mutation just to obtain approval. If the host lacks either bounded primitive, classify that permission class as not proven rather than substituting a real ref move.
 
 Repository push capability does not prove GitHub Actions write capability; probe Actions separately when the workflow depends on it.
 
@@ -107,11 +106,11 @@ Never overwrite, rename, move, or delete a pre-existing user file as a permissio
 
 A successful live probe may be recorded with `permission-observation-record` as an exact-scope, expiring, route-generation-bound hint. On later same-session continuations, `permission-preflight-plan --reuse-fresh-observations --observation-scope CAPABILITY=SCOPE` may skip only fresh exact-scope probes. This never grants permission or bypasses host approval.
 
-1. At Skill admission, extract predictable external capabilities directly from the explicit request. Do not wait for repository inspection when the request already names the external action.
+1. When an external action becomes imminent, derive the exact capability from the current user-authorized action and current route.
 2. Initialize/read only the routing state needed to select the representative probe. Capability probing must never create or mutate routing state beyond that ordinary route initialization.
 3. Run `permission-preflight-plan` for the immediately predictable capability set.
 4. Execute every returned probe through the real host path. Prefer independent read-only probes in parallel when safe; serialize probe actions that create temporary objects or workflow runs.
-5. If a probe triggers connection/permission UI, satisfy that host flow before substantive work. Batch missing connection/setup requests when the host supports it, and re-run only the failed probe after the host reports that access changed.
+5. If a probe triggers connection/permission UI, satisfy that host flow before dispatching the gated side effect. Batch missing connection/setup requests when the host supports it, and re-run only the failed probe after the host reports that access changed.
 6. Keep concise successful observations in current task/session context so the same live capability is not needlessly re-probed.
 7. Re-run a probe only if the workflow expands to a new capability, the selected route changes, the connector/native session becomes unavailable, or current evidence is otherwise stale.
 

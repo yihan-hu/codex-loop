@@ -67,6 +67,7 @@ def collect_context(root: Path, cwd: Path, store: StateStore, *, reconcile: bool
     validation = decision.details.get("validation")
     if not isinstance(validation, dict):
         validation = store.validation_state_for_generation(generation)
+    instruction_result = discover(cwd)
     return {
         "root": root,
         "cwd": cwd,
@@ -75,7 +76,7 @@ def collect_context(root: Path, cwd: Path, store: StateStore, *, reconcile: bool
         "decision": decision,
         "changes": change_state,
         "validation": validation,
-        "instructions": discover(cwd),
+        "instructions": instruction_result,
         "shell": default_user_shell(),
         "criteria": store.criteria(),
         "request_steers": store.request_steers(),
@@ -110,10 +111,14 @@ def full_projection(facts: dict[str, Any]) -> dict[str, Any]:
             "git": git_state(root),
             "binding": facts.get("workspace_binding"),
         },
-        "instructions": [
-            {"path": item.path, "sha256": item.sha256, "provenance": item.provenance}
-            for item in facts["instructions"]
-        ],
+        "instructions": {
+            "entries": [
+                {"path": item.path, "sha256": item.sha256, "complete": item.complete, "provenance": item.provenance}
+                for item in facts["instructions"].entries
+            ],
+            "complete": facts["instructions"].complete,
+            "truncated_paths": list(facts["instructions"].truncated_paths),
+        },
         "changes": facts["changes"],
         "validation": facts["validation"],
         "processes": facts["processes"],
@@ -173,9 +178,11 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
     steers, steers_omitted = _steers(facts["request_steers"])
     changed, changed_omitted = _changed_paths(facts["changes"])
     validation_status = _validation_status(store, facts["generation"], facts["validation"])
+    authority_reload_required = bool(anchor_omitted or steers_omitted)
     return {
-        "context_version": 3,
+        "context_version": 4,
         "task": {
+            "task_id": store.task_id,
             "objective": store.get_meta("objective", ""),
             "profile": store.get_meta("profile", "regular"),
             "status": store.get_meta("task_status", "uninitialized"),
@@ -195,12 +202,79 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
             "warnings": list(decision.details.get("warnings", [])) + list(facts.get("warnings", []))[-4:],
         },
         "next_actions": _next_actions(facts, validation_status),
-        "resume_rule": "inspect current repository/tool state before acting; do not redo completed work unless evidence is stale",
+        "authority_reload_required": authority_reload_required,
+        "resume_rule": "resume this same lifecycle: reload complete authority if truncated, inspect current repository/tool state, and do not redo completed work unless evidence is stale",
         "truncated": {
             "request_chars": anchor_omitted,
             "steers": steers_omitted,
             "changed_paths": changed_omitted,
             "completion_reasons": max(0, len(decision.reasons) - MAX_REASONS),
+        },
+    }
+
+
+def build_lifecycle_working(store: StateStore, *, workspace_status: dict[str, Any] | None = None) -> dict[str, Any]:
+    anchor, anchor_omitted = _bounded(store.request_anchor(), MAX_REQUEST_CHARS)
+    steers, steers_omitted = _steers(store.request_steers())
+    plan = store.plan()
+    validation = store.validation_state_for_generation(store.generation())
+    validation_status = _validation_status(store, store.generation(), validation)
+    reasons: list[str] = []
+    actions: list[dict[str, str]] = []
+    workspace_status = workspace_status or {"bound": False, "available": False, "reason": "lifecycle has no workspace binding"}
+    if workspace_status.get("recovery_required"):
+        reasons.append(str(workspace_status.get("reason") or "bound workspace requires recovery"))
+        actions.append({
+            "kind": "blocker",
+            "action": "recover and verify the bound workspace, then rebind this same lifecycle",
+            "reason": reasons[-1],
+        })
+    current = next((x for x in plan if x["status"] == "in_progress"), None)
+    pending = next((x for x in plan if x["status"] == "pending"), None)
+    if not actions and current:
+        actions.append({"kind": "work", "action": current["step"], "reason": "current Codex-style plan step"})
+    elif not actions and pending:
+        actions.append({"kind": "work", "action": pending["step"], "reason": "next Codex-style plan step"})
+    if validation_status in {"missing", "stale"} and not actions:
+        actions.append({"kind": "verify", "action": "run the smallest relevant validation", "reason": f"validation is {validation_status}"})
+    if (store.unresolved_external_count() or store.unresolved_external_failure_count()) and not actions:
+        actions.append({"kind": "required", "action": "reconcile unresolved external actions", "reason": "external outcome affects completion"})
+    if (store.running_process_count() or store.unresolved_process_failure_count()) and not actions:
+        actions.append({"kind": "required", "action": "clean up or reconcile managed processes", "reason": "task-owned process state is unresolved"})
+    if not actions:
+        actions.append({
+            "kind": "finish",
+            "action": "perform one final semantic acceptance review, then finish if the user's objective is satisfied",
+            "reason": "no modeled deterministic blocker is active",
+        })
+    authority_reload_required = bool(anchor_omitted or steers_omitted)
+    return {
+        "context_version": 4,
+        "task": {
+            "task_id": store.task_id,
+            "objective": store.get_meta("objective", ""),
+            "profile": store.get_meta("profile", "regular"),
+            "status": store.get_meta("task_status", "uninitialized"),
+        },
+        "request": {"anchor": anchor, "steers": steers, "truncated": authority_reload_required},
+        "acceptance": [str(x.get("text", "")) for x in store.criteria()],
+        "plan": plan,
+        "workspace": workspace_status,
+        "state": {
+            "completion": "BLOCKED" if workspace_status.get("recovery_required") else ("CONTINUE" if reasons or any(x["status"] != "completed" for x in plan) else "PASS"),
+            "validation": validation_status,
+            "changed_paths": [],
+            "completion_reasons": reasons,
+            "warnings": list(validation.get("warning_codes", [])),
+        },
+        "next_actions": actions[:6],
+        "authority_reload_required": authority_reload_required,
+        "resume_rule": "resume this same lifecycle: reload complete authority if truncated, recover current external reality, and do not re-bootstrap or redo completed work",
+        "truncated": {
+            "request_chars": anchor_omitted,
+            "steers": steers_omitted,
+            "changed_paths": 0,
+            "completion_reasons": 0,
         },
     }
 

@@ -146,7 +146,7 @@
         "USER_MESSAGE_BEGIN"
       ],
       "status": "PARTIAL",
-      "divergence": "The ChatGPT Skill runtime does not expose Codex conversation-item identity/history as a local authority primitive. Codex Loop keeps the host conversation as authority for every selected lifecycle, uses stateless orient to echo the exact request anchor into host-visible execution context before mutation, and persists request/steers only when durable state is enabled.",
+      "divergence": "The ChatGPT Skill runtime does not expose Codex conversation-item identity/history as a local authority primitive. Codex Loop therefore creates one lifecycle at Skill selection, retains the exact request anchor and ordered steers in lifecycle state, restores that same lifecycle on continuation, and reloads full authority whenever a bounded projection is incomplete.",
       "upgrade_path": "Bind request authority directly to native immutable host user-message/item identity when exposed; keep summaries and criteria as derived execution aids rather than task truth."
     },
     {

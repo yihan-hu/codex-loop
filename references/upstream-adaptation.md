@@ -7,9 +7,9 @@ Codex Loop now follows Codex primarily by **removing orchestration**, not by clo
 Public Codex keeps user authorization, project instructions, and workspace state in the agent/harness context rather than making them conditional on a plan or review workflow. Codex Loop ports the same separation without recreating the full Codex session runtime:
 
 - the host conversation keeps the initial user request plus later user corrections authoritative; model-written objectives never replace them;
-- stateless `orient` exposes that request anchor together with applicable repository instructions and pre-existing Git work before mutation;
-- stateless `instructions` reloads a deeper repository-instruction scope before first touch;
-- durable bootstrap remains optional and persists the same authority/baseline only when resume or stronger machine reconciliation is useful.
+- lifecycle-bound `orient` exposes the retained request authority together with applicable repository instructions and pre-existing Git work before mutation;
+- lifecycle-bound `instructions` reloads a deeper repository-instruction scope before first touch;
+- lifecycle creation is mandatory on selection; plans, heavy workspace baselines, checkpoints, and cross-chat persistence remain optional and reuse the same authority.
 
 Relevant upstream surfaces: `codex-rs/core/src/context_manager/history.rs`, `codex-rs/core/src/context_manager/history_user_authorization.rs`, `codex-rs/core/src/agents_md.rs`, and the base coding instructions covering dirty work and surgical precision.
 

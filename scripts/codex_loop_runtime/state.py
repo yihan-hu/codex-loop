@@ -16,7 +16,6 @@ from typing import Any, Iterator
 from .command_identity import identify_validation
 from .execution_supervision import ExecutionObservation, legacy_observation, validate_observation
 
-from .workspace import repo_root
 
 PROFILES = {
     "regular", "bug_fix", "feature", "refactor", "test_repair", "ci_repair",
@@ -244,12 +243,17 @@ def _ensure_private_dir(path: Path) -> Path:
     return path
 
 
-def root_state_dir(cwd: str | Path) -> Path:
-    root = repo_root(cwd)
-    digest = hashlib.sha256(str(root).encode("utf-8", errors="surrogateescape")).hexdigest()[:16]
+def _runtime_dir() -> Path:
     base = Path(tempfile.gettempdir()) / "codex-loop"
     _ensure_private_dir(base)
-    target = base / digest
+    return base
+
+
+def root_state_dir(cwd: str | Path) -> Path:
+    """Workspace-local metadata directory. Lifecycle databases live globally by task id."""
+    root = Path(cwd).resolve()
+    digest = hashlib.sha256(str(root).encode("utf-8", errors="surrogateescape")).hexdigest()[:16]
+    target = _runtime_dir() / "workspaces" / digest
     _ensure_private_dir(target)
     return target
 
@@ -298,19 +302,18 @@ def new_task_id() -> str:
     return uuid.uuid4().hex
 
 
-def _tasks_dir(cwd: str | Path) -> Path:
-    tasks = root_state_dir(cwd) / "tasks"
+def _tasks_dir() -> Path:
+    tasks = _runtime_dir() / "tasks"
     _ensure_private_dir(tasks)
     return tasks
 
 
-def state_dir_for(cwd: str | Path, task_id: str | None = None, *, create: bool = True) -> Path:
-    resolved = task_id or active_task_id(cwd)
+def state_dir_for(cwd: str | Path | None = None, task_id: str | None = None, *, create: bool = True) -> Path:
+    resolved = task_id or (active_task_id(cwd) if cwd is not None else None)
     if not resolved:
-        raise RuntimeError("no active codex-loop task; run bootstrap or pass --task-id")
+        raise RuntimeError("no active codex-loop lifecycle; pass --task-id")
     resolved = validate_task_id(resolved)
-    tasks = _tasks_dir(cwd)
-    path = tasks / resolved
+    path = _tasks_dir() / resolved
     if create:
         _ensure_private_dir(path)
     else:
@@ -325,7 +328,7 @@ def state_dir_for(cwd: str | Path, task_id: str | None = None, *, create: bool =
     return path
 
 
-def state_path_for(cwd: str | Path, task_id: str | None = None, *, create: bool = True) -> Path:
+def state_path_for(cwd: str | Path | None = None, task_id: str | None = None, *, create: bool = True) -> Path:
     return state_dir_for(cwd, task_id, create=create) / "state.sqlite3"
 
 
@@ -1251,9 +1254,9 @@ self, keep: int = 64) -> int:
         return int(row["n"])
 
 
-def create_store(cwd: str | Path, *, task_id: str | None = None) -> StateStore:
+def create_store(cwd: str | Path | None = None, *, task_id: str | None = None) -> StateStore:
     task_id = validate_task_id(task_id) if task_id is not None else new_task_id()
-    tasks = _tasks_dir(cwd)
+    tasks = _tasks_dir()
     task_dir = tasks / task_id
     try:
         task_dir.mkdir(mode=0o700, exist_ok=False)
@@ -1264,12 +1267,12 @@ def create_store(cwd: str | Path, *, task_id: str | None = None) -> StateStore:
     return store
 
 
-def open_store(cwd: str | Path, task_id: str | None = None) -> StateStore:
-    resolved = task_id or active_task_id(cwd)
+def open_store(cwd: str | Path | None = None, task_id: str | None = None) -> StateStore:
+    resolved = task_id or (active_task_id(cwd) if cwd is not None else None)
     if not resolved:
-        raise RuntimeError("no active codex-loop task; run bootstrap or pass --task-id")
+        raise RuntimeError("no active codex-loop lifecycle; pass --task-id")
     resolved = validate_task_id(resolved)
-    path = root_state_dir(cwd) / "tasks" / resolved / "state.sqlite3"
+    path = _tasks_dir() / resolved / "state.sqlite3"
     try:
         st = path.lstat()
     except FileNotFoundError as exc:
