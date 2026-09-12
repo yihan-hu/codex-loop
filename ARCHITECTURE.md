@@ -2,9 +2,11 @@
 
 ```mermaid
 flowchart TD
-  U[User objective] --> A[Codex Loop selected<br/>lifecycle admission]
+  U[Effective user request] --> B[Scope contract<br/>user owns WHAT / model owns HOW]
+  B --> A[Codex Loop selected<br/>lifecycle admission]
   A --> L[Standard lightweight lifecycle]
   L --> H[Host model / native agent loop]
+  B -. bounds every substantive change .-> H
   H <--> T[Observe / edit / tools]
   T --> V[Targeted validation]
   V --> H
@@ -19,16 +21,17 @@ flowchart TD
   F --> D[Deterministic finish check]
   D -->|clear| E[Done]
   D -->|real blocker| H
-  H -. consequential side effect .-> A[Routing / sandbox / approval / external-action reconciliation]
-  A --> X[GitHub / Drive / Local host / deployment]
+  H -. consequential side effect .-> G[Routing / sandbox / approval / external-action reconciliation]
+  G --> X[GitHub / Drive / Local host / deployment]
   H -. only when needed .-> O[Persistence / delegation / managed processes]
 ```
 
 ## Boundaries
 
+- The effective user request plus later user corrections is the scope authority. Plans, objectives, reviews, architecture preferences, discovered cleanup, and model judgment may choose execution but never authorize additional work.
 - Skill selection is lifecycle admission. Codex Loop does not run a second direct-vs-durable admission classifier after it has been selected.
 - The standard lifecycle is always active and lightweight: native agent execution, targeted validation, final semantic acceptance, then deterministic finish checks.
-- The host model owns reasoning, task decomposition, ordinary inspection/edit/test/repair decisions, semantic review, and final acceptance.
+- The host model owns reasoning, task decomposition, ordinary inspection/edit/test/repair decisions, semantic review, and final acceptance inside the user-authorized scope.
 - Codex Loop durable state is intentionally thin: immutable request anchor, ordered user steers, optional three-state plan, lightweight checkpoint/resume data, and machine-observable side-effect/process state.
 - `completion` checks deterministic blockers only. It is not an outer semantic review and does not require criterion PASS records, steer acknowledgements, repeated fresh checker passes, or a requirement-by-requirement objective audit.
 - Validation is host-visible and direct. A host-observed result can be recorded without a validation-plan handshake. Repairs trigger only affected revalidation unless broader regression confidence is justified.

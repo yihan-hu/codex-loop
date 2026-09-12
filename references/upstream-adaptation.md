@@ -29,7 +29,11 @@ Relevant upstream surfaces: `codex-rs/rollout/src/recorder.rs`, `codex-rs/core/s
 
 ## Existing-code execution style
 
-Use surgical edits, do not widen scope to unrelated cleanup, and validate the most specific changed behavior before broader checks. Let the model choose the execution path instead of encoding a fixed checker DAG.
+Public Codex keeps scope control as an always-on model instruction rather than a workflow subsystem: existing code should be changed with surgical precision, changes should stay minimal and focused on the user's task, and unrelated bugs or cleanup should not be fixed opportunistically.
+
+Codex Loop ports that invariant directly. The effective user request defines **what** is authorized; plans, objectives, review findings, architecture preferences, and model judgment only choose **how** to satisfy it. Every substantive change must be directly justified by the request or by a dependency necessary for the requested result. This replaces the former `focus/scope-drift` machinery; it does not recreate a scope state machine.
+
+Validate the most specific changed behavior before broader checks. Let the model choose the execution path instead of encoding a fixed checker DAG.
 
 ## Intentionally not emulated
 

@@ -19,15 +19,24 @@ Use this happy path unless the task itself requires more rigor:
 
 Do not create checker A/B chains, repeated fresh-PASS ceremonies, criterion-by-criterion evidence gates, or a separate outer semantic audit by default. A strong model should choose its own execution trajectory and rerun only checks plausibly affected by a repair.
 
+### Scope contract
+
+The user owns **what** may change; the model owns **how** to accomplish that change. The effective user request plus later user corrections define task scope. A plan, working objective, architecture preference, discovered cleanup, failing unrelated test, reviewer suggestion, or model judgment may guide execution but never expand that scope.
+
+In an existing system, make the smallest coherent change that satisfies the request. Do not redesign, refactor, rename, clean up, or otherwise improve adjacent behavior unless it is directly required to deliver the requested result. If a potentially useful change falls outside that boundary, leave it unchanged and mention it separately when relevant.
+
+Before keeping any substantive change, be able to justify it directly from the effective user request or from a dependency that is necessary for that requested change to work. If that justification is missing, do not make or keep the change.
+
 ### Final acceptance
 
 Before finishing, do one semantic review against the actual current state:
 
 1. Re-read the user's effective request, including later corrections.
 2. Inspect the final artifact/diff/state that matters.
-3. Run the minimum relevant validation that has not already been run on the current state.
-4. If a material requirement remains unsatisfied, continue working.
-5. Otherwise finish and report the important evidence and any real limitation.
+3. Check that every substantive change is directly justified by the request or a necessary dependency; remove unrelated or merely beneficial changes.
+4. Run the minimum relevant validation that has not already been run on the current state.
+5. If a material requirement remains unsatisfied, continue working.
+6. Otherwise finish and report the important evidence and any real limitation.
 
 The runtime `completion` command checks deterministic blockers only. It does not certify semantic correctness.
 
