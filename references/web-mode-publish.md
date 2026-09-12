@@ -44,7 +44,7 @@ Before staging:
 Normal model/controller entry:
 
 ```bash
-python3 scripts/codex_loop.py publish-enter --cwd REPO \
+python3 scripts/codex_loop.py publish-enter --task-id TASK --cwd REPO \
   --session-id SESSION \
   --repository OWNER/REPO \
   --branch TARGET \

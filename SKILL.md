@@ -20,7 +20,7 @@ python3 scripts/codex_loop.py bootstrap \
   --request-anchor 'EXACT CURRENT USER REQUEST'
 ```
 
-Keep the returned `task_id` as the lifecycle identity for the rest of the objective. Lifecycle creation is workspace-independent; repository/filesystem tasks bind a workspace afterward with `orient`. Creating the lifecycle must not depend on repository acquisition, a plan, a checkpoint, or cross-chat persistence.
+Keep the returned `task_id` as the lifecycle identity for the rest of the objective. Pass it explicitly to every later command that reads or mutates lifecycle state; do not let a workspace-local active-task pointer choose the lifecycle for model execution. Lifecycle creation is workspace-independent; repository/filesystem tasks bind a workspace afterward with `orient`. Creating the lifecycle must not depend on repository acquisition, a plan, a checkpoint, or cross-chat persistence.
 
 Do not create a second lifecycle for an ordinary follow-up to the same objective. Never re-bootstrap merely because the user says `continue`, `resume`, or `继续`.
 
@@ -139,8 +139,8 @@ Lifecycle `completion` does not require a recorded validation by default. Add `-
 `validate` may return a host-visible execution request. After the host runs the command, record the observed result directly; there is no plan-id handshake.
 
 ```bash
-python3 scripts/codex_loop.py validate --cwd REPO -- pytest tests/test_target.py
-python3 scripts/codex_loop.py validation-record --cwd REPO \
+python3 scripts/codex_loop.py validate --task-id TASK --cwd REPO -- pytest tests/test_target.py
+python3 scripts/codex_loop.py validation-record --task-id TASK --cwd REPO \
   --command-json '["pytest","tests/test_target.py"]' \
   --exit-code 0 --evidence 'targeted test passed'
 ```

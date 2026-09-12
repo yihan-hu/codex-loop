@@ -18,8 +18,8 @@ Persistence exists only to recover a long task after conversation loss. It is no
 It must not contain chain of thought, hidden instructions, credentials, cookies, approval/session tokens, raw tool transcripts, environment secrets, or raw external-action identities.
 
 ```bash
-python3 scripts/codex_loop.py persistence-export --cwd REPO \
-  --backend google_drive --output /PRIVATE/TEMP/state-only.json
+python3 scripts/codex_loop.py persistence-export --task-id TASK --cwd REPO \
+  --backend google_drive
 ```
 
 The current schema is v4. Older schemas are intentionally not accepted by this direct-upgrade runtime; recover the original request from an authoritative source and start a fresh task instead of maintaining migration logic.

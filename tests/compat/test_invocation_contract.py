@@ -28,6 +28,9 @@ class InvocationContractTests(unittest.TestCase):
         self.assertIn("Do not run a second direct-vs-durable admission decision", skill)
         self.assertIn("Never re-bootstrap merely because the user says `continue`, `resume`, or `继续`", skill)
         self.assertIn("planning, workspace binding, checkpoints, persistence, managed processes, and separate review remain lazy", skill)
+        self.assertIn("Pass it explicitly to every later command that reads or mutates lifecycle state", skill)
+        self.assertIn("validate --task-id TASK --cwd REPO", skill)
+        self.assertIn("validation-record --task-id TASK --cwd REPO", skill)
 
     def test_scope_contract_does_not_let_plan_expand_authority(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

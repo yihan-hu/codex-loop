@@ -35,7 +35,7 @@ validate -> host-visible command -> validation-record
 `validate` now also returns an `execution_policy` describing workload timeout, teardown grace, process-group cleanup intent, and authoritative-only terminal evidence. A rich observation can be recorded without an exit code:
 
 ```bash
-python3 scripts/codex_loop.py validation-record --cwd REPO \
+python3 scripts/codex_loop.py validation-record --task-id TASK --cwd REPO \
   --command-json '["pytest","-q"]' \
   --workload-status PASSED \
   --workload-evidence-kind framework_authoritative \

@@ -41,7 +41,7 @@ When the canonical workspace is accessed through Remote Desktop Commander, apply
 In explicit Local mode, when the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then route publication through the bundled Codex Loop controller. The target repository does not need to contain Codex Loop runtime files:
 
 ```bash
-python3 scripts/codex_loop.py publish-enter --cwd REPO \
+python3 scripts/codex_loop.py publish-enter --task-id TASK --cwd REPO \
   --session-id ROUTING_SESSION --controller-abi 1 --workspace-granted \
   --repository OWNER/REPO --branch main \
   --remote-head REMOTE_COMMIT --remote-tree REMOTE_TREE

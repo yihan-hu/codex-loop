@@ -46,7 +46,7 @@ This flow needs no separate user authorization to choose Drive. Host-native perm
 Before transfer, run:
 
 ```bash
-python3 scripts/codex_loop.py web-local-sync-plan --cwd REPO \
+python3 scripts/codex_loop.py web-local-sync-plan --task-id TASK --cwd REPO \
   --session-id ROUTING_SESSION \
   --destination-path /AUTHORIZED/LOCAL/PATH \
   --workspace-granted \
