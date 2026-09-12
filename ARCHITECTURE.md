@@ -2,11 +2,13 @@
 
 ```mermaid
 flowchart TD
-  U[User objective] --> H[Host model / native agent loop]
+  U[User objective] --> A[Codex Loop selected<br/>lifecycle admission]
+  A --> L[Standard lightweight lifecycle]
+  L --> H[Host model / native agent loop]
   H <--> T[Observe / edit / tools]
   T --> V[Targeted validation]
   V --> H
-  H -. multi-step or resumable .-> S[Thin durable state]
+  L -. when durable mechanics help .-> S[Thin durable state]
   S --> R[Request anchor + ordered steers]
   S --> P[Plan: pending / in_progress / completed]
   S --> C[Checkpoint / resume capsule]
@@ -24,6 +26,8 @@ flowchart TD
 
 ## Boundaries
 
+- Skill selection is lifecycle admission. Codex Loop does not run a second direct-vs-durable admission classifier after it has been selected.
+- The standard lifecycle is always active and lightweight: native agent execution, targeted validation, final semantic acceptance, then deterministic finish checks.
 - The host model owns reasoning, task decomposition, ordinary inspection/edit/test/repair decisions, semantic review, and final acceptance.
 - Codex Loop durable state is intentionally thin: immutable request anchor, ordered user steers, optional three-state plan, lightweight checkpoint/resume data, and machine-observable side-effect/process state.
 - `completion` checks deterministic blockers only. It is not an outer semantic review and does not require criterion PASS records, steer acknowledgements, repeated fresh checker passes, or a requirement-by-requirement objective audit.

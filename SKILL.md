@@ -1,11 +1,13 @@
 ---
 name: codex-loop
-description: "Lightweight durable objective layer for ChatGPT. Use for repository/filesystem work, Git/source publication, Skill update/deploy, Web/Local routing, cross-tool objectives, or genuinely long multi-step work that may need resume. Prefer native Codex-style agent execution over workflow governance: keep the user objective, a thin pending/in_progress/completed plan when useful, minimal validation, and one final semantic acceptance review. Escalate to stronger review, persistence, managed processes, or external-action bookkeeping only when risk or task shape requires it. Never launch Codex CLI or another model runtime."
+description: "Lightweight durable objective layer for ChatGPT. Use for repository/filesystem work, Git/source publication, Skill update/deploy, Web/Local routing, cross-tool objectives, or genuinely long multi-step work that may need resume. Once selected, enter the standard Codex Loop lifecycle directly; keep that lifecycle Codex-like and lightweight, with native agent execution, minimal validation, and one final semantic acceptance review. Escalate planning, persistence, managed processes, or external-action bookkeeping only when risk or task shape requires it. Never launch Codex CLI or another model runtime."
 ---
 
 # Codex Loop
 
 Treat Codex Loop as a thin durability and routing layer around the host model, not as a workflow engine. Let the host model reason, inspect, edit, test, and repair naturally. Codex Loop should mainly prevent loss of the objective, unsafe routing, duplicate high-impact external actions, and unreconciled task-owned process state.
+
+Once Codex Loop is selected, enter its standard lifecycle directly. Do not run a second direct-vs-durable admission decision. The lifecycle itself stays lightweight; optional runtime machinery remains lazy.
 
 Use `scripts/codex_loop.py` from this Skill as the stable runtime entry point. Runtime state belongs in the private system temp directory, never in the target repository.
 
@@ -31,7 +33,7 @@ The runtime `completion` command checks deterministic blockers only. It does not
 
 ## Thin task state
 
-Do not bootstrap durable state merely because Codex Loop was selected. Use it when resume, long-running coordination, protected-work tracking, managed processes, publication, or external-action reconciliation will actually help.
+Lifecycle admission and durable runtime state are separate concerns. Selection already entered the Codex Loop lifecycle; bootstrap durable state only when resume, long-running coordination, protected-work tracking, managed processes, publication, or external-action reconciliation will actually help.
 
 Bootstrap:
 
