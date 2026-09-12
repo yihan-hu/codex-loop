@@ -2,7 +2,10 @@
 
 ```mermaid
 flowchart TD
-  U[Codex Loop selected + user request] --> L[Create lifecycle instance ALWAYS]
+  U[Codex Loop selected + user request] --> A[Mandatory lifecycle admission gate]
+  A -->|new objective: bootstrap first| L[Lifecycle instance + task_id]
+  A -->|same objective: reuse exact task_id| L
+  A -->|runtime entry unavailable| Z[Fail closed<br/>no task execution outside lifecycle]
   L --> B[Scope contract<br/>user owns WHAT / model owns HOW]
   L --> RQ[Retained request + later steers]
   L -. repository/filesystem task .-> W[Bind / observe workspace]
@@ -36,8 +39,9 @@ flowchart TD
 ## Boundaries
 
 - The effective user request plus later user corrections is the scope authority. Plans, objectives, reviews, architecture preferences, discovered cleanup, and model judgment may choose execution but never authorize additional work.
-- Skill selection creates one real lifecycle instance immediately. Codex Loop does not run a second direct-vs-durable admission classifier after selection and does not wait for repository acquisition or persistence needs before creating lifecycle state.
-- The standard lifecycle is always active and lightweight: retain request authority, observe the relevant environment, execute natively, validate where useful, perform final semantic acceptance, then run deterministic finish checks.
+- Skill selection requires lifecycle admission before any substantive task action. For a new objective, `bootstrap` is the first task action and returns the `task_id`; an already-admitted continuation reuses that exact `task_id`. Skill-entrypoint loading itself is not task execution.
+- The admission boundary fails closed. If the host cannot execute the runtime entrypoint, Codex Loop does not degrade into ordinary chat/tool execution. The current ChatGPT Skill surface cannot make this a native host dispatch interceptor, so the contract is enforced by the Skill entrypoint until such a hook exists.
+- The standard lifecycle is always active and lightweight after admission: retain request authority, observe the relevant environment, execute natively, validate where useful, perform final semantic acceptance, then run deterministic finish checks.
 - Workspace binding is lifecycle-internal and optional. Repository/filesystem work loads scoped repository instructions and pre-existing user work before mutation; deeper instruction scopes are loaded before first touch.
 - Continuation words such as `continue` / `resume` / `继续` first inspect the existing lifecycle state and current reality. They never create a replacement lifecycle or reset the request anchor.
 - The host model owns reasoning, task decomposition, ordinary inspection/edit/test/repair decisions, semantic review, and final acceptance inside the user-authorized scope.

@@ -20,11 +20,17 @@ class InvocationContractTests(unittest.TestCase):
             "resume",
         ):
             self.assertIn(term, description)
-        self.assertIn("once selected, enter the standard codex loop lifecycle directly", description)
+        self.assertIn("lifecycle admission is mandatory", description)
+        self.assertIn("for a new objective, bootstrap before any substantive task action", description)
+        self.assertIn("for an admitted continuation, reuse the exact task_id", description)
+        self.assertIn("never continue outside", description)
 
-    def test_selection_always_creates_one_lightweight_lifecycle(self):
+    def test_selection_always_admits_one_lightweight_lifecycle(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("create and enter one real Codex Loop lifecycle immediately", skill)
+        self.assertIn("## Mandatory lifecycle admission", skill)
+        self.assertIn("the first task action for a new objective must be `bootstrap`", skill)
+        self.assertIn("fail closed", skill)
+        self.assertIn("do not silently continue the objective as ordinary chat/tool execution", skill)
         self.assertIn("Do not run a second direct-vs-durable admission decision", skill)
         self.assertIn("Never re-bootstrap merely because the user says `continue`, `resume`, or `继续`", skill)
         self.assertIn("planning, workspace binding, checkpoints, persistence, managed processes, and separate review remain lazy", skill)
@@ -44,11 +50,14 @@ class InvocationContractTests(unittest.TestCase):
         self.assertIn("Keep routing checks at the action boundary", skill)
         self.assertIn("Do not force unrelated reasoning/edit/test steps through routing state", skill)
 
-    def test_implicit_invocation_stays_enabled(self):
+    def test_implicit_invocation_stays_enabled_and_default_prompt_admits_first(self):
         metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
         self.assertIn('icon_small: "./assets/icon.svg"', metadata)
         self.assertIn('icon_large: "./assets/icon.svg"', metadata)
         self.assertIn("allow_implicit_invocation: true", metadata)
+        self.assertIn("bootstrap a new lifecycle or reuse the exact task_id", metadata)
+        self.assertIn("before any task action", metadata)
+        self.assertIn("never continue outside that lifecycle", metadata)
 
 
 if __name__ == "__main__":

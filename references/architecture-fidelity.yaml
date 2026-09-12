@@ -42,8 +42,23 @@
         "TokenUsageContributor"
       ],
       "status": "NOT_APPLICABLE",
-      "divergence": "Codex Loop intentionally no longer mirrors a thread/turn lifecycle contributor graph for ordinary task execution; the host model owns the agent loop.",
-      "upgrade_path": "None unless a concrete host-side lifecycle need appears."
+      "divergence": "Codex Loop intentionally does not mirror the full upstream thread/turn lifecycle contributor graph for ordinary task execution; the host model owns the agent loop. Mandatory Skill-selected admission is a separate boundary tracked by skill_lifecycle_admission.",
+      "upgrade_path": "None for ordinary agent-loop ownership; use the separate admission surface if the host exposes a native Skill-selection lifecycle hook."
+    },
+    {
+      "id": "skill_lifecycle_admission",
+      "layer": "control_plane",
+      "paths": [
+        "codex-rs/ext/extension-api/src/contributors.rs"
+      ],
+      "required_patterns": [
+        "SkillInvocationContributor",
+        "ThreadLifecycleContributor",
+        "on_skill_invocation"
+      ],
+      "status": "HOST_GAP",
+      "divergence": "Upstream Codex exposes host-owned Skill-invocation and thread lifecycle callbacks inside its runtime. The ChatGPT Skill surface does not expose a mandatory callback or tool-dispatch interceptor that can automatically create a Codex Loop task when the Skill is selected. Codex Loop therefore requires bootstrap as the first task action for a new objective, reuses the exact task_id on continuation, and fails closed if the runtime cannot be entered instead of silently executing outside the lifecycle.",
+      "upgrade_path": "Bind Codex Loop selection to a native host Skill-invocation/lifecycle hook that creates or restores the task_id before model task execution, then remove prompt-only admission enforcement while keeping the same mandatory-admission semantics."
     },
     {
       "id": "execution_lifetime_separation",

@@ -2,7 +2,7 @@
 
 Codex Loop is a ChatGPT Skill that gives every selected objective one lightweight Codex-style lifecycle while keeping ChatGPT as the host for reasoning, tools, approvals, connectors, and conversation state.
 
-Selection always creates the lifecycle. Simple work stays lightweight because plans, workspace binding, checkpoints, persistence, extra review, managed processes, and external-action bookkeeping are activated only when needed—not because the lifecycle itself is optional.
+Selection always requires lifecycle admission. For a new objective, lifecycle bootstrap is the first task action; if the host cannot enter the runtime, Codex Loop fails closed instead of silently running the objective outside the lifecycle. Simple work stays lightweight because plans, workspace binding, checkpoints, persistence, extra review, managed processes, and external-action bookkeeping are activated only when needed—not because the lifecycle itself is optional.
 
 ## Runtime control plane v2
 
@@ -57,7 +57,7 @@ The user installs or replaces the Skill manually through `Plugins -> Plugin Dire
 
 ## Quick start
 
-Codex Loop is designed for **implicit invocation**. In normal use, you should not need to type `@Codex Loop` or name the Skill. Once selected, ChatGPT immediately creates one lifecycle for the objective and keeps the user's request plus later corrections authoritative across turns. Planning, workspace binding, validation bookkeeping, delegation, checkpoints, cross-chat persistence, and managed-process machinery remain lazy and activate only when the objective needs them.
+Codex Loop is designed for **implicit invocation**. In normal use, you should not need to type `@Codex Loop` or name the Skill. Once selected, lifecycle admission is mandatory: after the Skill entrypoint is loaded, a new objective bootstraps before any substantive task action and keeps the returned `task_id` authoritative across continuation. If the host cannot invoke the runtime entrypoint, Codex Loop fails closed rather than silently continuing as ordinary chat/tool execution. Planning, workspace binding, validation bookkeeping, delegation, checkpoints, cross-chat persistence, and managed-process machinery remain lazy and activate only when the objective needs them.
 
 Short follow-ups such as `continue`, `继续`, `revise`, `verify`, `export`, `push`, `sync`, or `open this in Chrome` continue the existing lifecycle when the active objective is clear. A continuation first inspects the retained lifecycle state and current external reality; it does not create a replacement lifecycle or redo completed work. Automatic invocation does **not** bypass permissions: side-effect permissions are resolved when the task actually reaches that boundary.
 

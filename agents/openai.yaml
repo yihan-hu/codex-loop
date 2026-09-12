@@ -3,6 +3,6 @@ interface:
   short_description: "Objective lifecycle for multi-step work"
   icon_small: "./assets/icon.svg"
   icon_large: "./assets/icon.svg"
-  default_prompt: "Use $codex-loop to carry this objective end to end, preserve the user-authorized scope across continuation, and resolve external permissions only at the side-effect boundary that needs them."
+  default_prompt: "Use $codex-loop for this objective; before any task action, bootstrap a new lifecycle or reuse the exact task_id for an already-admitted continuation, and never continue outside that lifecycle."
 policy:
   allow_implicit_invocation: true

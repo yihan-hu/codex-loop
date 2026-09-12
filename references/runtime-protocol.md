@@ -2,9 +2,11 @@
 
 Use `python3 scripts/codex_loop.py ...`. Runtime task state is private and outside the repository.
 
+Lifecycle admission is fail-closed. After Codex Loop selection and entrypoint loading, a new objective must run `bootstrap` before any substantive task action. If the host cannot invoke the runtime, do not continue the objective outside Codex Loop. A continuation of an already-admitted objective reuses its exact `task_id` instead of bootstrapping again.
+
 ## Lifecycle admission and orientation
 
-Every selected invocation creates one lifecycle immediately, before workspace acquisition or optional persistence:
+Every newly admitted objective creates one lifecycle immediately, before workspace acquisition or optional persistence:
 
 ```bash
 python3 scripts/codex_loop.py bootstrap \

@@ -18,6 +18,16 @@ class ArchitectureFidelityTests(unittest.TestCase):
                 self.assertTrue(entry.get("divergence"))
                 self.assertTrue(entry.get("upgrade_path"))
 
+    def test_skill_lifecycle_admission_host_gap_is_explicit(self):
+        data = json.loads((ROOT / "references" / "architecture-fidelity.yaml").read_text())
+        surfaces = {entry["id"]: entry for entry in data["watch_surfaces"]}
+        entry = surfaces["skill_lifecycle_admission"]
+        self.assertEqual(entry["status"], "HOST_GAP")
+        self.assertIn("mandatory callback or tool-dispatch interceptor", entry["divergence"])
+        self.assertIn("first task action", entry["divergence"])
+        self.assertIn("fails closed", entry["divergence"])
+        self.assertIn("native host Skill-invocation/lifecycle hook", entry["upgrade_path"])
+
     def test_manual_installation_boundary_is_explicit(self):
         data = json.loads((ROOT / "references" / "architecture-fidelity.yaml").read_text())
         surfaces = {entry["id"]: entry for entry in data["watch_surfaces"]}
