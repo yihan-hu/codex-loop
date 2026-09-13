@@ -54,6 +54,12 @@ def main() -> None:
         state_path = Path(lifecycle["state"])
         assert lifecycle["workspace_bound"] is False
         assert run("completion", "--task-id", task_id)["status"] == "PASS"
+        task_db_count = lambda: len(list(state_path.parent.parent.glob("*/state.sqlite3")))
+        assert task_db_count() == 1
+        immediate_resume = run("resume", "--last")
+        assert immediate_resume["task"]["task_id"] == task_id
+        assert immediate_resume["resume_resolution"]["created_new_lifecycle"] is False
+        assert task_db_count() == 1
 
         (repo / "sample.txt").write_text("user work\n", encoding="utf-8")
         orient = run("orient", "--task-id", task_id, "--cwd", str(nested))
@@ -79,6 +85,15 @@ def main() -> None:
         assert next_view["plan"][0]["status"] == "completed"
         assert next_view["request"]["steers"] == ["Keep the file newline-terminated."]
         assert run("authority", "--task-id", task_id)["steers"] == ["Keep the file newline-terminated."]
+        resumed_without_id = run("resume", "--last")
+        assert resumed_without_id["task"]["task_id"] == task_id
+        assert resumed_without_id["plan"][0]["status"] == "completed"
+        assert resumed_without_id["plan"][1]["status"] == "in_progress"
+        assert resumed_without_id["request"]["steers"] == ["Keep the file newline-terminated."]
+        assert task_db_count() == 1
+        resumed_by_workspace = run("resume", "--cwd", str(nested))
+        assert resumed_by_workspace["task"]["task_id"] == task_id
+        assert resumed_by_workspace["resume_resolution"]["basis"] == "workspace_active_task"
 
         run(
             "plan", "--task-id", task_id, "--plan-json",

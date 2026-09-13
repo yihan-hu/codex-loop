@@ -9,7 +9,7 @@ description: "Lightweight durable objective layer for ChatGPT. Use for repositor
 
 Once Codex Loop is selected, entering its lifecycle is mandatory, not an optional setup step. Reading this Skill entrypoint and any instructions needed to execute it is not task execution. After selection and entrypoint loading, the first task action for a new objective must be `bootstrap`; do not inspect the target workspace, browse for task evidence, make a task plan, call task tools, mutate files, or give a substantive task answer before `bootstrap` returns a `task_id`.
 
-If the host cannot execute the Codex Loop runtime entrypoint, fail closed: state that the lifecycle could not be entered and do not silently continue the objective as ordinary chat/tool execution. If the same objective already has an admitted lifecycle in the current conversation, admission is already satisfied; do not bootstrap again, and use that exact `task_id` for continuation.
+If the host cannot execute the Codex Loop runtime entrypoint, fail closed: state that the lifecycle could not be entered and do not silently continue the objective as ordinary chat/tool execution. If the same objective already has an admitted lifecycle in the current conversation, admission is already satisfied; do not bootstrap again. Use the exact `task_id` when it is still available. If a continuation arrives after the host/model lost that identity, recover it through `resume --cwd WORKSPACE` when the canonical workspace is known, otherwise `resume --last`; a continuation must enter runtime-owned resume resolution before any new bootstrap.
 
 Treat Codex Loop as a thin lifecycle, durability, and routing layer around the host model, not as a workflow engine. Let the host model reason, inspect, edit, test, and repair naturally only after lifecycle admission. Codex Loop should mainly preserve the user-authorized objective across turns, prevent unsafe routing, avoid duplicate high-impact external actions, and reconcile task-owned process state.
 
@@ -28,7 +28,7 @@ python3 scripts/codex_loop.py bootstrap \
 
 Keep the returned `task_id` as the lifecycle identity for the rest of the objective. Pass it explicitly to every later command that reads or mutates lifecycle state; do not let a workspace-local active-task pointer choose the lifecycle for model execution. Lifecycle creation is workspace-independent; repository/filesystem tasks bind a workspace afterward with `orient`. Creating the lifecycle must not depend on repository acquisition, a plan, a checkpoint, or cross-chat persistence.
 
-Do not create a second lifecycle for an ordinary follow-up to the same objective. Never re-bootstrap merely because the user says `continue`, `resume`, or `继续`.
+Do not create a second lifecycle for an ordinary follow-up to the same objective. Never re-bootstrap merely because the user says `continue`, `resume`, or `继续`. A successful `bootstrap` is immediately resumable from its durable task state, even before workspace orientation.
 
 ## Always-on execution authority
 
@@ -82,13 +82,22 @@ The runtime `completion` command checks deterministic blockers only. It does not
 
 ## Continuation and steering
 
-Treat `continue`, `resume`, `继续`, and equivalent follow-ups as continuation of the active lifecycle, not as a new objective. Before acting, recover the current lifecycle state:
+Treat `continue`, `resume`, `继续`, and equivalent follow-ups as continuation of the active lifecycle, not as a new objective. Re-entry is runtime-owned and must happen before any bootstrap. If the exact lifecycle id is still known, either direct form is valid:
 
 ```bash
+python3 scripts/codex_loop.py resume --task-id TASK
 python3 scripts/codex_loop.py next --task-id TASK
 ```
 
-Use its request, plan, completion blockers, current workspace observations, and next action as the starting point. If it reports `authority_reload_required=true`, reload the complete user authority before continuing:
+If the host/model lost the id after a usage-limit stop, reconnect, or similar interruption, resolve the existing lifecycle instead of creating one:
+
+```bash
+python3 scripts/codex_loop.py resume --cwd REPO
+# If the workspace identity is also unavailable:
+python3 scripts/codex_loop.py resume --last
+```
+
+`resume` resolves an already-active lifecycle and returns the same continuation capsule as `next`; it never bootstraps a replacement lifecycle. Prefer workspace resolution when the canonical workspace is known; `--last` is the conversation/runtime re-entry path when only the durable lifecycle state remains. Use the returned request, plan, completion blockers, current workspace observations, and next action as the starting point. If it reports `authority_reload_required=true`, reload the complete user authority before continuing:
 
 ```bash
 python3 scripts/codex_loop.py authority --task-id TASK
@@ -126,7 +135,7 @@ python3 scripts/codex_loop.py plan --task-id TASK --plan-json '[
 ]'
 ```
 
-Use `next` as the lightweight continuation/resume capsule. It exposes the request, plan, acceptance text, changed paths, validation state, deterministic finish blockers, and the smallest useful next action.
+Use `next` as the lightweight continuation capsule when the exact `task_id` is already known. Use `resume` when lifecycle identity itself must be resolved first. Both expose the request, plan, acceptance text, changed paths, validation state, deterministic finish blockers, and the smallest useful next action.
 
 ```bash
 python3 scripts/codex_loop.py next --task-id TASK

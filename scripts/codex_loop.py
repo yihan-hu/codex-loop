@@ -100,7 +100,7 @@ from codex_loop_runtime.workspace_cache import (
     validate_workspace_cache,
     workspace_cache_cleanup_plan,
 )
-from codex_loop_runtime.state import active_task_id, open_store, set_active_task
+from codex_loop_runtime.state import active_task_id, latest_active_task_id, open_store, set_active_task
 from codex_loop_runtime.workspace import git_state, repo_root, run_git
 from codex_loop_runtime.workspace_registry import (
     grant_workspace,
@@ -117,7 +117,8 @@ HOST_ADAPTER_COMMANDS = (
     ('orient', 'bind/orient the existing lifecycle to workspace authority and pre-existing work'),
     ('instructions', 'load scoped repository instructions for the existing lifecycle'),
     ('authority', 'return the complete retained user request and ordered steers'),
-    ('next', 'resume the same lifecycle from retained authority, plan, and current reality'),
+    ('next', 'inspect the same lifecycle when its task_id is already known'),
+    ('resume', 'resolve an existing active lifecycle, then return the normal continuation capsule'),
     ('host-config', 'show or update the unified private Host Profile'),
     ('progress-config', 'compatibility facade for private progress-visibility preferences'),
     ('progress-policy', 'resolve progress behavior for lightweight or substantive work'),
@@ -360,12 +361,7 @@ def _cmd_authority(argv: list[str]) -> int:
     return 0
 
 
-def _cmd_next(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py next')
-    p.add_argument('--task-id', required=True)
-    p.add_argument('--cwd')
-    args = p.parse_args(argv[1:])
-    store = open_store(None, args.task_id)
+def _continuation_payload(store, raw_cwd: str | None = None) -> dict[str, object]:
     store.ensure_active()
     binding = store.get_meta('workspace_binding')
     if not binding:
@@ -379,7 +375,7 @@ def _cmd_next(argv: list[str]) -> int:
                 'reason': 'the lifecycle bound workspace is no longer present',
             })
         else:
-            cwd = _cwd(args.cwd) if args.cwd else Path(store.get_meta('workspace_cwd', str(canonical))).resolve()
+            cwd = _cwd(raw_cwd) if raw_cwd else Path(store.get_meta('workspace_cwd', str(canonical))).resolve()
             root = repo_root(cwd)
             status = workspace_binding_status(root, binding)
             if not status.get('matches'):
@@ -392,6 +388,46 @@ def _cmd_next(argv: list[str]) -> int:
                 working = build_working(root, cwd, store)
                 working['workspace_status'] = {'bound': True, 'available': True, 'recovery_required': False, 'canonical_root': str(canonical)}
     working['progress'] = progress_policy('substantive')
+    return working
+
+
+def _cmd_next(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py next')
+    p.add_argument('--task-id', required=True)
+    p.add_argument('--cwd')
+    args = p.parse_args(argv[1:])
+    emit_ok(_continuation_payload(open_store(None, args.task_id), args.cwd))
+    return 0
+
+
+def _cmd_resume(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py resume')
+    p.add_argument('--task-id')
+    p.add_argument('--cwd')
+    p.add_argument('--last', action='store_true')
+    args = p.parse_args(argv[1:])
+
+    resolution = 'explicit_task_id'
+    task_id = args.task_id
+    if not task_id and args.cwd:
+        root = repo_root(_cwd(args.cwd))
+        task_id = active_task_id(root)
+        resolution = 'workspace_active_task'
+        if not task_id:
+            task_id = latest_active_task_id(root)
+            resolution = 'workspace_bound_latest'
+    if not task_id:
+        task_id = latest_active_task_id()
+        resolution = 'latest_active_task'
+    if not task_id:
+        raise RuntimeError('no resumable codex-loop lifecycle was found; bootstrap only if this is a genuinely new objective')
+
+    working = _continuation_payload(open_store(None, task_id), args.cwd)
+    working['resume_resolution'] = {
+        'task_id': task_id,
+        'basis': resolution,
+        'created_new_lifecycle': False,
+    }
     emit_ok(working)
     return 0
 
@@ -1278,6 +1314,8 @@ def main() -> int:
             return _cmd_authority(argv)
         if argv[0] == 'next':
             return _cmd_next(argv)
+        if argv[0] == 'resume':
+            return _cmd_resume(argv)
         if argv[0] == 'host-config':
             return _cmd_host_config(argv)
         if argv[0] == 'progress-config':

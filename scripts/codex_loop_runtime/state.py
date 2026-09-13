@@ -302,6 +302,47 @@ def new_task_id() -> str:
     return uuid.uuid4().hex
 
 
+def latest_active_task_id(cwd: str | Path | None = None) -> str | None:
+    root = Path(cwd).resolve() if cwd is not None else None
+    if root is not None:
+        pointer = active_task_id(root)
+        if pointer:
+            try:
+                store = open_store(None, pointer)
+                store.ensure_active()
+                return pointer
+            except RuntimeError:
+                pass
+
+    candidates: list[tuple[int, str]] = []
+    for task_dir in _tasks_dir().iterdir():
+        try:
+            task_id = validate_task_id(task_dir.name)
+            state_path = task_dir / "state.sqlite3"
+            st = state_path.lstat()
+        except (FileNotFoundError, ValueError):
+            continue
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            continue
+        if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
+            continue
+        candidates.append((st.st_mtime_ns, task_id))
+
+    for _mtime_ns, task_id in sorted(candidates, reverse=True):
+        try:
+            store = open_store(None, task_id)
+            store.ensure_active()
+        except RuntimeError:
+            continue
+        if root is not None:
+            binding = store.get_meta("workspace_binding") or {}
+            canonical = str(binding.get("canonical_root") or "").strip()
+            if not canonical or Path(canonical).resolve() != root:
+                continue
+        return task_id
+    return None
+
+
 def _tasks_dir() -> Path:
     tasks = _runtime_dir() / "tasks"
     _ensure_private_dir(tasks)

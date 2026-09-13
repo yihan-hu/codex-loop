@@ -4,7 +4,9 @@
 flowchart TD
   U[Codex Loop selected + user request] --> A[Mandatory lifecycle admission gate]
   A -->|new objective: bootstrap first| L[Lifecycle instance + task_id]
-  A -->|same objective: reuse exact task_id| L
+  A -->|same objective + known task_id| L
+  A -->|continuation + identity lost| RR[Runtime resume resolver]
+  RR -->|workspace active pointer or latest active lifecycle| L
   A -->|runtime entry unavailable| Z[Fail closed<br/>no task execution outside lifecycle]
   L --> B[Scope contract<br/>user owns WHAT / model owns HOW]
   L --> RQ[Retained request + later steers]
@@ -39,11 +41,11 @@ flowchart TD
 ## Boundaries
 
 - The effective user request plus later user corrections is the scope authority. Plans, objectives, reviews, architecture preferences, discovered cleanup, and model judgment may choose execution but never authorize additional work.
-- Skill selection requires lifecycle admission before any substantive task action. For a new objective, `bootstrap` is the first task action and returns the `task_id`; an already-admitted continuation reuses that exact `task_id`. Skill-entrypoint loading itself is not task execution.
+- Skill selection requires lifecycle admission before any substantive task action. For a new objective, `bootstrap` is the first task action and returns the `task_id`; an already-admitted continuation reuses that lifecycle. If the host/model still has the exact id it is used directly; otherwise runtime-owned `resume` resolves the existing active lifecycle from the canonical workspace pointer or, as the final same-runtime re-entry path, the most recently active durable task. Skill-entrypoint loading itself is not task execution.
 - The admission boundary fails closed. If the host cannot execute the runtime entrypoint, Codex Loop does not degrade into ordinary chat/tool execution. The current ChatGPT Skill surface cannot make this a native host dispatch interceptor, so the contract is enforced by the Skill entrypoint until such a hook exists.
 - The standard lifecycle is always active and lightweight after admission: retain request authority, observe the relevant environment, execute natively, validate where useful, perform final semantic acceptance, then run deterministic finish checks.
 - Workspace binding is lifecycle-internal and optional. Repository/filesystem work loads scoped repository instructions and pre-existing user work before mutation; deeper instruction scopes are loaded before first touch.
-- Continuation words such as `continue` / `resume` / `继续` first inspect the existing lifecycle state and current reality. They never create a replacement lifecycle or reset the request anchor.
+- Continuation words such as `continue` / `resume` / `继续` enter resume resolution before bootstrap. They never create a replacement lifecycle or reset the request anchor. The resolver scans the existing private task store and reuses the workspace active pointer when available; it deliberately does not introduce a second session-index data model.
 - The host model owns reasoning, task decomposition, ordinary inspection/edit/test/repair decisions, semantic review, and final acceptance inside the user-authorized scope.
 - Codex Loop lifecycle state is intentionally thin and mandatory. Plans, workspace baselines, checkpoints, cross-chat persistence, delegation, and process/external-action bookkeeping are added only when the objective uses them.
 - `completion` checks deterministic blockers only. It is not an outer semantic review and does not require criterion PASS records, steer acknowledgements, repeated fresh checker passes, or a requirement-by-requirement objective audit.
