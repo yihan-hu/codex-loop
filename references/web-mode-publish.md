@@ -89,7 +89,7 @@ Do not create a FAST/standard import request before this refresh is complete. Do
 
 ## Staging and trigger request
 
-Upload the exact bundle binary to the dedicated `ChatGPT-GitHub-Staging` Drive folder through the real `file_uri` bridge. Record returned Drive file ID, exact size, and SHA-256. Apply temporary `anyone: reader` access only to that exact staging object/folder boundary required by the runner.
+Upload the exact bundle binary to the dedicated `ChatGPT-GitHub-Staging` Drive folder through the real `file_uri` bridge. The host/runtime must first materialize the local bundle as its connector file reference; on ChatGPT Web this may be a `sandbox:/mnt/data/...` runtime reference or a returned `sediment://file_...` handle. `upload_file` consumes that reference, not a bare `/mnt/data/...` path or `file://` URL. Do not replace this binary upload with native Google Workspace `create_file`. Record returned Drive file ID, exact size, and SHA-256. Apply temporary `anyone: reader` access only to that exact staging object/folder boundary required by the runner.
 
 Create exactly one tiny request file on the **target branch**:
 

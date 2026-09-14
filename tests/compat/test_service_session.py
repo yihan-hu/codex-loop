@@ -19,11 +19,12 @@ def call(root,*args,check=True):
 class ServiceTests(unittest.TestCase):
  @unittest.skipIf(os.name=='nt','PTY test Unix')
  def test_spawn_poll_terminate_and_private_endpoint(self):
+  from codex_loop_runtime.state import state_dir_for
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True); b,_=call(root,'bootstrap','--objective','process test','--no-validation','--no-validation-reason','test fixture has no meaningful executable validation'); tid=b['data']['task_id']; call(root,'service-start')
    try:
-    r,_=call(root,'spawn','--','sleep','10'); h=r['data']['handle']; endpoint=Path(tempfile.gettempdir())/'codex-loop'; matches=list(endpoint.glob(f'tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
-    if os.name!='nt': self.assertEqual(matches[0].stat().st_mode & 0o777,0o600)
+    r,_=call(root,'spawn','--','sleep','10'); h=r['data']['handle']; endpoint=state_dir_for(root,tid,create=False)/'service.json'; self.assertTrue(endpoint.exists())
+    if os.name!='nt': self.assertEqual(endpoint.stat().st_mode & 0o777,0o600)
     call(root,'terminate',h); p,_=call(root,'poll',h); self.assertTrue(p['data']['has_exited']); self.assertTrue(p['data']['output_drained'])
    finally:
     try: call(root,'service-stop')
@@ -90,18 +91,18 @@ class ServiceTests(unittest.TestCase):
     except Exception: pass
 
  @unittest.skipIf(os.name=='nt','Unix socket fallback test')
- def test_long_temp_root_falls_back_to_loopback_tcp(self):
+ def test_long_runtime_root_falls_back_to_loopback_tcp(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
-   long_tmp=root/('x'*180); long_tmp.mkdir()
-   env=dict(os.environ); env['TMPDIR']=str(long_tmp)
+   long_home=root/('x'*180); long_home.mkdir()
+   env=dict(os.environ); env['CODEX_LOOP_HOME']=str(long_home)
    def run(*parts):
     proc=subprocess.run([sys.executable,str(CLI),*_current_args(parts)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,check=True)
     return json.loads(proc.stdout or b'{}')
    boot=run('bootstrap','--cwd',str(root),'--objective','long socket fallback','--no-validation','--no-validation-reason','fixture')
    tid=boot['data']['task_id']; run('service-start','--cwd',str(root),'--use-active-task')
    try:
-    matches=list((long_tmp/'codex-loop').glob(f'tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
+    matches=list((long_home/'runtime').glob(f'tasks/{tid}/service.json')); self.assertEqual(len(matches),1)
     endpoint=json.loads(matches[0].read_text()); self.assertEqual(endpoint['kind'],'tcp'); self.assertEqual(endpoint['host'],'127.0.0.1'); self.assertEqual(endpoint.get('fallback'),'unix_path_too_long')
    finally:
     run('service-stop','--cwd',str(root),'--use-active-task')

@@ -6,6 +6,8 @@ flowchart TD
   A -->|new objective: bootstrap first| L[Lifecycle instance + task_id]
   A -->|same objective + known task_id| L
   A -->|continuation + identity lost| RR[Runtime resume resolver]
+  HS[Host-private durable lifecycle store<br/>CODEX_LOOP_HOME/runtime] --> RR
+  HS --> L
   RR -->|workspace active pointer or latest active lifecycle| L
   A -->|runtime entry unavailable| Z[Fail closed<br/>no task execution outside lifecycle]
   L --> B[Scope contract<br/>user owns WHAT / model owns HOW]
@@ -45,7 +47,7 @@ flowchart TD
 - The admission boundary fails closed. If the host cannot execute the runtime entrypoint, Codex Loop does not degrade into ordinary chat/tool execution. The current ChatGPT Skill surface cannot make this a native host dispatch interceptor, so the contract is enforced by the Skill entrypoint until such a hook exists.
 - The standard lifecycle is always active and lightweight after admission: retain request authority, observe the relevant environment, execute natively, validate where useful, perform final semantic acceptance, then run deterministic finish checks.
 - Workspace binding is lifecycle-internal and optional. Repository/filesystem work loads scoped repository instructions and pre-existing user work before mutation; deeper instruction scopes are loaded before first touch.
-- Continuation words such as `continue` / `resume` / `继续` enter resume resolution before bootstrap. They never create a replacement lifecycle or reset the request anchor. The resolver scans the existing private task store and reuses the workspace active pointer when available; it deliberately does not introduce a second session-index data model.
+- Continuation words such as `continue` / `resume` / `继续` enter resume resolution before bootstrap. They never create a replacement lifecycle or reset the request anchor. Lifecycle task databases and workspace active-task pointers live under the host-private durable `CODEX_LOOP_HOME/runtime` store, so a persistent local host can survive system-temp cleanup or process restarts without inventing a second session-index data model. Conversation-scoped routing/grant sessions remain temporary and are not promoted into durable lifecycle authority.
 - The host model owns reasoning, task decomposition, ordinary inspection/edit/test/repair decisions, semantic review, and final acceptance inside the user-authorized scope.
 - Codex Loop lifecycle state is intentionally thin and mandatory. Plans, workspace baselines, checkpoints, cross-chat persistence, delegation, and process/external-action bookkeeping are added only when the objective uses them.
 - `completion` checks deterministic blockers only. It is not an outer semantic review and does not require criterion PASS records, steer acknowledgements, repeated fresh checker passes, or a requirement-by-requirement objective audit.

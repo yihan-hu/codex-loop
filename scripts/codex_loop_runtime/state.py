@@ -7,7 +7,6 @@ import re
 import secrets
 import sqlite3
 import stat
-import tempfile
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import Any, Iterator
 
 from .command_identity import identify_validation
 from .execution_supervision import ExecutionObservation, legacy_observation, validate_observation
+from .workspace_registry import codex_loop_home
 
 
 PROFILES = {
@@ -244,13 +244,13 @@ def _ensure_private_dir(path: Path) -> Path:
 
 
 def _runtime_dir() -> Path:
-    base = Path(tempfile.gettempdir()) / "codex-loop"
+    base = codex_loop_home().expanduser().resolve() / "runtime"
     _ensure_private_dir(base)
     return base
 
 
 def root_state_dir(cwd: str | Path) -> Path:
-    """Workspace-local metadata directory. Lifecycle databases live globally by task id."""
+    """Host-private workspace pointer directory. Lifecycle databases live globally by task id."""
     root = Path(cwd).resolve()
     digest = hashlib.sha256(str(root).encode("utf-8", errors="surrogateescape")).hexdigest()[:16]
     target = _runtime_dir() / "workspaces" / digest

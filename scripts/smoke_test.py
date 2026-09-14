@@ -33,9 +33,14 @@ def git(repo: Path, *args: str) -> str:
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="codex-loop-smoke-") as raw:
         base = Path(raw)
-        runtime = base / "runtime"
-        runtime.mkdir()
-        os.environ["TMPDIR"] = str(runtime)
+        host_home = base / "host-home"
+        temp_a = base / "tmp-a"
+        temp_b = base / "tmp-b"
+        temp_a.mkdir()
+        temp_b.mkdir()
+        os.environ["CODEX_LOOP_HOME"] = str(host_home)
+        os.environ["TMPDIR"] = str(temp_a)
+        tempfile.tempdir = None
         repo = base / "repo"
         repo.mkdir()
         git(repo, "init", "-q")
@@ -75,6 +80,15 @@ def main() -> None:
             "root instruction\n", "nested instruction\n"
         ]
 
+        os.environ["TMPDIR"] = str(temp_b)
+        tempfile.tempdir = None
+        resumed_after_temp_change = run("resume", "--last")
+        assert resumed_after_temp_change["task"]["task_id"] == task_id
+        assert state_path.is_relative_to(host_home / "runtime" / "tasks")
+        resumed_by_workspace = run("resume", "--cwd", str(nested))
+        assert resumed_by_workspace["task"]["task_id"] == task_id
+        assert resumed_by_workspace["resume_resolution"]["basis"] == "workspace_active_task"
+
         run(
             "plan", "--task-id", task_id, "--plan-json",
             '[{"step":"Inspect sample","status":"completed"},{"step":"Finish sample","status":"in_progress"}]',
@@ -91,9 +105,6 @@ def main() -> None:
         assert resumed_without_id["plan"][1]["status"] == "in_progress"
         assert resumed_without_id["request"]["steers"] == ["Keep the file newline-terminated."]
         assert task_db_count() == 1
-        resumed_by_workspace = run("resume", "--cwd", str(nested))
-        assert resumed_by_workspace["task"]["task_id"] == task_id
-        assert resumed_by_workspace["resume_resolution"]["basis"] == "workspace_active_task"
 
         run(
             "plan", "--task-id", task_id, "--plan-json",

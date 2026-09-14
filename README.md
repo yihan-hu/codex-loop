@@ -104,6 +104,8 @@ The preference is user-specific and is never committed. `python3 scripts/codex_l
 
 The host config is private runtime state outside the repository and outside `skill.zip`. It may coexist with non-sensitive workspace locators/preferences, but it does not store current `workspace_mode`, `interaction_target`, or `deployment_target`; those live in the conversation routing file. Host config must never contain credentials, approval/session tokens, or other secrets.
 
+Lifecycle task databases and the workspace-to-active-task pointer use the same host-private root at `~/.codex-loop/runtime` (or `CODEX_LOOP_HOME/runtime`). On a persistent Local-mode Mac this survives `/tmp` cleanup and process restarts, so `resume --cwd` / `resume --last` can recover the original lifecycle instead of bootstrapping a replacement. These files remain outside the repository. Conversation routing state is intentionally separate and temporary, and a Web host is still not a cross-conversation durability guarantee; use the optional persistence mechanisms below when recovery must survive an ephemeral Web environment.
+
 ## Optional cross-conversation persistence
 
 Web conversations and ephemeral workspaces are not a durable storage contract. Codex Loop therefore separates two optional, default-off Drive recovery layers. `state_only` stores a small schema-whitelisted lifecycle/reconciliation manifest. **Workspace Cache** stores an immutable 7-day Git/worktree capsule so a later conversation can restore the actual development workspace.

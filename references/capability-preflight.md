@@ -100,6 +100,8 @@ create sentinel
   -> delete that exact sentinel immediately
 ```
 
+Match the probe to the real Drive write path. When the eventual workflow stages a workspace binary through `upload_file(file_uri=...)`, create a tiny local sentinel file, let the host/runtime turn that mounted file into its connector file reference, and call `upload_file` into the exact staging folder. On ChatGPT Web, a runtime reference such as `sandbox:/mnt/data/...` or a returned `sediment://file_...` handle is valid input; a bare `/mnt/data/...` path or `file://` URL is not. Do not use native Google Workspace `create_file` as a substitute; those alternatives exercise a different or invalid boundary and must not be recorded as `google_drive_write` proof for binary staging.
+
 Never overwrite, rename, move, or delete a pre-existing user file as a permission probe. The sentinel may contain only fixed non-sensitive text such as `codex-loop permission smoke`; do not put repository source, credentials, or task content in it. If cleanup fails, surface the exact sentinel identity and resolve cleanup before creating another probe object.
 
 ## Procedure

@@ -15,7 +15,7 @@ Treat Codex Loop as a thin lifecycle, durability, and routing layer around the h
 
 Do not run a second direct-vs-durable admission decision and do not defer lifecycle creation until a repository or durable feature is needed. The lifecycle itself stays lightweight; planning, workspace binding, checkpoints, persistence, managed processes, and separate review remain lazy capabilities inside it.
 
-Use `scripts/codex_loop.py` from this Skill as the stable runtime entry point. Runtime state belongs in the private system temp directory, never in the target repository.
+Use `scripts/codex_loop.py` from this Skill as the stable runtime entry point. Lifecycle state and workspace-to-task pointers belong at `CODEX_LOOP_HOME/runtime` (default `~/.codex-loop/runtime`), never in the target repository. Conversation-scoped routing sessions remain temporary.
 
 ## Lifecycle admission
 
