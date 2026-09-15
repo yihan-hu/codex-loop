@@ -297,7 +297,7 @@
       ]
     },
     {
-      "divergence": "Uses filesystem/Git reconciliation plus a local mutation journal instead of Codex patch delta objects. It reports actual changed paths, protected pre-existing work, and bounded ignored-path observations; semantic scope judgment is model-owned. Git probes force file-mode observation so core.filemode=false cannot hide chmod changes.",
+      "divergence": "Ordinary lifecycle use keeps workspace observation cheap (repository identity/status plus pre-existing dirty paths); full filesystem/Git reconciliation, mutation journaling, ignored-path observation, and content freshness are lazy durability/high-risk capabilities. Semantic scope judgment remains model-owned.",
       "local": "scripts/codex_loop_runtime/change_tracker.py",
       "mode": "HYBRID",
       "scope": "local_journal_plus_workspace_reconciliation",
@@ -310,7 +310,7 @@
       ]
     },
     {
-      "divergence": "Private task-local state keeps only durable execution facts: immutable request anchor, ordered steers, optional Codex-style pending/in_progress/completed plan, acceptance text, direct validation observations, protected-work baseline, and consequential external/process state. There is no criterion PASS, steer acknowledgement, validation-plan handshake, or semantic lifecycle state machine.",
+      "divergence": "Private task-local state keeps durable execution facts only: immutable request anchor, ordered steers, optional Codex-style pending/in_progress/completed plan, optional durable validation observations, and consequential external/process state. Model-written task objective/acceptance, criterion PASS, steer acknowledgement, validation-plan handshake, and semantic lifecycle state machines are absent.",
       "local": "scripts/codex_loop_runtime/state.py",
       "mode": "HYBRID",
       "scope": "portable_subset_only",
@@ -340,7 +340,7 @@
       ]
     },
     {
-      "divergence": "Deterministic finish guard only. It checks machine-observable blockers such as unfinished durable-plan steps, missing required current validation, unresolved external/process state, protected/read-only mutation, and workspace binding mismatch. Semantic final acceptance is model-owned.",
+      "divergence": "Deterministic finish guard only. It checks machine-observable blockers such as missing explicitly required current validation, unresolved external/process state, protected/read-only mutation, and workspace binding mismatch. Optional plan state never gates completion; semantic final acceptance is model-owned.",
       "local": "scripts/codex_loop_runtime/completion.py",
       "mode": "HYBRID",
       "tests": {

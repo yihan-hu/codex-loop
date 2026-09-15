@@ -101,7 +101,7 @@ from codex_loop_runtime.workspace_cache import (
     workspace_cache_cleanup_plan,
 )
 from codex_loop_runtime.state import active_task_id, latest_active_task_id, open_store, set_active_task
-from codex_loop_runtime.workspace import git_state, repo_root, run_git
+from codex_loop_runtime.workspace import git_state, hash_workspace_path, repo_root, run_git, workspace_identity_status
 from codex_loop_runtime.workspace_registry import (
     grant_workspace,
     list_workspaces,
@@ -265,9 +265,15 @@ def _cmd_orient(argv: list[str]) -> int:
     cwd = _cwd(args.cwd)
     root = repo_root(cwd)
     instruction_state = _instruction_payload(cwd, args.fallback, args.max_bytes)
-    git = git_state(root)
+    git = git_state(root, include_content_hashes=False)
     is_git = bool(git.get('is_git'))
     probe_degraded = bool(git.get('probe_degraded', False))
+    protected_hashes = {}
+    for rel in git.get('protected_paths', []):
+        try:
+            protected_hashes[str(rel)] = hash_workspace_path(root, root / str(rel))[1]
+        except (OSError, PermissionError, RuntimeError, ValueError):
+            protected_hashes[str(rel)] = None
     old_binding = store.get_meta('workspace_binding')
     expected_resume = store.get_meta('resume_expected_workspace')
     current_binding = capture_workspace_binding(root)
@@ -295,6 +301,7 @@ def _cmd_orient(argv: list[str]) -> int:
         store.set_meta('workspace_cwd', str(cwd))
         store.set_meta('orientation_git', git)
         store.set_meta('protected_paths', list(git.get('protected_paths', [])))
+        store.set_meta('protected_path_hashes', protected_hashes)
         store.set_meta('instruction_complete', bool(instruction_state['complete']))
         set_active_task(root, store.task_id)
         if rebound:
@@ -340,7 +347,7 @@ def _cmd_instructions(argv: list[str]) -> int:
     cwd = _cwd(args.cwd)
     binding = store.get_meta('workspace_binding')
     if binding:
-        status = workspace_binding_status(repo_root(cwd), binding)
+        status = workspace_identity_status(repo_root(cwd), binding)
         if not status.get('matches'):
             raise RuntimeError('instruction scope is outside the lifecycle bound workspace; recover/rebind first')
     emit_ok(_instruction_payload(cwd, args.fallback, args.max_bytes))
@@ -361,33 +368,40 @@ def _cmd_authority(argv: list[str]) -> int:
     return 0
 
 
-def _continuation_payload(store, raw_cwd: str | None = None) -> dict[str, object]:
+def _continuation_payload(
+    store, raw_cwd: str | None = None, *, reentry: bool = False,
+) -> dict[str, object]:
+    """Return cheap active-turn context for next; do full recovery observation only for resume."""
     store.ensure_active()
     binding = store.get_meta('workspace_binding')
     if not binding:
-        working = build_lifecycle_working(store)
-    else:
-        canonical = Path(str(binding.get('canonical_root') or ''))
-        if not canonical.exists():
-            working = build_lifecycle_working(store, workspace_status={
-                'bound': True, 'available': False, 'recovery_required': True,
-                'canonical_root': str(canonical),
-                'reason': 'the lifecycle bound workspace is no longer present',
-            })
-        else:
-            cwd = _cwd(raw_cwd) if raw_cwd else Path(store.get_meta('workspace_cwd', str(canonical))).resolve()
-            root = repo_root(cwd)
-            status = workspace_binding_status(root, binding)
-            if not status.get('matches'):
-                working = build_lifecycle_working(store, workspace_status={
-                    'bound': True, 'available': True, 'recovery_required': True,
-                    'canonical_root': str(canonical), 'details': status,
-                    'reason': 'the current workspace no longer matches the lifecycle binding',
-                })
-            else:
-                working = build_working(root, cwd, store)
-                working['workspace_status'] = {'bound': True, 'available': True, 'recovery_required': False, 'canonical_root': str(canonical)}
-    working['progress'] = progress_policy('substantive')
+        return build_lifecycle_working(store)
+    canonical = Path(str(binding.get('canonical_root') or ''))
+    if not canonical.exists():
+        return build_lifecycle_working(store, workspace_status={
+            'bound': True, 'available': False, 'recovery_required': True,
+            'canonical_root': str(canonical),
+            'reason': 'the lifecycle bound workspace is no longer present',
+        })
+    cwd = _cwd(raw_cwd) if raw_cwd else Path(store.get_meta('workspace_cwd', str(canonical))).resolve()
+    if not reentry:
+        return build_lifecycle_working(store, workspace_status={
+            'bound': True, 'available': True, 'recovery_required': False,
+            'canonical_root': str(canonical), 'cwd': str(cwd),
+        })
+    root = repo_root(cwd)
+    status = workspace_binding_status(root, binding)
+    if not status.get('matches'):
+        return build_lifecycle_working(store, workspace_status={
+            'bound': True, 'available': True, 'recovery_required': True,
+            'canonical_root': str(canonical), 'details': status,
+            'reason': 'the current workspace no longer matches the lifecycle binding',
+        })
+    working = build_working(root, cwd, store, reconcile=False)
+    working['workspace_status'] = {
+        'bound': True, 'available': True, 'recovery_required': False,
+        'canonical_root': str(canonical),
+    }
     return working
 
 
@@ -396,7 +410,7 @@ def _cmd_next(argv: list[str]) -> int:
     p.add_argument('--task-id', required=True)
     p.add_argument('--cwd')
     args = p.parse_args(argv[1:])
-    emit_ok(_continuation_payload(open_store(None, args.task_id), args.cwd))
+    emit_ok(_continuation_payload(open_store(None, args.task_id), args.cwd, reentry=False))
     return 0
 
 
@@ -427,7 +441,7 @@ def _cmd_resume(argv: list[str]) -> int:
         if not task_id:
             raise RuntimeError('no resumable codex-loop lifecycle was found; bootstrap only if this is a genuinely new objective')
 
-    working = _continuation_payload(open_store(None, task_id), args.cwd)
+    working = _continuation_payload(open_store(None, task_id), args.cwd, reentry=True)
     working['resume_resolution'] = {
         'task_id': task_id,
         'basis': resolution,

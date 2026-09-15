@@ -4,17 +4,16 @@ from pathlib import Path
 from typing import Any
 
 from codex_loop_runtime.change_tracker import changes, sync_generation
-from codex_loop_runtime.completion import CompletionDecision, assess
+from codex_loop_runtime.completion import CompletionStatus, assess
 from codex_loop_runtime.instructions import discover
 from codex_loop_runtime.release_lineage import workspace_binding_status
 from codex_loop_runtime.shell import default_user_shell
 from codex_loop_runtime.state import StateStore
-from codex_loop_runtime.workspace import git_state
+from codex_loop_runtime.workspace import git_state, workspace_identity_status
 
 MAX_REQUEST_CHARS = 12000
 MAX_STEERS = 12
 MAX_STEER_CHARS = 4096
-MAX_PATHS = 32
 MAX_REASONS = 10
 
 
@@ -33,14 +32,13 @@ def _steers(items: list[dict[str, Any]]) -> tuple[list[str], int]:
     return result, omitted
 
 
-def _changed_paths(change_state: dict[str, Any]) -> tuple[list[str], int]:
-    paths: list[str] = []
-    for key in ("added", "modified", "deleted"):
-        paths.extend(str(x) for x in change_state.get(key, []))
-    for pair in change_state.get("renamed", []):
-        paths.extend([str(pair.get("from", "")), str(pair.get("to", ""))])
-    ordered = sorted({x for x in paths if x})
-    return ordered[:MAX_PATHS], max(0, len(ordered) - MAX_PATHS)
+EXECUTION_CONTRACT = (
+    "Keep working until the user's actual requested end state is true.",
+    "Do not stop at diagnosis, a plan, a plausible partial fix, or passing checks while authorized work remains.",
+    "Prefer current repository/tool evidence over lifecycle summaries.",
+    "Repair resolvable failures and continue.",
+    "Before yielding, compare the actual result with the exact user request and run the smallest relevant validation.",
+)
 
 
 def _validation_status(store: StateStore, generation: int, state: dict[str, Any]) -> str:
@@ -54,7 +52,15 @@ def _validation_status(store: StateStore, generation: int, state: dict[str, Any]
     return "missing"
 
 
-def collect_context(root: Path, cwd: Path, store: StateStore, *, reconcile: bool = True) -> dict[str, Any]:
+def collect_context(
+    root: Path,
+    cwd: Path,
+    store: StateStore,
+    *,
+    reconcile: bool = False,
+    deep_workspace: bool = False,
+    include_instructions: bool = True,
+) -> dict[str, Any]:
     root = root.resolve()
     cwd = cwd.resolve()
     if reconcile:
@@ -67,7 +73,7 @@ def collect_context(root: Path, cwd: Path, store: StateStore, *, reconcile: bool
     validation = decision.details.get("validation")
     if not isinstance(validation, dict):
         validation = store.validation_state_for_generation(generation)
-    instruction_result = discover(cwd)
+    instruction_result = discover(cwd) if include_instructions else None
     return {
         "root": root,
         "cwd": cwd,
@@ -78,31 +84,43 @@ def collect_context(root: Path, cwd: Path, store: StateStore, *, reconcile: bool
         "validation": validation,
         "instructions": instruction_result,
         "shell": default_user_shell(),
-        "criteria": store.criteria(),
         "request_steers": store.request_steers(),
         "external_actions": store.external_actions(),
         "processes": store.process_rows(),
         "active_isolation": store.active_isolation(),
         "isolation_history": store.isolation_history(limit=32),
         "warnings": store.isolation_warnings(limit=32),
-        "workspace_binding": workspace_binding_status(root, store.get_meta("workspace_binding")),
+        "workspace_binding": (
+            workspace_binding_status(root, store.get_meta("workspace_binding"))
+            if deep_workspace else workspace_identity_status(root, store.get_meta("workspace_binding"))
+        ),
         "release_receipts": store.release_receipts(),
     }
 
 
 def full_projection(facts: dict[str, Any]) -> dict[str, Any]:
+    """Diagnostic/debug projection. This is intentionally richer than normal agent context."""
     store: StateStore = facts["store"]
     root: Path = facts["root"]
     cwd: Path = facts["cwd"]
     shell = facts["shell"]
+    instructions = facts.get("instructions")
+    instruction_payload = None
+    if instructions is not None:
+        instruction_payload = {
+            "entries": [
+                {"path": item.path, "sha256": item.sha256, "complete": item.complete, "provenance": item.provenance}
+                for item in instructions.entries
+            ],
+            "complete": instructions.complete,
+            "truncated_paths": list(instructions.truncated_paths),
+        }
     return {
         "task_id": store.task_id,
         "task_status": store.get_meta("task_status", "uninitialized"),
         "profile": store.get_meta("profile", "regular"),
         "request_anchor": store.request_anchor(),
         "request_steers": [str(x.get("text", "")) for x in facts["request_steers"]],
-        "objective": store.get_meta("objective", ""),
-        "acceptance": [str(x.get("text", "")) for x in facts["criteria"]],
         "plan": store.plan(),
         "generation": facts["generation"],
         "workspace": {
@@ -111,14 +129,7 @@ def full_projection(facts: dict[str, Any]) -> dict[str, Any]:
             "git": git_state(root),
             "binding": facts.get("workspace_binding"),
         },
-        "instructions": {
-            "entries": [
-                {"path": item.path, "sha256": item.sha256, "complete": item.complete, "provenance": item.provenance}
-                for item in facts["instructions"].entries
-            ],
-            "complete": facts["instructions"].complete,
-            "truncated_paths": list(facts["instructions"].truncated_paths),
-        },
+        "instructions": instruction_payload,
         "changes": facts["changes"],
         "validation": facts["validation"],
         "processes": facts["processes"],
@@ -133,170 +144,104 @@ def full_projection(facts: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _next_actions(facts: dict[str, Any], validation_status: str) -> list[dict[str, str]]:
-    store: StateStore = facts["store"]
-    decision: CompletionDecision = facts["decision"]
-    actions: list[dict[str, str]] = []
+def _request_projection(store: StateStore) -> tuple[dict[str, Any], bool, dict[str, int]]:
+    anchor, anchor_omitted = _bounded(store.request_anchor(), MAX_REQUEST_CHARS)
+    steers, steers_omitted = _steers(store.request_steers())
+    truncated = bool(anchor_omitted or steers_omitted)
+    return (
+        {"anchor": anchor, "steers": steers, "truncated": truncated},
+        truncated,
+        {"request_chars": anchor_omitted, "steers": steers_omitted},
+    )
 
-    def add(kind: str, action: str, reason: str) -> None:
-        if not any(x["action"] == action for x in actions):
-            actions.append({"kind": kind, "action": action, "reason": reason})
 
-    if facts.get("active_isolation") is not None:
-        add("required", "finish or abort the active isolated task", "delegated work is still active")
-        return actions
-    if facts["changes"].get("unexpected_protected_changes"):
-        add("blocker", "reconcile protected user work", "pre-existing user changes were modified unexpectedly")
-    if store.unresolved_external_count() or store.unresolved_external_failure_count():
-        add("required", "reconcile unresolved external actions before further side effects", "external action state must be reconciled before continuation can safely dispatch another side effect")
-    if store.running_process_count() or store.unresolved_process_failure_count():
-        add("required", "clean up or reconcile managed processes", "task-owned process state is unresolved")
+def _base_working_projection(store: StateStore) -> dict[str, Any]:
+    request, reload_required, truncated = _request_projection(store)
+    result: dict[str, Any] = {
+        "context_version": 5,
+        "task": {
+            "task_id": store.task_id,
+            "profile": store.get_meta("profile", "regular"),
+            "status": store.get_meta("task_status", "uninitialized"),
+        },
+        "request": request,
+        "execution_contract": list(EXECUTION_CONTRACT),
+        "authority_reload_required": reload_required,
+        "resume_rule": (
+            "resume this same lifecycle; reload complete authority if truncated; re-observe current external "
+            "reality only where it may have gone stale; never re-bootstrap or redo completed work merely for bookkeeping"
+        ),
+        "truncated": truncated,
+    }
     plan = store.plan()
-    current = next((x for x in plan if x["status"] == "in_progress"), None)
-    pending = next((x for x in plan if x["status"] == "pending"), None)
-    if current:
-        add("work", current["step"], "current Codex-style plan step")
-    elif pending:
-        add("work", pending["step"], "next Codex-style plan step")
-    if validation_status in {"missing", "stale"}:
-        add("verify", "run the smallest relevant validation", f"validation is {validation_status}")
-    if decision.status.value == "PASS":
-        return [{
-            "kind": "finish",
-            "action": "perform one final semantic acceptance review, then finish if the user's objective is satisfied",
-            "reason": "deterministic blockers are clear",
-        }]
-    if not actions:
-        add("inspect", "continue the objective from current repository state", "the task is not yet ready to finish")
-    return actions[:6]
+    if plan:
+        result["plan"] = plan
+    return result
 
 
 def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
     store: StateStore = facts["store"]
-    decision: CompletionDecision = facts["decision"]
-    anchor, anchor_omitted = _bounded(store.request_anchor(), MAX_REQUEST_CHARS)
-    steers, steers_omitted = _steers(facts["request_steers"])
-    changed, changed_omitted = _changed_paths(facts["changes"])
-    validation_status = _validation_status(store, facts["generation"], facts["validation"])
-    authority_reload_required = bool(anchor_omitted or steers_omitted)
-    return {
-        "context_version": 4,
-        "task": {
-            "task_id": store.task_id,
-            "objective": store.get_meta("objective", ""),
-            "profile": store.get_meta("profile", "regular"),
-            "status": store.get_meta("task_status", "uninitialized"),
-        },
-        "request": {
-            "anchor": anchor,
-            "steers": steers,
-            "truncated": bool(anchor_omitted or steers_omitted),
-        },
-        "acceptance": [str(x.get("text", "")) for x in facts["criteria"]],
-        "plan": store.plan(),
-        "state": {
-            "completion": decision.status.value,
-            "validation": validation_status,
-            "changed_paths": changed,
-            "completion_reasons": list(decision.reasons)[:MAX_REASONS],
-            "warnings": list(decision.details.get("warnings", [])) + list(facts.get("warnings", []))[-4:],
-        },
-        "next_actions": _next_actions(facts, validation_status),
-        "authority_reload_required": authority_reload_required,
-        "resume_rule": "resume this same lifecycle: reload complete authority if truncated, inspect current repository/tool state, and do not redo completed work unless evidence is stale",
-        "truncated": {
-            "request_chars": anchor_omitted,
-            "steers": steers_omitted,
-            "changed_paths": changed_omitted,
-            "completion_reasons": max(0, len(decision.reasons) - MAX_REASONS),
-        },
+    decision = facts["decision"]
+    result = _base_working_projection(store)
+    result["workspace"] = {"root": str(facts["root"]), "cwd": str(facts["cwd"])}
+    instructions = facts.get("instructions")
+    if instructions is not None:
+        result["workspace"]["instructions"] = {
+            "entries": [
+                {
+                    "path": item.path,
+                    "sha256": item.sha256,
+                    "complete": item.complete,
+                    "provenance": item.provenance,
+                    "contents": item.contents,
+                }
+                for item in instructions.entries
+            ],
+            "complete": instructions.complete,
+            "truncated_paths": list(instructions.truncated_paths),
+        }
+    blockers = list(decision.reasons)[:MAX_REASONS]
+    warnings = list(decision.details.get("warnings", [])) + list(facts.get("warnings", []))[-4:]
+    result["machine"] = {
+        "blockers_clear": decision.status == CompletionStatus.PASS,
+        "blockers": blockers,
+        "warnings": warnings,
     }
+    result["truncated"]["machine_blockers"] = max(0, len(decision.reasons) - MAX_REASONS)
+    return result
 
 
 def build_lifecycle_working(store: StateStore, *, workspace_status: dict[str, Any] | None = None) -> dict[str, Any]:
-    anchor, anchor_omitted = _bounded(store.request_anchor(), MAX_REQUEST_CHARS)
-    steers, steers_omitted = _steers(store.request_steers())
-    plan = store.plan()
+    result = _base_working_projection(store)
+    workspace_status = workspace_status or {
+        "bound": False,
+        "available": False,
+        "recovery_required": False,
+        "reason": "lifecycle has no workspace binding",
+    }
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if workspace_status.get("recovery_required"):
+        blockers.append(str(workspace_status.get("reason") or "bound workspace requires recovery"))
+    if store.active_isolation() is not None:
+        blockers.append("delegated work is still active")
+    if store.unresolved_external_count() or store.unresolved_external_failure_count():
+        blockers.append("external action state is unresolved")
+    if store.running_process_count() or store.unresolved_process_failure_count():
+        blockers.append("task-owned process state is unresolved")
     validation = store.validation_state_for_generation(store.generation())
     validation_status = _validation_status(store, store.generation(), validation)
-    reasons: list[str] = []
-    actions: list[dict[str, str]] = []
-    workspace_status = workspace_status or {"bound": False, "available": False, "reason": "lifecycle has no workspace binding"}
-    recovery_required = bool(workspace_status.get("recovery_required"))
-    active_isolation = store.active_isolation()
-    unresolved_external = store.unresolved_external_count() + store.unresolved_external_failure_count()
-    unresolved_process = store.running_process_count() + store.unresolved_process_failure_count()
-    validation_required = validation_status in {"missing", "stale"}
-    unfinished_plan = [x for x in plan if x["status"] != "completed"]
-
-    if recovery_required:
-        reasons.append(str(workspace_status.get("reason") or "bound workspace requires recovery"))
-        actions.append({
-            "kind": "blocker",
-            "action": "recover and verify the bound workspace, then rebind this same lifecycle",
-            "reason": reasons[-1],
-        })
-    if active_isolation is not None:
-        reasons.append("delegated work is still active")
-        if not actions:
-            actions.append({"kind": "required", "action": "finish or abort the active isolated task", "reason": reasons[-1]})
-    if unresolved_external:
-        reasons.append("external action state is unresolved")
-        if not actions:
-            actions.append({"kind": "required", "action": "reconcile unresolved external actions before further side effects", "reason": reasons[-1]})
-    if unresolved_process:
-        reasons.append("task-owned process state is unresolved")
-        if not actions:
-            actions.append({"kind": "required", "action": "clean up or reconcile managed processes", "reason": reasons[-1]})
-    if unfinished_plan:
-        reasons.append(f"plan has {len(unfinished_plan)} unfinished step(s)")
-    if validation_required:
-        reasons.append(f"validation is {validation_status}")
-
-    current = next((x for x in plan if x["status"] == "in_progress"), None)
-    pending = next((x for x in plan if x["status"] == "pending"), None)
-    if not actions and current:
-        actions.append({"kind": "work", "action": current["step"], "reason": "current Codex-style plan step"})
-    elif not actions and pending:
-        actions.append({"kind": "work", "action": pending["step"], "reason": "next Codex-style plan step"})
-    if validation_required and not actions:
-        actions.append({"kind": "verify", "action": "run the smallest relevant validation", "reason": f"validation is {validation_status}"})
-    if not actions:
-        actions.append({
-            "kind": "finish",
-            "action": "perform one final semantic acceptance review, then finish if the user's objective is satisfied",
-            "reason": "no modeled deterministic blocker is active",
-        })
-    authority_reload_required = bool(anchor_omitted or steers_omitted)
-    return {
-        "context_version": 4,
-        "task": {
-            "task_id": store.task_id,
-            "objective": store.get_meta("objective", ""),
-            "profile": store.get_meta("profile", "regular"),
-            "status": store.get_meta("task_status", "uninitialized"),
-        },
-        "request": {"anchor": anchor, "steers": steers, "truncated": authority_reload_required},
-        "acceptance": [str(x.get("text", "")) for x in store.criteria()],
-        "plan": plan,
-        "workspace": workspace_status,
-        "state": {
-            "completion": "BLOCKED" if recovery_required else ("CONTINUE" if reasons else "PASS"),
-            "validation": validation_status,
-            "changed_paths": [],
-            "completion_reasons": reasons,
-            "warnings": list(validation.get("warning_codes", [])),
-        },
-        "next_actions": actions[:6],
-        "authority_reload_required": authority_reload_required,
-        "resume_rule": "resume this same lifecycle: reload complete authority if truncated, recover current external reality, and do not re-bootstrap or redo completed work",
-        "truncated": {
-            "request_chars": anchor_omitted,
-            "steers": steers_omitted,
-            "changed_paths": 0,
-            "completion_reasons": 0,
-        },
+    if validation_status in {"missing", "stale"}:
+        blockers.append(f"required validation is {validation_status}")
+    warnings.extend(str(x) for x in validation.get("warning_codes", []) if str(x))
+    result["workspace"] = workspace_status
+    result["machine"] = {
+        "blockers_clear": not blockers,
+        "blockers": blockers[:MAX_REASONS],
+        "warnings": warnings,
     }
+    result["truncated"]["machine_blockers"] = max(0, len(blockers) - MAX_REASONS)
+    return result
 
 
 def _delegation_record_view(item: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -351,8 +296,8 @@ def build_isolation(root: Path, cwd: Path, store: StateStore, isolation_id: str,
 
 
 def build_full(root: Path, cwd: Path, store: StateStore, *, reconcile: bool = True) -> dict[str, Any]:
-    return full_projection(collect_context(root, cwd, store, reconcile=reconcile))
+    return full_projection(collect_context(root, cwd, store, reconcile=reconcile, deep_workspace=True, include_instructions=True))
 
 
-def build_working(root: Path, cwd: Path, store: StateStore, *, reconcile: bool = True) -> dict[str, Any]:
-    return working_projection(collect_context(root, cwd, store, reconcile=reconcile))
+def build_working(root: Path, cwd: Path, store: StateStore, *, reconcile: bool = False) -> dict[str, Any]:
+    return working_projection(collect_context(root, cwd, store, reconcile=reconcile, deep_workspace=True, include_instructions=True))

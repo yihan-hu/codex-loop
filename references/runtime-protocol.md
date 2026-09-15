@@ -1,35 +1,39 @@
 # Runtime Protocol
 
-Use `python3 scripts/codex_loop.py ...`. Runtime task state is private and outside the repository.
+Use `python3 scripts/codex_loop.py ...`. Runtime task state is private and outside the target repository.
 
-Lifecycle admission is fail-closed. After Codex Loop selection and entrypoint loading, a new objective must run `bootstrap` before any substantive task action. If the host cannot invoke the runtime, do not continue the objective outside Codex Loop. A continuation of an already-admitted objective reuses its exact `task_id` instead of bootstrapping again.
+Lifecycle admission is fail-closed. After Codex Loop selection and entrypoint loading, a new task must run `bootstrap` before any substantive task action. A continuation reuses the exact existing lifecycle.
 
-## Lifecycle admission and orientation
-
-Every newly admitted objective creates one lifecycle immediately, before workspace acquisition or optional persistence:
+## Admission and cheap orientation
 
 ```bash
 python3 scripts/codex_loop.py bootstrap \
   --request-anchor 'exact current user request'
 ```
 
-Keep the returned `task_id` for the objective and pass it explicitly to every later lifecycle-stateful command; do not use the workspace active-task pointer to infer model task identity. For repository/filesystem work, bind and orient that same lifecycle before the first mutation:
+The request anchor is the task specification. Later corrections are stored as ordered steers; no parallel task objective or acceptance list is created.
+
+For repository/filesystem work, orient once before first mutation:
 
 ```bash
 python3 scripts/codex_loop.py orient --task-id TASK --cwd REPO
 ```
 
-The result returns applicable root-to-cwd repository instructions plus the current Git dirty/protected-path snapshot. If `instructions.complete=false` or `safe_to_mutate=false`, do not mutate until the applicable authority/context is complete.
-
-Load a more-specific repository instruction scope before first touching files there:
+Ordinary orientation reads repository identity/status, applicable root-to-cwd instructions, and pre-existing dirty paths. It deliberately avoids a complete repository content baseline. Load a deeper instruction scope only before first touching it:
 
 ```bash
 python3 scripts/codex_loop.py instructions --task-id TASK --cwd PATH
 ```
 
-A later `continue` / `resume` / `继续` restores this same lifecycle with `next --task-id TASK`; it does not create a replacement lifecycle.
+## Native active loop
 
-## Thin plan
+After admission/orientation, ordinary work is direct host execution:
+
+`inspect/edit/tool -> observe/test -> repair -> continue`
+
+Do not call lifecycle commands between normal actions. Run ordinary tests directly through host tools.
+
+## Optional plan
 
 ```bash
 python3 scripts/codex_loop.py plan --task-id TASK --plan-json '[
@@ -39,16 +43,25 @@ python3 scripts/codex_loop.py plan --task-id TASK --plan-json '[
 ]'
 ```
 
-Allowed statuses are exactly `pending`, `in_progress`, and `completed`; at most one item may be `in_progress`.
+Statuses are `pending | in_progress | completed`, with at most one `in_progress`. The plan is working memory only and never blocks completion by itself.
 
-## Working/resume view
+## `next` versus `resume`
 
 ```bash
 python3 scripts/codex_loop.py next --task-id TASK
-python3 scripts/codex_loop.py snapshot --task-id TASK --cwd REPO
 ```
 
-`next` is the normal lightweight resume capsule: request anchor/steers, acceptance text, plan, changed paths, validation state, deterministic completion reasons, and suggested next action. Use `snapshot` only for deeper debugging/audit context.
+`next` is a cheap state-only capsule. It returns exact request/steers, the short execution contract, optional plan, stored workspace identity, and real machine blockers. It does **not** reconcile Git, hash workspace content, rediscover instructions, or emit a suggested finish action.
+
+Use `resume` for real re-entry after model/context/task-identity loss:
+
+```bash
+python3 scripts/codex_loop.py resume --task-id TASK
+python3 scripts/codex_loop.py resume --cwd REPO
+python3 scripts/codex_loop.py resume --last
+```
+
+`resume` re-observes the bound workspace and applicable instructions before execution continues. Use `snapshot` only for explicit rich debugging/audit state.
 
 ## User steer
 
@@ -56,17 +69,11 @@ python3 scripts/codex_loop.py snapshot --task-id TASK --cwd REPO
 python3 scripts/codex_loop.py steer --task-id TASK --text 'later user correction'
 ```
 
-The steer is authoritative immediately. There is no separate steer-ack command.
+The steer is authoritative immediately. A pure continuation needs no steer acknowledgement or heartbeat.
 
 ## Validation
 
-Recorded validation is optional for ordinary lifecycle completion. Create the lifecycle with `--require-validation` only when a current pass must be a deterministic finish condition; publication has its own current-validation requirement.
-
-```bash
-python3 scripts/codex_loop.py validate --task-id TASK --cwd REPO -- pytest tests/test_target.py
-```
-
-If the runtime reports `requires_host_visible_execution`, run that exact command through the host from the returned cwd, then record the observation directly:
+Run ordinary validation directly through host tools. Lifecycle validation recording is only for workflows that explicitly require durable validation state:
 
 ```bash
 python3 scripts/codex_loop.py validation-record --task-id TASK --cwd REPO \
@@ -74,58 +81,28 @@ python3 scripts/codex_loop.py validation-record --task-id TASK --cwd REPO \
   --exit-code 0 --evidence 'targeted test passed'
 ```
 
-No validation plan-id or generation handshake is required. Rich workload/process/cleanup fields remain available when the host exposes them.
+Create the lifecycle with `--require-validation` only when a current durable pass must be a deterministic finish condition or a publication/release path requires one.
 
 ## Completion
+
+After the model has semantically accepted the actual result against the exact request:
 
 ```bash
 python3 scripts/codex_loop.py completion --task-id TASK --cwd REPO
 ```
 
-The result is a deterministic guard only:
+Completion checks machine-observable blockers only:
 
-- `PASS`: no modeled machine blocker remains; perform one model semantic final acceptance review and finish if the user's objective is satisfied.
-- `CONTINUE`: current machine state still has work such as unfinished plan, missing required validation, unresolved external action, or managed process cleanup.
-- `BLOCKED`: a hard state/safety invariant is violated, such as workspace binding mismatch or protected/read-only mutation.
+- `PASS`: machine blockers are clear. It is not a semantic correctness verdict and emits no “finish now” instruction.
+- `CONTINUE`: a real machine condition remains, such as explicitly required validation, unresolved external action, or managed-process cleanup.
+- `BLOCKED`: a hard state/safety invariant is violated, such as workspace identity mismatch or protected/read-only mutation.
 
-There is no `objective-audit`, `criterion --status pass`, `steer-ack`, or mandatory `focus` command in the normal protocol.
+An unfinished optional plan is not a blocker.
 
-## Checkpoint
+## Checkpoint / persistence
 
-```bash
-python3 scripts/codex_loop.py checkpoint --task-id TASK --cwd REPO --key-finding '...' --next-action '...'
-python3 scripts/codex_loop.py checkpoint-restore --task-id TASK --cwd REPO
-```
+Checkpoints and persistence are lazy capabilities for long/noisy transitions or cross-conversation durability. Persistence schema v5 stores the exact request anchor, steers, optional plan, minimal workspace identity, and unresolved consequential external-action identities. It does not persist a model-written task objective/acceptance restatement. Historical validation stays historical after resume; current reality wins.
 
-Use checkpoints only before long/noisy transitions or when re-entry matters.
+## Heavy/high-risk paths
 
-## Persistence
-
-Cross-conversation persistence is opt-in:
-
-```bash
-python3 scripts/codex_loop.py persistence-export --task-id TASK --cwd REPO --backend google_drive
-python3 scripts/codex_loop.py persistence-resume-plan --manifest STATE.json
-python3 scripts/codex_loop.py persistence-resume --cwd REPO --manifest STATE.json --observations-json OBS.json
-```
-
-The v4 manifest stores the request, three-state plan, acceptance text, steers, minimal workspace identity, and unresolved consequential external-action identities. Prior validation is historical after resume; current repository/external reality wins.
-
-## Side-effect routing
-
-Routing and publication commands are deliberately separate from the normal agent loop. Use the dedicated references for exact commands:
-
-- `interaction-routing.md`
-- `repository-continuity.md`
-- `source-acquisition.md`
-- `publication-router.md`
-- `web-mode-publish.md`
-- `release-lineage.md`
-- `workspace-registry.md`
-- `web-to-local-handoff.md`
-
-These controls guard real side effects. Do not route ordinary reasoning/edit/test steps through them unless the host action itself requires it.
-
-## Managed processes / delegation
-
-Use service/process and isolation commands only when the task actually needs an interactive managed process or delegated reviewer. They are not part of the default happy path. See `execution-supervision.md` and `delegation.md`.
+Full content baselines, ignored-file watches, workspace fingerprints, generation-based freshness, release lineage, publication gates, managed processes, and non-idempotent external-action reconciliation remain available where their durability/safety value is real. They are not part of the ordinary coding loop.

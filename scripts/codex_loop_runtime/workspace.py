@@ -285,7 +285,8 @@ def git_status(root: Path) -> str:
     return raw.replace(b"\0", b"\n").decode("utf-8", errors="replace")
 
 
-def git_state(root: Path) -> dict[str, Any]:
+def git_state(root: Path, *, include_content_hashes: bool = True) -> dict[str, Any]:
+    """Observe Git state, keeping expensive diff hashing opt-in for durable paths."""
     repo_probe = git_repo_probe(root)
     if repo_probe is not True:
         if repo_probe is None and _has_git_marker(root):
@@ -308,8 +309,11 @@ def git_state(root: Path) -> dict[str, Any]:
         protected.add(str(entry["path"]))
         if entry.get("old_path"):
             protected.add(str(entry["old_path"]))
-    staged = _git_output_sha256(root, ["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv"])
-    worktree = _git_output_sha256(root, ["diff", "--binary", "--no-ext-diff", "--no-textconv"])
+    staged = None
+    worktree = None
+    if include_content_hashes:
+        staged = _git_output_sha256(root, ["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv"])
+        worktree = _git_output_sha256(root, ["diff", "--binary", "--no-ext-diff", "--no-textconv"])
     return {
         "is_git": True,
         "head": head,
@@ -322,10 +326,48 @@ def git_state(root: Path) -> dict[str, Any]:
         "status_probe_failed": status_probe_failed,
         "head_probe_failed": head_probe_failed,
         "branch_probe_failed": branch_probe_failed,
-        "probe_degraded": status_probe_failed or head_probe_failed or branch_probe_failed or staged is None or worktree is None,
+        "probe_degraded": status_probe_failed or head_probe_failed or branch_probe_failed
+        or (include_content_hashes and (staged is None or worktree is None)),
         "protected_paths": sorted(protected),
+        "content_hashes_included": include_content_hashes,
     }
 
+
+
+def workspace_identity_status(root: Path, binding: dict[str, Any] | None) -> dict[str, Any]:
+    """Cheap same-workspace check for the ordinary loop; durable lineage stays in release_lineage."""
+    root = root.resolve()
+    if not binding:
+        return {"bound": False, "matches": False, "reason": "task has no canonical workspace binding"}
+    reasons: list[str] = []
+    if str(binding.get("canonical_root") or "") != str(root):
+        reasons.append("canonical root changed")
+    if bool(binding.get("is_git")):
+        if git_repo_probe(root) is not True:
+            reasons.append("workspace is no longer a Git working tree")
+        else:
+            common = _git_text(root, ["rev-parse", "--git-common-dir"])
+            if common is None:
+                reasons.append("Git common-dir identity unavailable")
+            else:
+                common_path = Path(common)
+                if not common_path.is_absolute():
+                    common_path = (root / common_path).resolve()
+                current_id = hashlib.sha256(str(common_path).encode("utf-8", errors="surrogateescape")).hexdigest()[:24]
+                if binding.get("repository_id") and str(binding.get("repository_id")) != current_id:
+                    reasons.append("Git repository identity changed")
+            origin = _git_text(root, ["config", "--get", "remote.origin.url"])
+            expected_origin = str(binding.get("origin_hint") or "").strip()
+            if expected_origin and origin is not None:
+                cleaned = origin.strip()
+                if cleaned.startswith("https://"):
+                    cleaned = cleaned[len("https://"):].removesuffix(".git")
+                elif cleaned.startswith("git@") and ":" in cleaned:
+                    host, path = cleaned[len("git@"):].split(":", 1)
+                    cleaned = f"{host}/{path.removesuffix('.git')}"
+                if cleaned != expected_origin:
+                    reasons.append("Git origin identity changed")
+    return {"bound": True, "matches": not reasons, "reasons": reasons, "binding": binding}
 
 def hash_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()

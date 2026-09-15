@@ -29,11 +29,6 @@ TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS criteria (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ordinal INTEGER NOT NULL UNIQUE,
-    text TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS baseline (
     path TEXT PRIMARY KEY,
     sha256 TEXT NOT NULL,
@@ -442,8 +437,6 @@ class StateStore:
     def configure_task(
         self,
         task_id: str,
-        objective: str,
-        criteria: list[str],
         *,
         request_anchor: str,
         profile: str = "regular",
@@ -459,28 +452,14 @@ class StateStore:
         existing_anchor = self.request_anchor()
         if existing_anchor and existing_anchor != request_anchor:
             raise RuntimeError("task request anchor is immutable once configured")
-        objective = scrub_persisted_text(objective) or ""
-        if not objective.strip():
-            raise ValueError("task objective must not be empty")
-        clean_criteria = [scrub_persisted_text(x, limit=4096) or "" for x in criteria]
-        clean_criteria = [x for x in clean_criteria if x.strip()]
-        auto_criterion = not clean_criteria
-        if auto_criterion:
-            clean_criteria = [objective]
         with self.connect() as db:
-            for table in ("criteria", "baseline", "mutations", "validations", "external_actions", "checkpoints", "processes", "steers", "release_receipts", "isolation_events", "isolations"):
+            for table in ("baseline", "mutations", "validations", "external_actions", "checkpoints", "processes", "steers", "release_receipts", "isolation_events", "isolations"):
                 db.execute(f"DELETE FROM {table}")
             db.execute("DELETE FROM metadata")
-            db.executemany(
-                "INSERT INTO criteria(ordinal,text) VALUES(?,?)",
-                [(i, text) for i, text in enumerate(clean_criteria)],
-            )
         self.set_meta("task_id", task_id)
         self.set_meta("request_anchor", request_anchor)
-        self.set_meta("objective", objective)
         self.set_meta("plan", [])
         self.set_meta("profile", profile)
-        self.set_meta("criteria_auto_generated", auto_criterion)
         self.set_meta("requires_validation", bool(requires_validation))
         self.set_meta("requires_clean_process_exit", bool(requires_clean_process_exit))
         self.set_meta("generation", 0)
@@ -590,10 +569,6 @@ class StateStore:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (json.dumps(clean_reason),),
             )
-
-    def criteria(self) -> list[dict[str, Any]]:
-        with self.connect() as db:
-            return [dict(row) for row in db.execute("SELECT ordinal,text FROM criteria ORDER BY ordinal")]
 
     def replace_baseline(self, entries: list[tuple[str, str, int, int, bool]]) -> None:
         with self.connect() as db:

@@ -105,9 +105,8 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
     store = create_store(None, task_id=args.task_id)
     task_id = store.path.parent.name
     try:
-        objective = str(args.objective or args.request_anchor)
         store.configure_task(
-            task_id, objective, args.criterion or [], request_anchor=args.request_anchor, profile=args.profile,
+            task_id, request_anchor=args.request_anchor, profile=args.profile,
             requires_validation=args.require_validation,
             requires_clean_process_exit=args.require_clean_process_exit,
         )
@@ -121,7 +120,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
         "state": str(store.path),
         "request_anchor": store.request_anchor(),
         "workspace_bound": False,
-        "rule": "lifecycle created; bind/orient a workspace only if the objective needs one",
+        "rule": "lifecycle created; bind/orient a workspace only if the request needs one",
     })
 
 
@@ -636,7 +635,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex_loop.py")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--request-anchor", required=True); p.add_argument("--objective"); p.add_argument("--criterion", action="append"); p.add_argument("--profile", default="regular"); p.add_argument("--require-validation", action="store_true"); p.add_argument("--require-clean-process-exit", action="store_true"); p.set_defaults(func=cmd_bootstrap)
+    p = sub.add_parser("bootstrap"); p.add_argument("--cwd"); p.add_argument("--task-id"); p.add_argument("--request-anchor", required=True); p.add_argument("--profile", default="regular"); p.add_argument("--require-validation", action="store_true"); p.add_argument("--require-clean-process-exit", action="store_true"); p.set_defaults(func=cmd_bootstrap)
     for name, func in [("snapshot", cmd_snapshot), ("instructions", cmd_instructions), ("changes", cmd_changes), ("completion", cmd_completion), ("checkpoint-restore", cmd_checkpoint_restore), ("service-start", cmd_service_start), ("service-stop", cmd_service_stop), ("shell-snapshot", cmd_shell_snapshot), ("cleanup", cmd_cleanup)]:
         p = sub.add_parser(name); _add_scope(p); p.set_defaults(func=func)
         if name == "instructions": p.add_argument("--fallback", action="append")

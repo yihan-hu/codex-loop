@@ -36,100 +36,91 @@ Do not create a second lifecycle for an ordinary follow-up to the same objective
 
 ## Always-on execution authority
 
-Keep lifecycle authority separate from optional capabilities. Preserve the initial user request and later user corrections as the scope authority; do not replace them with a broader model-written objective.
+Keep lifecycle authority separate from optional capabilities. The exact initial user request plus later user corrections are the task authority. Do not create a model-written objective or acceptance specification for the same task.
 
-For repository or filesystem work, bind/orient the existing lifecycle before the first mutation:
+Use this execution contract after admission:
+
+1. Keep working until the user's actual requested end state is true.
+2. Do not stop at diagnosis, a plan, a plausible partial fix, or passing checks while authorized work remains.
+3. Prefer current repository/tool evidence over lifecycle summaries.
+4. If a resolvable failure appears, repair it and continue.
+5. Before yielding, compare the actual result with the exact user request and run the smallest relevant validation.
+
+For repository or filesystem work, bind/orient the existing lifecycle once before the first mutation:
 
 ```bash
 python3 scripts/codex_loop.py orient --task-id TASK --cwd REPO
 ```
 
-Use the returned repository instructions and pre-existing work as active constraints. Treat returned `protected_paths` as user-owned work: do not revert, overwrite, or normalize them unless the requested change requires touching that path, and then preserve unrelated hunks. If `safe_to_mutate` is false, obtain a trustworthy host-visible workspace/Git observation before mutating.
-
-Repository instructions are scoped. Before first touching a file under a deeper directory whose instruction scope has not been loaded, read that scope inside the same lifecycle:
+`orient` is deliberately cheap: establish repository identity, current branch/HEAD/status, applicable root-to-cwd instructions, and pre-existing dirty paths. Do not turn ordinary orientation into a full repository content snapshot or durable freshness proof. Treat returned `protected_paths` as user-owned work and preserve unrelated hunks. Deeper repository instructions are loaded only before first touching a new deeper scope:
 
 ```bash
 python3 scripts/codex_loop.py instructions --task-id TASK --cwd PATH
 ```
 
-If repository-instruction discovery reports `complete=false`, do not mutate yet. Reload with a sufficient `--max-bytes` value until the applicable instruction set is complete. For non-repository work, keep the same request-authority rule and use the relevant host/domain context instead.
+If instruction discovery is incomplete, reload that scope with a sufficient byte budget before mutation. Otherwise keep the loaded instruction authority stable; do not rediscover it as a heartbeat.
 
 ## Default execution model
 
-Use this happy path unless the task itself requires more rigor:
+After mandatory admission and any required one-time orientation, use the host-native Codex-like loop:
 
-`execute <-> inspect/test/repair -> optional one review -> final acceptance -> done`
+`inspect -> act -> observe/test -> repair -> optional one review -> final semantic acceptance -> completion`
 
-Do not create checker A/B chains, repeated fresh-PASS ceremonies, criterion-by-criterion evidence gates, or a separate outer semantic audit by default. A strong model should choose its own execution trajectory and rerun only checks plausibly affected by a repair.
+Ordinary shell/file/edit/test operations go directly through host tools. Do not wrap them in lifecycle commands, record every step, or call `next` between actions. The lifecycle stays active without being polled. A strong model should choose its own execution trajectory and rerun only checks plausibly affected by a repair.
 
 ### Scope contract
 
-The user owns **what** may change; the model owns **how** to accomplish that change. The effective user request plus later user corrections define task scope. A plan, working objective, architecture preference, discovered cleanup, failing unrelated test, reviewer suggestion, or model judgment may guide execution but never expand that scope.
+The user owns **what** may change; the model owns **how**. The effective request plus later steers define scope. Plans, reviews, architecture preferences, discovered cleanup, failing unrelated tests, or model judgment may guide execution but never expand it. In an existing system, make the smallest coherent change that satisfies the request and preserve unrelated user work.
 
-In an existing system, make the smallest coherent change that satisfies the request. Do not redesign, refactor, rename, clean up, or otherwise improve adjacent behavior unless it is directly required to deliver the requested result. If a potentially useful change falls outside that boundary, leave it unchanged and mention it separately when relevant.
+### Final semantic acceptance
 
-Before keeping any substantive change, be able to justify it directly from the effective user request or from a dependency that is necessary for that requested change to work. If that justification is missing, do not make or keep the change.
+Before finishing:
 
-### Final acceptance
-
-Before finishing, do one semantic review against the actual current state:
-
-1. Re-read the user's effective request, including later corrections.
-2. Inspect the final artifact/diff/state that matters.
-3. Check that every substantive change is directly justified by the request or a necessary dependency; remove unrelated or merely beneficial changes.
-4. Check the final change against the orientation snapshot and applicable repository instructions; preserve pre-existing user work and unrelated hunks.
-5. Run the minimum relevant validation that has not already been run on the current state.
+1. Re-read the exact request plus later steers.
+2. Inspect the actual final artifact/diff/state that matters.
+3. Remove unrelated or merely beneficial changes.
+4. Check applicable repository instructions and preserve pre-existing user work.
+5. Run the smallest relevant validation not already current for the changed behavior.
 6. If a material requirement remains unsatisfied, continue working.
-7. Otherwise finish and report the important evidence and any real limitation.
+7. Otherwise run `completion` once and finish if no machine blocker remains.
 
-The runtime `completion` command checks deterministic blockers only. It does not certify semantic correctness.
+Passing tests or a clear lifecycle status never substitutes for this semantic acceptance.
 
 ## Continuation and steering
 
-Treat `continue`, `resume`, `继续`, and equivalent follow-ups as continuation of the active lifecycle, not as a new objective. Re-entry is runtime-owned and must happen before any bootstrap. If the exact lifecycle id is still known, either direct form is valid:
+A continuation never creates a new lifecycle. If the task is still active in the current model context, keep using the known `task_id`; no lifecycle heartbeat is required.
+
+`next` is a cheap **state-only** capsule for the already-known lifecycle. It does not reconcile the repository, rediscover instructions, hash workspace content, or tell the model to finish:
 
 ```bash
-python3 scripts/codex_loop.py resume --task-id TASK
 python3 scripts/codex_loop.py next --task-id TASK
 ```
 
-If the host/model lost the id after a usage-limit stop, reconnect, or similar interruption, resolve the existing lifecycle instead of creating one on the same lifecycle execution surface that admitted it:
+Use `resume` only for real re-entry after context loss, reconnect, cross-turn identity recovery, or other interruption. `resume` re-observes the bound workspace and scoped instructions before work continues:
 
 ```bash
+python3 scripts/codex_loop.py resume --task-id TASK
 python3 scripts/codex_loop.py resume --cwd REPO
-# If the workspace identity is also unavailable:
 python3 scripts/codex_loop.py resume --last
 ```
 
-For a Local lifecycle, the commands above mean `python3 ~/.codex-loop/runtime-src/scripts/codex_loop.py ...` through RDC on the local host; do not run host-side `resume` first. `resume` resolves an already-active lifecycle and returns the same continuation capsule as `next`; it never bootstraps a replacement lifecycle. Prefer workspace resolution when the canonical workspace is known; `--last` is the conversation/runtime re-entry path when only the durable lifecycle state remains. Use the returned request, plan, completion blockers, current workspace observations, and next action as the starting point. If it reports `authority_reload_required=true`, reload the complete user authority before continuing:
+For a Local lifecycle, all lifecycle commands continue through RDC on the same Mac runtime. Never resume or bootstrap a second host-side lifecycle. If the returned authority is truncated, fetch the complete request/steers with `authority` before acting. Re-observe only reality that may have gone stale; do not redo completed work because a plan or historical receipt exists.
 
-```bash
-python3 scripts/codex_loop.py authority --task-id TASK
-```
-
-Then re-observe current repository/tool reality and continue from the smallest unfinished useful action. Do not repeat completed work merely because the user said `continue`.
-
-For every later task-relevant user message that changes or constrains the objective, record that exact correction before acting. Do not decide that a scope-changing user instruction is too small to retain:
+Every later task-relevant user correction is recorded exactly before acting:
 
 ```bash
 python3 scripts/codex_loop.py steer --task-id TASK --text 'exact new user instruction'
 ```
 
-A pure continuation request adds no new scope and does not need a steer record.
+A pure `continue`/`resume` adds no new authority and needs no steer record.
 
 ## Thin lifecycle state
 
-Lifecycle state always exists once the Skill is selected. Keep it minimal: request anchor, ordered steers, lifecycle status, and only the machine state that the task actually uses. A model-written objective and acceptance text are working aids, not a second specification.
+The always-on state is intentionally small: exact request anchor, ordered steers, lifecycle identity/status, optional three-state plan, and only machine state needed by capabilities the task actually uses. Ordinary model-facing continuation context contains request authority, the execution contract, minimal workspace identity, active blockers, and optional plan. Internal telemetry, hashes, validation history, changed-path inventories, release receipts, and other diagnostics stay runtime-side unless explicitly pulled for debugging or a capability needs them.
 
 ### Codex-style plan
 
-For genuinely multi-step work, keep only a short plan with Codex's three statuses:
-
-- `pending`
-- `in_progress`
-- `completed`
-
-At most one step may be `in_progress`. Update several statuses in one call rather than recording lifecycle transitions after every action.
+A plan is optional working memory, not authority and not a completion gate. When useful, it uses only `pending | in_progress | completed`, with at most one `in_progress` item. Do not create a plan for a short task and do not update it after every action. An unfinished/stale plan never blocks completion when the actual user request is already satisfied.
 
 ```bash
 python3 scripts/codex_loop.py plan --task-id TASK --plan-json '[
@@ -139,88 +130,54 @@ python3 scripts/codex_loop.py plan --task-id TASK --plan-json '[
 ]'
 ```
 
-Use `next` as the lightweight continuation capsule when the exact `task_id` is already known. Use `resume` when lifecycle identity itself must be resolved first. Both expose the request, plan, acceptance text, changed paths, validation state, deterministic finish blockers, and the smallest useful next action.
-
-```bash
-python3 scripts/codex_loop.py next --task-id TASK
-```
-
-On resume, inspect current repository/tool state before acting. Do not redo a completed step unless current evidence shows it is stale.
-
-Steers are immediately authoritative. Do not require a separate steer acknowledgement or re-ack them after every workspace mutation.
-
 ## Validation
 
-Run tests/build/lint/typecheck through the normal host-visible execution path when they are relevant. Start with the smallest check that exercises the changed behavior; broaden only when useful.
+Run tests/build/lint/typecheck directly through normal host tools. Start with the smallest check that demonstrates the changed behavior; broaden only when it adds useful confidence. After a repair, rerun only plausibly affected checks.
 
-Lifecycle `completion` does not require a recorded validation by default. Add `--require-validation` at lifecycle creation only when a current passing check must be a deterministic finish condition (publication paths impose their own validation requirement).
-
-`validate` may return a host-visible execution request. After the host runs the command, record the observed result directly; there is no plan-id handshake.
-
-```bash
-python3 scripts/codex_loop.py validate --task-id TASK --cwd REPO -- pytest tests/test_target.py
-python3 scripts/codex_loop.py validation-record --task-id TASK --cwd REPO \
-  --command-json '["pytest","tests/test_target.py"]' \
-  --exit-code 0 --evidence 'targeted test passed'
-```
-
-A repair invalidates confidence only where it can matter. Rerun affected validation; do not mechanically rerun every prior checker. Existing repository tests are the default regression mechanism.
+Lifecycle validation receipts are optional durability metadata. Use them only when the task explicitly requires a durable validation finish condition or a publication/release/persistence path needs one. Ordinary coding does not require a `validate -> execute -> validation-record` ceremony.
 
 ## Review policy
 
-Use no separate review for trivial or well-covered changes when direct inspection plus tests is sufficient.
-
-Use one Codex-style review for large, unfamiliar, weakly tested, cross-module, or materially risky changes. Read `references/codex-review.md`, review the actual diff/change against the base/commit/current changes, and return only discrete actionable findings that the author would really fix. Ignore nits and speculative breakage. If there are no substantive findings, stop; do not create a second reviewer just to obtain another PASS.
-
-After a real finding is repaired, rerun only affected tests/checks. Escalate to independent review or broader regression only when the repair/risk justifies it.
+Trivial or well-covered changes need no separate reviewer. Large, unfamiliar, weakly tested, cross-module, or materially risky changes may receive one Codex-style review over the actual change. Report only discrete actionable findings the author would really fix; if none qualify, return no findings and stop. Repair real findings and rerun only affected checks.
 
 ## Deterministic completion blockers
 
-Before finishing any Codex Loop objective, run `completion --task-id TASK` after the semantic final acceptance review. `completion` may block/continue for concrete machine-observable conditions such as:
+After semantic acceptance, call `completion --task-id TASK` once. It checks machine-observable safety/side-effect conditions only, such as:
 
-- unfinished plan steps when a plan exists;
-- missing current validation when validation was explicitly required for the lifecycle;
-- unresolved task-owned processes;
-- unresolved consequential external actions;
-- protected pre-existing user work modified unexpectedly;
-- read-only task profiles that observed mutation;
-- canonical workspace binding mismatch.
+- explicitly required durable validation is missing;
+- consequential external actions remain unresolved;
+- task-owned processes still require cleanup/reconciliation;
+- protected pre-existing user work was unexpectedly modified when durable protection tracking is active;
+- a read-only task profile observed mutation;
+- the bound repository/workspace identity no longer matches.
 
-Do not use `completion` to repeat the model's semantic acceptance review.
+An unfinished plan is not a blocker. `PASS` means only `machine_blockers_clear`; it is not a semantic correctness verdict and must not generate a model-facing “finish now” instruction.
+
+## Heavy reconciliation is lazy
+
+Full repository content fingerprints, ignored-file watches, complete baselines, generation-based validation freshness, release lineage, and cross-chat persistence remain available for tasks that genuinely need durable reconstruction or high-risk publication. They are not part of the ordinary active coding loop. Safety-critical non-idempotent external actions keep deterministic reconciliation at their action boundary.
 
 ## Checkpoints and persistence
 
-Use ordinary host conversation continuity first. Use `checkpoint` only before a genuinely long/noisy transition or when durable re-entry matters. Keep checkpoints small: request, plan, key findings, next action, and current machine-observable state.
-
-Cross-conversation persistence remains opt-in. Read `references/persistence.md` and `references/persistence-resume.md` only when the user explicitly needs the objective/workspace to survive conversation loss.
+Use ordinary host conversation continuity first. Checkpoint only before a genuinely long/noisy transition or when durable re-entry matters. Cross-conversation persistence is opt-in; its canonical authority is still request anchor + steers, not a model-written objective/acceptance restatement.
 
 ## Repository and host routing
 
-Routing is one of the few places where deterministic governance is worth keeping because it controls real side effects.
+Routing is one of the few deterministic boundaries worth keeping because it controls real side effects. Before repository mutation, Git publication, local computer use, Skill deployment, or Web/Local transfer, resolve the intended host path. Load only the route-specific reference needed for the action; do not force ordinary reasoning/edit/test steps through routing state.
 
-Before repository/filesystem mutation, Git publication, local computer use, Skill deployment, or Web/Local transfer, resolve the intended host path. In ChatGPT Web, Web is the default workspace until the user explicitly selects Local. Local selection does not itself grant source mutation or computer use.
+Detailed references:
 
-For detailed routes, load only the relevant reference:
-
-- repository reuse/acquisition: `references/repository-continuity.md`, then `references/source-acquisition.md` only if cold acquisition is required;
+- repository reuse/acquisition: `references/repository-continuity.md`, then `references/source-acquisition.md` only for cold acquisition;
 - Web/Local routing: `references/interaction-routing.md`;
-- publication: `references/publication-router.md`, then the selected `references/web-mode-publish.md` or `references/release-lineage.md`;
-- Web -> local transfer: `references/web-to-local-handoff.md`;
+- publication: `references/publication-router.md`, then the selected publication reference;
+- Web -> Local transfer: `references/web-to-local-handoff.md`;
 - workspace grants: `references/workspace-registry.md`;
-- local execution/computer boundary: `references/remote-desktop-boundary.md`;
-- Skill packaging/deployment: `references/skill-deployment.md` and `references/deployment-provenance.md`.
-
-Keep routing checks at the action boundary. Do not force unrelated reasoning/edit/test steps through routing state.
+- local execution boundary: `references/remote-desktop-boundary.md`;
+- Skill deployment: `references/skill-deployment.md` and `references/deployment-provenance.md`.
 
 ## External actions and safety
 
-For consequential non-idempotent external actions, keep `planned -> dispatched -> terminal_success|terminal_failure|outcome_unknown` reconciliation. Never blindly retry `outcome_unknown`; inspect external reality first.
-
-For every destructive Google Drive cleanup, read `references/drive-deletion.md` before dispatch. The calling workflow decides whether the exact object is delete-eligible; the Drive adapter only normalizes connector dispatch for that same exact ID and verifies the result.
-
-Sandboxing, approvals, connector authentication, and actual tool dispatch remain host-owned. Put governance effort at these side-effect boundaries rather than constraining model reasoning.
-
-For interactive/task-owned processes, use bounded timeouts, keep processes observable/terminable, and clean them up before completion. Read `references/execution-supervision.md` only when process lifecycle is relevant.
+For consequential non-idempotent external actions, keep `planned -> dispatched -> terminal_success|terminal_failure|outcome_unknown` reconciliation. Never blindly retry `outcome_unknown`; inspect external reality first. Sandboxing, approvals, connector authentication, and actual tool dispatch remain host-owned. Interactive task-owned processes remain observable/terminable and are cleaned up before completion.
 
 ## Optional capabilities
 

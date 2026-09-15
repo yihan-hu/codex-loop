@@ -103,7 +103,7 @@
       ]
     },
     {
-      "divergence": "Uses filesystem/Git reconciliation plus local mutation journal instead of Codex patch delta objects.",
+      "divergence": "Uses cheap repository identity/status in the ordinary loop; full filesystem/Git reconciliation plus the local mutation journal is lazy durability/high-risk state rather than per-turn agent context.",
       "local": "scripts/codex_loop_runtime/change_tracker.py",
       "mode": "HYBRID",
       "scope": "local_journal_plus_workspace_reconciliation",
@@ -118,7 +118,7 @@
       ]
     },
     {
-      "divergence": "SQLite task-local subset only: acceptance evidence, generations, validation CAS/disposition, steers, process/external terminal outcomes, checkpoints and completion bookkeeping; conversation/thread persistence remains host-owned.",
+      "divergence": "SQLite task-local subset only: exact request authority, steers, optional plan, optional durable validation state, process/external terminal outcomes, checkpoints and completion bookkeeping; conversation/thread persistence remains host-owned.",
       "local": "scripts/codex_loop_runtime/state.py",
       "mode": "LOCAL_RUNTIME_PORT",
       "scope": "portable_subset_only",

@@ -90,6 +90,12 @@ def main() -> None:
         assert orient["instructions"]["complete"] is True
         assert "sample.txt" in orient["preexisting_work"]["protected_paths"]
         assert orient["safe_to_mutate"] is True
+        # Ordinary orientation hashes only pre-existing dirty/protected files, so user work
+        # stays protected without a repository-wide baseline.
+        (repo / "sample.txt").write_text("agent clobber\n", encoding="utf-8")
+        assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "BLOCKED"
+        (repo / "sample.txt").write_text("user work\n", encoding="utf-8")
+        assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "PASS"
         instructions = run("instructions", "--task-id", task_id, "--cwd", str(nested))
         assert [item["contents"] for item in instructions["entries"]] == [
             "root instruction\n", "nested instruction\n"
@@ -139,6 +145,13 @@ def main() -> None:
         assert next_view["task"]["task_id"] == task_id
         assert next_view["plan"][0]["status"] == "completed"
         assert next_view["request"]["steers"] == ["Keep the file newline-terminated."]
+        assert next_view["machine"]["blockers_clear"] is True
+        assert "objective" not in next_view["task"]
+        assert "acceptance" not in next_view
+        assert "next_actions" not in next_view
+        assert all("finish" not in line.lower() for line in next_view["execution_contract"])
+        # A Codex-style plan is working memory, not a deterministic completion gate.
+        assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "PASS"
         assert run("authority", "--task-id", task_id)["steers"] == ["Keep the file newline-terminated."]
         resumed_without_id = run("resume", "--last")
         assert resumed_without_id["task"]["task_id"] == task_id
@@ -181,7 +194,7 @@ def main() -> None:
 
         rebound = run("orient", "--task-id", task_id, "--cwd", str(repo), "--rebind-verified")
         assert rebound["rebound"] is True
-        assert run("next", "--task-id", task_id)["workspace_status"]["recovery_required"] is False
+        assert run("next", "--task-id", task_id)["workspace"]["recovery_required"] is False
 
     print("codex-loop smoke: PASS")
 

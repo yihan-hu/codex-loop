@@ -8,6 +8,7 @@ from typing import Any
 from .change_tracker import changes, sync_generation
 from .release_lineage import workspace_binding_status
 from .state import READ_ONLY_PROFILES, StateStore
+from .workspace import git_state, hash_workspace_path, workspace_identity_status
 
 
 class CompletionStatus(str, Enum):
@@ -52,9 +53,6 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
         blockers.append("task request anchor is missing")
 
     plan = store.plan()
-    unfinished = [item for item in plan if item["status"] != "completed"]
-    if unfinished:
-        reasons.append(f"plan has {len(unfinished)} unfinished step(s)")
 
     validation_state = store.validation_state_for_generation(generation)
     warnings.extend(str(code) for code in validation_state.get("warning_codes", []) if str(code))
@@ -89,23 +87,57 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
         reasons.append(f"{unresolved_process_failures} managed process failure(s) are unresolved")
 
     if binding is not None:
-        binding_status = workspace_binding_status(root, binding)
+        binding_status = workspace_identity_status(root, binding)
         if not binding_status.get("matches"):
             blockers.append("canonical workspace binding no longer matches the current Git worktree")
-        change_state = changes(root, store)
-        if change_state.get("unexpected_protected_changes"):
-            blockers.append("protected pre-existing user changes were modified outside the runtime journal")
         profile = str(store.get_meta("profile", "regular"))
-        changed_any = bool(
-            change_state.get("added") or change_state.get("modified")
-            or change_state.get("deleted") or change_state.get("renamed")
-        )
+        baseline_enabled = bool(store.get_meta("baseline_enabled", False))
+        if baseline_enabled:
+            change_state = changes(root, store)
+            if change_state.get("unexpected_protected_changes"):
+                blockers.append("protected pre-existing user changes were modified outside the runtime journal")
+            changed_any = bool(
+                change_state.get("added") or change_state.get("modified")
+                or change_state.get("deleted") or change_state.get("renamed")
+            )
+            if change_state.get("git", {}).get("probe_degraded"):
+                warnings.append("Git observation is degraded")
+        else:
+            protected_hashes = store.get_meta("protected_path_hashes", {}) or {}
+            changed_protected = []
+            for rel, before in protected_hashes.items():
+                try:
+                    now = hash_workspace_path(root, root / str(rel))[1]
+                except (OSError, PermissionError, RuntimeError, ValueError):
+                    now = None
+                if now != before:
+                    changed_protected.append(str(rel))
+            if changed_protected:
+                blockers.append("protected pre-existing user changes were modified")
+            changed_any = False
+            git_now = None
+            if profile in READ_ONLY_PROFILES or profile == "command_only":
+                git_now = git_state(root, include_content_hashes=False)
+                git_before = store.get_meta("orientation_git", {}) or {}
+                changed_any = (
+                    git_now.get("head") != git_before.get("head")
+                    or git_now.get("branch") != git_before.get("branch")
+                    or git_now.get("status") != git_before.get("status")
+                )
+                if git_now.get("probe_degraded"):
+                    warnings.append("Git observation is degraded")
+            change_state = {
+                "root": str(root), "generation": generation, "tracking_active": False,
+                "added": [], "modified": [], "deleted": [], "renamed": [],
+                "protected_paths": sorted(protected_hashes),
+                "agent_owned_paths": [], "unexpected_protected_changes": changed_protected,
+                "ignored_watch": store.get_meta("ignored_watch", {"watched_paths": [], "opaque_paths": []}),
+                "git": git_now or {"is_git": bool(binding.get("is_git"))},
+            }
         if profile in READ_ONLY_PROFILES and changed_any:
             blockers.append(f"read-only task profile {profile} observed workspace changes")
         if profile == "command_only" and changed_any:
             blockers.append("command_only profile observed workspace changes")
-        if change_state.get("git", {}).get("probe_degraded"):
-            warnings.append("Git observation is degraded")
     else:
         binding_status = {"bound": False, "matches": True, "reason": "lifecycle has no workspace binding"}
         change_state = {

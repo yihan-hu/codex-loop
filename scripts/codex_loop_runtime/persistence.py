@@ -12,7 +12,7 @@ from .change_tracker import capture_baseline
 from .release_lineage import capture_workspace_binding
 from .state import MAX_REQUEST_AUTHORITY_CHARS, StateStore, create_store, open_store, scrub_persisted_text, set_active_task, validate_task_id
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 BACKENDS = {"off", "google_drive"}
 DEFAULT_TTL_DAYS = {"active": 30, "completed": 7, "cancelled": 7, "abandoned": 14}
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -117,13 +117,11 @@ def build_state_manifest(
             "task_id": store.task_id,
             "status": status,
             "request_anchor": scrub_persisted_text(store.request_anchor(), limit=MAX_REQUEST_AUTHORITY_CHARS) or "",
-            "objective": scrub_persisted_text(str(store.get_meta("objective", "")), limit=8192) or "",
             "profile": str(store.get_meta("profile", "regular")),
             "requires_validation": bool(store.get_meta("requires_validation", False)),
             "requires_clean_process_exit": bool(store.get_meta("requires_clean_process_exit", False)),
         },
         "plan": store.plan(),
-        "acceptance": [scrub_persisted_text(str(x.get("text", "")), limit=4096) or "" for x in store.criteria()],
         "steers": [scrub_persisted_text(str(x.get("text", "")), limit=MAX_REQUEST_AUTHORITY_CHARS) or "" for x in store.request_steers()],
         "external_actions": external_actions,
         "resume": {
@@ -169,7 +167,7 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("unsupported persistence schema_version")
     if manifest.get("kind") != "codex_loop_resume":
         raise ValueError("unsupported persistence manifest kind")
-    required = {"schema_version", "kind", "created_at", "expires_at", "persistence", "task", "plan", "acceptance", "steers", "external_actions", "resume", "workspace", "historical", "privacy"}
+    required = {"schema_version", "kind", "created_at", "expires_at", "persistence", "task", "plan", "steers", "external_actions", "resume", "workspace", "historical", "privacy"}
     extra = set(manifest) - required
     missing = required - set(manifest)
     if extra or missing:
@@ -184,12 +182,12 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if policy.get("backend") not in BACKENDS - {"off"} or policy.get("credentials_owner") != "host":
         raise ValueError("persistence backend must be enabled and host-owned")
     task = result["task"]
-    if not str(task.get("request_anchor") or "").strip() or not str(task.get("objective") or "").strip():
-        raise ValueError("persistence task requires request_anchor and objective")
+    if not str(task.get("request_anchor") or "").strip():
+        raise ValueError("persistence task requires request_anchor")
     if not isinstance(task.get("requires_validation"), bool) or not isinstance(task.get("requires_clean_process_exit"), bool):
         raise ValueError("persistence task validation flags must be boolean")
-    if not isinstance(result["plan"], list) or not isinstance(result["acceptance"], list) or not isinstance(result["steers"], list):
-        raise ValueError("plan, acceptance, and steers must be lists")
+    if not isinstance(result["plan"], list) or not isinstance(result["steers"], list):
+        raise ValueError("plan and steers must be lists")
     in_progress = 0
     for item in result["plan"]:
         if not isinstance(item, dict) or set(item) != {"step", "status"}:
@@ -199,8 +197,8 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         in_progress += item["status"] == "in_progress"
     if in_progress > 1:
         raise ValueError("plan may contain at most one in_progress step")
-    if any(not isinstance(x, str) or not x.strip() for x in result["acceptance"] + result["steers"]):
-        raise ValueError("acceptance and steer text must be non-empty strings")
+    if any(not isinstance(x, str) or not x.strip() for x in result["steers"]):
+        raise ValueError("steer text must be non-empty strings")
     if not isinstance(result["external_actions"], list):
         raise ValueError("external_actions must be a list")
     for item in result["external_actions"]:
@@ -349,8 +347,7 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
     baseline_files = 0
     try:
         store.configure_task(
-            task_id, str(task["objective"]), list(manifest["acceptance"]),
-            request_anchor=str(task["request_anchor"]), profile=str(task.get("profile") or "regular"),
+            task_id, request_anchor=str(task["request_anchor"]), profile=str(task.get("profile") or "regular"),
             requires_validation=bool(task.get("requires_validation", False)),
             requires_clean_process_exit=bool(task.get("requires_clean_process_exit", False)),
         )

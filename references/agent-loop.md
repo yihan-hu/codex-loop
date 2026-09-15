@@ -2,30 +2,34 @@
 
 Use the upstream Codex shape as the default:
 
-`ORIENT -> ACT <-> OBSERVE/TEST/REPAIR -> OPTIONAL REVIEW -> FINAL ACCEPTANCE -> DONE`
+`ADMIT -> ORIENT (if needed) -> ACT <-> OBSERVE/TEST/REPAIR -> OPTIONAL REVIEW -> FINAL ACCEPTANCE -> COMPLETION -> DONE`
 
-Do not turn these labels into mandatory runtime states. They describe how the model should work, not a workflow engine.
+Only admission is mandatory as a lifecycle action. The other labels describe model behavior, not a workflow state machine.
+
+## Admit
+
+Create or resume exactly one lifecycle before substantive work. Retain the exact request plus later steers; do not generate a second model-written objective/acceptance specification for the same task.
 
 ## Orient
 
-Preserve the initial user request plus later user corrections as authority; do not replace them with a broader working objective. Every selected invocation already has one lifecycle and retained request authority. For repository/filesystem work, run `orient --task-id TASK --cwd REPO` before the first mutation so the model sees current root-to-cwd instructions and pre-existing dirty/protected work. Before first touching a deeper instruction scope, run `instructions --task-id TASK --cwd PATH`. If instruction discovery is incomplete or the workspace probe is degraded, do not mutate until trustworthy complete state is available. Keep the same lifecycle and request/steers throughout; never create a second authority. Use a short three-state plan only when it helps coordination or resume.
+For repository/filesystem work, run one cheap `orient` before first mutation. Load current repository identity/status, root-to-cwd instructions, and pre-existing user work. Load deeper instruction scope only before first touching it. Do not establish a full repository content baseline for ordinary coding.
 
 ## Act and observe
 
-Take the smallest coherent useful action, inspect the result, and continue. Prefer actual repository/tool evidence over summaries. Do not fix unrelated issues merely because they are visible.
+Work directly through normal host tools. Take the smallest coherent useful action, inspect its real result, repair resolvable failures, and continue. Do not call lifecycle `next` as a heartbeat or wrap ordinary edits/tests in lifecycle bookkeeping.
 
 ## Verify
 
-Run the smallest check that demonstrates the changed/requested behavior. Broaden only when it adds useful regression confidence. After a repair, rerun the checks plausibly affected by that repair; existing repository tests are the default regression mechanism.
+Run the smallest check that demonstrates the requested behavior. Broaden only when it adds useful regression confidence. After a repair, rerun checks plausibly affected by that repair. Passing checks do not imply the user-requested end state is satisfied.
 
 ## Review
 
-Trivial/well-covered changes need no separate reviewer. Large, unfamiliar, weakly tested, cross-module, or high-risk changes may get one Codex-style semantic review over the actual diff/change. Report only discrete actionable findings. If there are no substantive findings, stop rather than asking for another PASS.
+Use no separate reviewer for trivial/well-covered changes. Large, unfamiliar, weakly tested, cross-module, or high-risk changes may get one Codex-style review over the actual change. Report only discrete actionable findings the author would really fix; no substantive finding means stop reviewing.
 
-## Resume
+## Continue vs resume
 
-Resume the same lifecycle from its retained request/steers, short plan, checkpoint notes, and current repository/tool state; never re-bootstrap merely because the user says continue/resume. Completed plan steps are continuity hints, not proof that current reality is unchanged. Re-observe anything that can have gone stale.
+While the same model context still owns the task, continue directly with the known `task_id`; no lifecycle heartbeat is required. `next` is only a cheap state read. `resume` is for real re-entry after context/identity loss and re-observes current workspace/instructions before work continues.
 
 ## Final acceptance
 
-Before finishing, re-read the effective request, inspect the final state, and compare the change with the orientation snapshot and applicable repository instructions. Preserve pre-existing user work and remove any change that is merely beneficial rather than required. If a material requirement remains unsatisfied, continue. Otherwise finish. The deterministic `completion` command exists only to catch machine-observable blockers such as unfinished plan steps, missing required validation, unresolved external/process state, protected-work violations, or workspace mismatch.
+Before finishing, re-read the exact request plus steers, inspect the actual final artifact/diff/state, preserve pre-existing work, and remove unrelated changes. If a material requirement remains unsatisfied, continue. When the actual end state is true, run one deterministic `completion` check for real machine blockers. An unfinished optional plan is not a blocker.

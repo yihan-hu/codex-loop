@@ -57,7 +57,7 @@ def _map_current(items: list[FileSnapshot]) -> dict[str, FileSnapshot]:
 def changes(root: Path, store: StateStore) -> dict[str, Any]:
     root = root.resolve()
     if not bool(store.get_meta("baseline_enabled", False)):
-        git_now = git_state(root)
+        git_now = git_state(root, include_content_hashes=False)
         return {
             "root": str(root),
             "generation": store.generation(),

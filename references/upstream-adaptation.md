@@ -1,51 +1,49 @@
 # Upstream Codex adaptation
 
-Codex Loop now follows Codex primarily by **removing orchestration**, not by cloning the Codex runtime. The ChatGPT host remains authoritative for model sampling, tools, sandboxing, approvals, and conversation context.
+Codex Loop follows Codex primarily by **removing orchestration**, not by cloning the Codex runtime. The ChatGPT host remains authoritative for model sampling, ordinary tools, sandboxing, approvals, and conversation context.
 
-## Execution authority context
+## Execution authority and retained context
 
-Public Codex keeps user authorization, project instructions, and workspace state in the agent/harness context rather than making them conditional on a plan or review workflow. Codex Loop ports the same separation without recreating the full Codex session runtime:
+Public Codex keeps host-owned retained context independent of the replaceable model window and tracks reference/world-state baselines so ordinary turns can emit changes rather than rebuilding a second task specification. Codex Loop ports that invariant in a smaller form:
 
-- the host conversation keeps the initial user request plus later user corrections authoritative; model-written objectives never replace them;
-- lifecycle-bound `orient` exposes the retained request authority together with applicable repository instructions and pre-existing Git work before mutation;
-- lifecycle-bound `instructions` reloads a deeper repository-instruction scope before first touch;
-- lifecycle creation is mandatory on selection; plans, heavy workspace baselines, checkpoints, and cross-chat persistence remain optional and reuse the same authority.
+- exact request + later steers are durable authority;
+- no task-level model-written objective/acceptance restatement is created;
+- normal model-facing continuation is a thin authority/blocker capsule rather than a telemetry dashboard;
+- rich runtime state remains pullable for debugging or specialized workflows without being pushed into every model turn;
+- real re-entry re-observes current workspace reality instead of trusting historical validation or summaries.
 
-Relevant upstream surfaces: `codex-rs/core/src/context_manager/history.rs`, `codex-rs/core/src/context_manager/history_user_authorization.rs`, `codex-rs/core/src/agents_md.rs`, and the base coding instructions covering dirty work and surgical precision.
+Relevant upstream surfaces: `codex-rs/core/src/context_manager/history.rs`, `history_user_authorization.rs`, and session rollout reconstruction.
+
+## Project instructions
+
+Public Codex discovers project instructions from project root down to the current working directory, with more-specific scope naturally layering on top. Codex Loop mirrors the behavior through one-time `orient` plus on-demand deeper `instructions` loading. Already-loaded instruction scope is stable authority; it is not repeatedly rediscovered as a lifecycle heartbeat.
+
+Relevant upstream surface: `codex-rs/core/src/agents_md.rs`.
+
+## Native agent loop
+
+Public Codex lets the model repeatedly call ordinary tools and inspect raw tool results until the task is done. Codex Loop therefore keeps its lifecycle out of the ordinary inspect/edit/test/repair path after admission. `next` is state-only; `resume` is the re-entry boundary. Normal validation runs directly through host tools.
 
 ## Working plan
 
-Public Codex uses a very small plan model: each step is `pending`, `in_progress`, or `completed`, with at most one current `in_progress` step. Codex Loop ports that shape directly as optional working memory. It does not add semantic lifecycle states around those steps.
+Public Codex's plan surface is intentionally tiny: each item has only `step` and `pending | in_progress | completed`, with at most one active item. Codex Loop keeps the same optional working-memory shape. Plan state is not semantic authority and is not a deterministic completion gate.
 
-Relevant upstream surface: `codex-rs/core/src/tools/handlers/plan_spec.rs` and the base instructions that describe `update_plan`.
+Relevant upstream surface: `codex-rs/core/src/tools/handlers/plan_spec.rs`.
 
 ## Review
 
-Public Codex supports reviewing uncommitted changes, a base-branch diff, a commit, or custom instructions. Its review rubric favors discrete actionable bugs, rejects speculative/nit findings, and prefers zero findings when nothing meaningful should be fixed.
-
-Codex Loop uses the same behavioral rule through `references/codex-review.md`. Review stays optional and normally singular.
+Public Codex review favors discrete actionable bugs, rejects speculation/nits, and prefers zero findings when nothing meaningful should be fixed. Codex Loop uses the same policy: at most one ordinary semantic review unless a real repair/risk creates a reason to review again.
 
 Relevant upstream surfaces: `codex-rs/prompts/src/review_request.rs` and `codex-rs/prompts/templates/review/rubric.md`.
 
-## Resume and retained context
+## Workspace observation
 
-Public Codex persists rollouts and reconstructs session state on resume; its context manager keeps host-owned retained context separate from the replaceable model window. Codex Loop adopts the invariant rather than porting the Rust runtime wholesale:
+Codex Loop intentionally does **not** recreate Codex's full world-state runtime. Ordinary orientation uses cheap repository identity/status observations and pre-existing dirty paths. Full content fingerprints, ignored-file watches, generation reconciliation, durable validation receipts, and release lineage remain lazy capabilities for persistence/publication/high-risk boundaries only.
 
-- request/steers remain authority in host context at all times and become durable facts when persistence is enabled;
-- ordinary model history remains host-owned;
-- resume re-observes current workspace/external reality before continuing;
-- historical validation is not promoted to current proof.
+## Current upstream behavioral recheck
 
-Relevant upstream surfaces: `codex-rs/rollout/src/recorder.rs`, `codex-rs/core/src/session/rollout_reconstruction.rs`, and `codex-rs/core/src/context_manager/history.rs`.
-
-## Existing-code execution style
-
-Public Codex keeps scope control as an always-on model instruction rather than a workflow subsystem: existing code should be changed with surgical precision, changes should stay minimal and focused on the user's task, and unrelated bugs or cleanup should not be fixed opportunistically.
-
-Codex Loop ports that invariant directly. The effective user request defines **what** is authorized; plans, objectives, review findings, architecture preferences, and model judgment only choose **how** to satisfy it. Every substantive change must be directly justified by the request or by a dependency necessary for the requested result. This replaces the former `focus/scope-drift` machinery; it does not recreate a scope state machine.
-
-Validate the most specific changed behavior before broader checks. Let the model choose the execution path instead of encoding a fixed checker DAG.
+Behavior was rechecked against public `openai/codex` main commit `7f83d4922d7e92a36c1c1e4f61159a5815d45360` on 2026-09-15. The current adaptation specifically follows the retained-context/reference-baseline design in `history.rs`, root-to-cwd instruction discovery in `agents_md.rs`, the minimal three-state plan tool, and the actionable-only review rubric. This note is behavioral provenance; frozen copied-resource hashes remain governed separately by the source map/audit.
 
 ## Intentionally not emulated
 
-Do not recreate Codex's full session runtime, model loop, token manager, sandbox, approval engine, or tool dispatcher inside the Skill. Do not retain the former Codex Loop objective-audit, criterion-PASS, steer-ack, validation-plan, focus/scope-drift, or repeated-fresh-review protocols. Host-native equivalents and model judgment are preferred whenever they already solve the problem.
+Do not recreate Codex's full session runtime, model loop, token manager, sandbox, approval engine, tool dispatcher, Guardian system, or world-state implementation inside the Skill. Also do not reintroduce criterion-PASS, objective-audit, steer-ack, validation-plan, repeated-fresh-review, lifecycle-heartbeat, or repository-wide-fingerprint ceremonies into the default coding path.

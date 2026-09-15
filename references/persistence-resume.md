@@ -10,10 +10,9 @@ VALIDATE MANIFEST -> OBSERVE CURRENT REALITY -> RECONCILE -> RESTORE REQUEST/PLA
 
 `persistence-resume-plan` requests only facts that can become stale outside the manifest, such as workspace presence, expected Git HEAD/tree, and unresolved consequential external actions. The host supplies those observations.
 
-A v4 resume restores:
+A v5 resume restores:
 
 - request anchor and ordered steers;
-- objective and acceptance text;
 - optional three-state plan;
 - profile and validation requirement;
 - workspace lineage;
