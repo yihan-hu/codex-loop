@@ -7,7 +7,7 @@ description: "Lightweight durable objective layer for ChatGPT. Use for repositor
 
 ## Mandatory lifecycle admission
 
-Once Codex Loop is selected, entering its lifecycle is mandatory, not an optional setup step. Reading this Skill entrypoint and any instructions needed to execute it is not task execution. After selection and entrypoint loading, the first task action for a new objective must be `bootstrap`; do not inspect the target workspace, browse for task evidence, make a task plan, call task tools, mutate files, or give a substantive task answer before `bootstrap` returns a `task_id`.
+Once Codex Loop is selected, entering its lifecycle is mandatory, not an optional setup step. Reading this Skill entrypoint and any instructions needed to execute it is not task execution. After selection and entrypoint loading, the first task action for a new objective must be `bootstrap`; do not inspect the target workspace, browse for task evidence, make a task plan, call task tools, mutate files, or give a substantive task answer before `bootstrap` returns a `task_id`. Choose the lifecycle execution surface from the user's explicit development location before that bootstrap: ordinary/Web objectives bootstrap with the installed ChatGPT Skill runtime; an explicitly Local objective bootstraps through RDC on the local host so its lifecycle state is created there from the start. This location choice is routing, not task inspection.
 
 If the host cannot execute the Codex Loop runtime entrypoint, fail closed: state that the lifecycle could not be entered and do not silently continue the objective as ordinary chat/tool execution. If the same objective already has an admitted lifecycle in the current conversation, admission is already satisfied; do not bootstrap again. Use the exact `task_id` when it is still available. If a continuation arrives after the host/model lost that identity, recover it through `resume --cwd WORKSPACE` when the canonical workspace is known, otherwise `resume --last`; a continuation must enter runtime-owned resume resolution before any new bootstrap.
 
@@ -15,7 +15,7 @@ Treat Codex Loop as a thin lifecycle, durability, and routing layer around the h
 
 Do not run a second direct-vs-durable admission decision and do not defer lifecycle creation until a repository or durable feature is needed. The lifecycle itself stays lightweight; planning, workspace binding, checkpoints, persistence, managed processes, and separate review remain lazy capabilities inside it.
 
-Use `scripts/codex_loop.py` from this Skill as the stable runtime entry point. Lifecycle state and workspace-to-task pointers belong at `CODEX_LOOP_HOME/runtime` (default `~/.codex-loop/runtime`), never in the target repository. Conversation-scoped routing sessions remain temporary.
+Use `scripts/codex_loop.py` from this Skill as the stable runtime entry point on the surface that owns the lifecycle. Web/host mode uses the installed ChatGPT Skill copy. Local mode uses a Codex Loop runtime cached on the local host under `~/.codex-loop/runtime-src` and executes it through RDC; it must not use an arbitrary project checkout of Codex Loop. Lifecycle state and workspace-to-task pointers belong to that same host's `CODEX_LOOP_HOME/runtime` (default `~/.codex-loop/runtime`), never in the target repository. Conversation-scoped routing sessions remain temporary.
 
 ## Lifecycle admission
 
@@ -27,6 +27,10 @@ python3 scripts/codex_loop.py bootstrap \
 ```
 
 Keep the returned `task_id` as the lifecycle identity for the rest of the objective. Pass it explicitly to every later command that reads or mutates lifecycle state; do not let a workspace-local active-task pointer choose the lifecycle for model execution. Lifecycle creation is workspace-independent; repository/filesystem tasks bind a workspace afterward with `orient`. Creating the lifecycle must not depend on repository acquisition, a plan, a checkpoint, or cross-chat persistence.
+
+For an explicitly Local objective, perform that same bootstrap through RDC on the local host. Use the dedicated local runtime cache `~/.codex-loop/runtime-src`; if it is absent, provision it from the public canonical Codex Loop repository, and if it is present require it to be a clean runtime-owned checkout before fast-forwarding it. Then run `python3 ~/.codex-loop/runtime-src/scripts/codex_loop.py ...`. The resulting `~/.codex-loop/runtime` on the local host is authoritative for the lifecycle. A ChatGPT-host `/home/oai/.codex-loop` copy is not a fallback or mirror for that Local objective.
+
+After Local admission, every lifecycle command for that objective (`orient`, `next`, `resume`, `steer`, `plan`, `validate`, `completion`, and related state mutations) runs on the same local runtime through RDC. If the local runtime or its durable state is unavailable, fail closed instead of bootstrapping or resuming a second lifecycle on the ChatGPT host.
 
 Do not create a second lifecycle for an ordinary follow-up to the same objective. Never re-bootstrap merely because the user says `continue`, `resume`, or `继续`. A successful `bootstrap` is immediately resumable from its durable task state, even before workspace orientation.
 
@@ -89,7 +93,7 @@ python3 scripts/codex_loop.py resume --task-id TASK
 python3 scripts/codex_loop.py next --task-id TASK
 ```
 
-If the host/model lost the id after a usage-limit stop, reconnect, or similar interruption, resolve the existing lifecycle instead of creating one:
+If the host/model lost the id after a usage-limit stop, reconnect, or similar interruption, resolve the existing lifecycle instead of creating one on the same lifecycle execution surface that admitted it:
 
 ```bash
 python3 scripts/codex_loop.py resume --cwd REPO
@@ -97,7 +101,7 @@ python3 scripts/codex_loop.py resume --cwd REPO
 python3 scripts/codex_loop.py resume --last
 ```
 
-`resume` resolves an already-active lifecycle and returns the same continuation capsule as `next`; it never bootstraps a replacement lifecycle. Prefer workspace resolution when the canonical workspace is known; `--last` is the conversation/runtime re-entry path when only the durable lifecycle state remains. Use the returned request, plan, completion blockers, current workspace observations, and next action as the starting point. If it reports `authority_reload_required=true`, reload the complete user authority before continuing:
+For a Local lifecycle, the commands above mean `python3 ~/.codex-loop/runtime-src/scripts/codex_loop.py ...` through RDC on the local host; do not run host-side `resume` first. `resume` resolves an already-active lifecycle and returns the same continuation capsule as `next`; it never bootstraps a replacement lifecycle. Prefer workspace resolution when the canonical workspace is known; `--last` is the conversation/runtime re-entry path when only the durable lifecycle state remains. Use the returned request, plan, completion blockers, current workspace observations, and next action as the starting point. If it reports `authority_reload_required=true`, reload the complete user authority before continuing:
 
 ```bash
 python3 scripts/codex_loop.py authority --task-id TASK

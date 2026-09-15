@@ -26,6 +26,30 @@ On Windows:
 
 Windows support here is deliberately permissive at the routing layer and conservative at individual primitives: a small platform bug may block one operation, but it is not evidence that the user must abandon Local mode or move source through model text.
 
+## Local lifecycle authority
+
+An explicitly Local objective must create and resume its Codex Loop lifecycle on the local host, not in the transient ChatGPT host filesystem. The authoritative state root is the local host's `CODEX_LOOP_HOME/runtime`, normally `~/.codex-loop/runtime`.
+
+Use a runtime-owned source cache at `~/.codex-loop/runtime-src`. It is infrastructure, not the user's project checkout. The consumer Skill intentionally carries no maintainer-repository identity, so the host must resolve the canonical public Codex Loop source URL from the current distribution/public repository metadata (or obtain it from the user) before first Local bootstrap. Pass that externally resolved URL as `CODEX_LOOP_SOURCE_URL`; do not persist it as lifecycle authority. If the cache already exists, require it to be clean and update it only by fast-forward. On the verified macOS path:
+
+```bash
+RUNTIME="$HOME/.codex-loop/runtime-src"
+mkdir -p "$HOME/.codex-loop"
+if [ -d "$RUNTIME/.git" ]; then
+  test -z "$(git -C "$RUNTIME" status --porcelain)"
+  git -C "$RUNTIME" pull --ff-only origin main
+else
+  : "${CODEX_LOOP_SOURCE_URL:?canonical Codex Loop source URL required}"
+  git clone --depth 1 "$CODEX_LOOP_SOURCE_URL" "$RUNTIME"
+fi
+python3 "$RUNTIME/scripts/codex_loop.py" ...
+```
+
+The runtime cache is replaceable code; the sibling `~/.codex-loop/runtime` directory is durable lifecycle state and must never be deleted or reset as part of runtime-cache refresh.
+
+Do not use an arbitrary project checkout of Codex Loop as the lifecycle runtime, even when one happens to be available. Do not create a second host-side lifecycle for the same Local objective if RDC or the local runtime is temporarily unavailable; fail closed and resume when the local authority is reachable again.
+
+A bound repository may contain task-owned ephemeral scratch such as `<worktree>/.codex-loop-tmp/<task-id>/` when a local operation genuinely needs staging inside an already-authorized root. That directory is disposable and never contains lifecycle authority. Durable task state remains in `~/.codex-loop/runtime`.
 
 ## Primary Local Root and Effective Local Roots
 

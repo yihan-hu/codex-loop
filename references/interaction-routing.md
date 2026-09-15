@@ -48,7 +48,7 @@ Use `route-transition` to change an axis and `route-check` before repository, br
 - `web`: the current ChatGPT/Web workspace is authoritative.
 - `local`: one canonical Git worktree under the resolved `LOCAL_ROOT` is authoritative.
 
-Every new conversation starts with `workspace_mode=web`. Enter `local` only after explicit local repository-development intent such as "develop this from my PiWork checkout", "modify the local repository", or another unambiguous request to make the local checkout the source workspace. Once that selection is observed, update routing state immediately and treat native local tools as first-class canonical execution; the routing file is a deterministic projection of the user's selection, not a competing source of intent.
+Every new conversation starts with `workspace_mode=web` in its routing file. Enter `local` only after explicit local repository-development intent. That explicit request in the current user message may select the Local lifecycle execution surface before bootstrap. Examples include "develop this from my PiWork checkout", "modify the local repository", or another unambiguous request to make the local checkout the source workspace. Bootstrap that lifecycle on the local host first, then record the same explicit selection in routing state before any repository-affecting action. The routing file is a deterministic projection of the user's selection, not a competing source of intent.
 
 Remote Desktop Commander availability, a request to control Chrome, a request to use the Mac GUI, or a generic request to use RDC is **not** local-development intent. Those requests change only the interaction target.
 

@@ -416,11 +416,16 @@ def _cmd_resume(argv: list[str]) -> int:
         if not task_id:
             task_id = latest_active_task_id(root)
             resolution = 'workspace_bound_latest'
-    if not task_id:
+        if not task_id:
+            raise RuntimeError(
+                f'no resumable codex-loop lifecycle is bound to workspace {root}; '
+                'do not fall back to another lifecycle'
+            )
+    elif not task_id:
         task_id = latest_active_task_id()
         resolution = 'latest_active_task'
-    if not task_id:
-        raise RuntimeError('no resumable codex-loop lifecycle was found; bootstrap only if this is a genuinely new objective')
+        if not task_id:
+            raise RuntimeError('no resumable codex-loop lifecycle was found; bootstrap only if this is a genuinely new objective')
 
     working = _continuation_payload(open_store(None, task_id), args.cwd)
     working['resume_resolution'] = {

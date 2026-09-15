@@ -24,6 +24,21 @@ def run(*args: str) -> dict:
     return payload["data"]
 
 
+def run_with_home(home: Path, *args: str) -> dict:
+    env = os.environ.copy()
+    env["CODEX_LOOP_HOME"] = str(home)
+    proc = subprocess.run(
+        [sys.executable, str(CLI), *args],
+        check=True,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    payload = json.loads(proc.stdout)
+    assert payload.get("ok") is True, payload
+    return payload["data"]
+
+
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=repo, check=True, text=True, capture_output=True
@@ -84,10 +99,36 @@ def main() -> None:
         tempfile.tempdir = None
         resumed_after_temp_change = run("resume", "--last")
         assert resumed_after_temp_change["task"]["task_id"] == task_id
-        assert state_path.is_relative_to(host_home / "runtime" / "tasks")
+        assert state_path.is_relative_to(host_home.resolve() / "runtime" / "tasks")
         resumed_by_workspace = run("resume", "--cwd", str(nested))
         assert resumed_by_workspace["task"]["task_id"] == task_id
         assert resumed_by_workspace["resume_resolution"]["basis"] == "workspace_active_task"
+
+        # Local mode keeps lifecycle authority on the local host, independent of the
+        # ChatGPT host's CODEX_LOOP_HOME and across separate runtime processes.
+        local_home = base / "mac-local-home"
+        local_lifecycle = run_with_home(
+            local_home, "bootstrap", "--request-anchor", "Modify this repository in Local mode."
+        )
+        local_task_id = local_lifecycle["task_id"]
+        local_state_path = Path(local_lifecycle["state"])
+        assert local_state_path.is_relative_to(local_home.resolve() / "runtime" / "tasks")
+        run_with_home(local_home, "orient", "--task-id", local_task_id, "--cwd", str(repo))
+        local_resumed = run_with_home(local_home, "resume", "--cwd", str(repo))
+        assert local_resumed["task"]["task_id"] == local_task_id
+        assert local_resumed["resume_resolution"]["basis"] == "workspace_active_task"
+
+        unbound = base / "unbound-repo"
+        unbound.mkdir()
+        git(unbound, "init", "-q")
+        env = os.environ.copy()
+        env["CODEX_LOOP_HOME"] = str(host_home)
+        wrong_surface = subprocess.run(
+            [sys.executable, str(CLI), "resume", "--cwd", str(unbound)],
+            text=True, capture_output=True, env=env,
+        )
+        assert wrong_surface.returncode != 0
+        assert "do not fall back to another lifecycle" in (wrong_surface.stdout + wrong_surface.stderr)
 
         run(
             "plan", "--task-id", task_id, "--plan-json",

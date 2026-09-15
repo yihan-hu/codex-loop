@@ -3,13 +3,17 @@
 ```mermaid
 flowchart TD
   U[Codex Loop selected + user request] --> A[Mandatory lifecycle admission gate]
-  A -->|new objective: bootstrap first| L[Lifecycle instance + task_id]
+  A --> S{Lifecycle execution surface}
+  S -->|Web/default| HR[Installed ChatGPT Skill runtime]
+  S -->|Explicit Local| LR[Mac runtime cache via RDC<br/>~/.codex-loop/runtime-src]
+  HR -->|bootstrap / resume| L[Lifecycle instance + task_id]
+  LR -->|bootstrap / resume| L
+  HS[ChatGPT host CODEX_LOOP_HOME/runtime] --> HR
+  LS[Mac ~/.codex-loop/runtime] --> LR
   A -->|same objective + known task_id| L
-  A -->|continuation + identity lost| RR[Runtime resume resolver]
-  HS[Host-private durable lifecycle store<br/>CODEX_LOOP_HOME/runtime] --> RR
-  HS --> L
-  RR -->|workspace active pointer or latest active lifecycle| L
-  A -->|runtime entry unavailable| Z[Fail closed<br/>no task execution outside lifecycle]
+  A -->|continuation + identity lost| RR[Resume on the same lifecycle surface]
+  RR --> L
+  A -->|selected lifecycle surface unavailable| Z[Fail closed<br/>no fallback lifecycle]
   L --> B[Scope contract<br/>user owns WHAT / model owns HOW]
   L --> RQ[Retained request + later steers]
   L -. repository/filesystem task .-> W[Bind / observe workspace]
@@ -43,11 +47,11 @@ flowchart TD
 ## Boundaries
 
 - The effective user request plus later user corrections is the scope authority. Plans, objectives, reviews, architecture preferences, discovered cleanup, and model judgment may choose execution but never authorize additional work.
-- Skill selection requires lifecycle admission before any substantive task action. For a new objective, `bootstrap` is the first task action and returns the `task_id`; an already-admitted continuation reuses that lifecycle. If the host/model still has the exact id it is used directly; otherwise runtime-owned `resume` resolves the existing active lifecycle from the canonical workspace pointer or, as the final same-runtime re-entry path, the most recently active durable task. Skill-entrypoint loading itself is not task execution.
+- Skill selection requires lifecycle admission before any substantive task action. For a new objective, `bootstrap` is the first task action and returns the `task_id`; before running it, use only the user's explicit development-location choice to select the lifecycle execution surface. Web/default objectives use the installed ChatGPT runtime. Explicitly Local objectives bootstrap through RDC on the Mac-local runtime so lifecycle durability does not depend on the ChatGPT host filesystem. An already-admitted continuation always reuses the same lifecycle surface and task id.
 - The admission boundary fails closed. If the host cannot execute the runtime entrypoint, Codex Loop does not degrade into ordinary chat/tool execution. The current ChatGPT Skill surface cannot make this a native host dispatch interceptor, so the contract is enforced by the Skill entrypoint until such a hook exists.
 - The standard lifecycle is always active and lightweight after admission: retain request authority, observe the relevant environment, execute natively, validate where useful, perform final semantic acceptance, then run deterministic finish checks.
 - Workspace binding is lifecycle-internal and optional. Repository/filesystem work loads scoped repository instructions and pre-existing user work before mutation; deeper instruction scopes are loaded before first touch.
-- Continuation words such as `continue` / `resume` / `继续` enter resume resolution before bootstrap. They never create a replacement lifecycle or reset the request anchor. Lifecycle task databases and workspace active-task pointers live under the host-private durable `CODEX_LOOP_HOME/runtime` store, so a persistent local host can survive system-temp cleanup or process restarts without inventing a second session-index data model. Conversation-scoped routing/grant sessions remain temporary and are not promoted into durable lifecycle authority.
+- Continuation words such as `continue` / `resume` / `继续` enter resume resolution before bootstrap. They never create a replacement lifecycle or reset the request anchor. Lifecycle task databases and workspace active-task pointers live on the lifecycle's owning execution surface: Web/default uses the ChatGPT host `CODEX_LOOP_HOME/runtime`; explicit Local uses the Mac-local `~/.codex-loop/runtime`. The two stores are not mirrors or fallbacks for one another. A ChatGPT host restart must therefore resume a Local objective through RDC against the Mac store rather than searching or recreating host-local state. Conversation-scoped routing/grant sessions remain temporary and are not promoted into durable lifecycle authority.
 - The host model owns reasoning, task decomposition, ordinary inspection/edit/test/repair decisions, semantic review, and final acceptance inside the user-authorized scope.
 - Codex Loop lifecycle state is intentionally thin and mandatory. Plans, workspace baselines, checkpoints, cross-chat persistence, delegation, and process/external-action bookkeeping are added only when the objective uses them.
 - `completion` checks deterministic blockers only. It is not an outer semantic review and does not require criterion PASS records, steer acknowledgements, repeated fresh checker passes, or a requirement-by-requirement objective audit.
