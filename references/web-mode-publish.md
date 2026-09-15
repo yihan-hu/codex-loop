@@ -174,10 +174,9 @@ For a push-bound change set, perform the authorized `git add`/index update **bef
 
 After exact remote readback succeeds:
 
-1. permanently delete the exact staged Drive bundle after a fresh ID/title/parent readback;
-2. if deletion fails, refresh identity and retry at most once in this publication operation;
-3. report any residue explicitly; never broaden deletion scope or touch Workspace Cache/private persistence folders;
-4. tiny request trigger history should already be absent because the branch was lease-replaced by the audited source commit.
+1. permanently delete the exact staged Drive bundle after a fresh ID/title/parent readback, using `drive-deletion.md` for connector dispatch and verification;
+2. report any residue explicitly; never broaden deletion scope or touch Workspace Cache/private persistence folders;
+3. tiny request trigger history should already be absent because the branch was lease-replaced by the audited source commit.
 
 `ChatGPT-GitHub-Staging` is public transport, not durable persistence. The Workspace Cache retention/consumption rules in `persistence.md` do not apply here.
 

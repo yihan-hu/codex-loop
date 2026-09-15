@@ -37,7 +37,7 @@ For a non-repository file, do not require Git cleanliness, validation, change re
 3. Upload the real file with Google Drive `upload_file(file_uri=...)` into the configured binary staging boundary. Do not model-transcribe the bytes.
 4. Read back the exact Drive object and require the expected object identity, parent, and size. Use only the minimum temporary download access needed by the authorized RDC host.
 5. Through RDC, download that exact Drive object to the requested/authorized destination path. Write to a temporary sibling when practical, verify local byte size and SHA-256 against the source, then atomically publish/rename the destination.
-6. After verified local consumption, delete only the exact staging object according to the staging transport cleanup contract.
+6. After verified local consumption, delete only the exact staging object according to the staging transport cleanup contract, using `drive-deletion.md` for connector dispatch and verification.
 
 This flow needs no separate user authorization to choose Drive. Host-native permission prompts, connector connection requirements, and destination-path authorization are not bypassed. If the Drive staging bridge is unavailable or the file cannot tolerate the staging trust boundary, stop with a precise transfer blocker. Do not silently switch to model relay; model-carried transfer remains explicit-only.
 
@@ -68,7 +68,7 @@ If the planner returns `WEB_LOCAL_SYNC_REQUIREMENTS_UNMET`, satisfy only the nam
 7. On the local host require exact byte size, SHA-256, and `git bundle verify` success before considering the transfer complete.
 8. If the user only asked to save/synchronize the bytes, stop with Web still authoritative. If the user separately asks to import/update a local canonical repository, require the ordinary local workspace grant + current-task local-source-mutation authorization before changing repository refs/worktrees.
 9. If the user separately chooses to continue development locally, only then record `route-transition --workspace-mode local --selection-evidence "..."` and bind the same lifecycle to that canonical local worktree.
-10. After verified local consumption, permanently delete the exact Drive staging object. Never broaden cleanup to sibling files/folders.
+10. After verified local consumption, permanently delete the exact Drive staging object using `drive-deletion.md`. Never broaden cleanup to sibling files/folders.
 
 ## Publication fallback
 

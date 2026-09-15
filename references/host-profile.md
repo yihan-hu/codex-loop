@@ -62,4 +62,4 @@ Host Profile files, Drive IDs, workspace aliases/paths, browser preferences, cre
 
 ## Drive deletion and cache policy
 
-Host Profile schema v3 keeps `drive.cache_folder_paths` as local-only registry state in `~/.codex-loop/host.json`; it must not be included in Git, task persistence manifests, Drive profile persistence, source bundles, or cross-conversation handoffs. Temporary Drive deletion is no longer controlled by a host-profile switch: exact Codex Loop-owned sentinels/staging objects are cleaned automatically when their purpose is complete.
+Host Profile schema v3 keeps `drive.cache_folder_paths` as local-only registry state in `~/.codex-loop/host.json`; it must not be included in Git, task persistence manifests, Drive profile persistence, source bundles, or cross-conversation handoffs. Temporary Drive deletion is no longer controlled by a host-profile switch: exact Codex Loop-owned sentinels/staging objects are cleaned automatically when their purpose is complete. Dispatch and post-delete verification use the shared `drive-deletion.md` adapter; that adapter does not change cache registration, retention, or delete eligibility.

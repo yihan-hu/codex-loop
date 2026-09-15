@@ -216,6 +216,8 @@ Keep routing checks at the action boundary. Do not force unrelated reasoning/edi
 
 For consequential non-idempotent external actions, keep `planned -> dispatched -> terminal_success|terminal_failure|outcome_unknown` reconciliation. Never blindly retry `outcome_unknown`; inspect external reality first.
 
+For every destructive Google Drive cleanup, read `references/drive-deletion.md` before dispatch. The calling workflow decides whether the exact object is delete-eligible; the Drive adapter only normalizes connector dispatch for that same exact ID and verifies the result.
+
 Sandboxing, approvals, connector authentication, and actual tool dispatch remain host-owned. Put governance effort at these side-effect boundaries rather than constraining model reasoning.
 
 For interactive/task-owned processes, use bounded timeouts, keep processes observable/terminable, and clean them up before completion. Read `references/execution-supervision.md` only when process lifecycle is relevant.

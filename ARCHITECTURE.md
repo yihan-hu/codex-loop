@@ -37,7 +37,9 @@ flowchart TD
   D -->|clear| E[Done]
   D -->|real blocker| H
   H -. consequential side effect .-> G[Routing / sandbox / approval / external-action reconciliation]
-  G --> X[GitHub / Drive / Local host / deployment]
+  G --> DD[Drive deletion adapter<br/>exact-ID gate -> parser-only URL normalization -> readback]
+  DD --> XD[Google Drive delete]
+  G --> X[GitHub / other Drive actions / Local host / deployment]
   H -. only when needed .-> M[Delegation / managed processes]
   C -. restore .-> K[Continuation state inspection]
   K --> RQ
@@ -57,6 +59,6 @@ flowchart TD
 - `completion` checks deterministic blockers only. It is not an outer semantic review and does not require criterion PASS records, steer acknowledgements, repeated fresh checker passes, or a requirement-by-requirement objective audit.
 - Validation is host-visible and direct. A host-observed result can be recorded without a validation-plan handshake. Repairs trigger only affected revalidation unless broader regression confidence is justified.
 - A separate semantic review is optional and normally singular. Large/risky changes use one Codex-style review over the actual change; substantive findings are repaired and targeted checks rerun.
-- Routing, sandbox/approval, non-idempotent external-action reconciliation, protected user work, and task-owned process cleanup remain deterministic because they guard real side effects rather than reasoning quality.
+- Routing, sandbox/approval, non-idempotent external-action reconciliation, protected user work, and task-owned process cleanup remain deterministic because they guard real side effects rather than reasoning quality. Destructive Google Drive cleanup additionally uses the shared `references/drive-deletion.md` dispatch adapter: eligibility stays with the calling workflow, while the adapter permits one parser-only URL normalization retry for the same exact folder ID and then requires readback verification.
 - Persistence, delegation, managed processes, publication adapters, workspace cache, and GUI/browser routing remain lazy branches; they add no steps to the default happy path when unused.
 - ChatGPT host owns model sampling, tool dispatch, connector authentication, sandboxing/approvals, hidden context, and conversation persistence.
