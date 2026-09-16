@@ -333,6 +333,7 @@ def cmd_publish_record(args: argparse.Namespace) -> None:
     emit_ok(record_publish_outcome(
         root, store, action_id=args.action_id, state=args.state, transport=args.transport,
         evidence=args.evidence, remote_commit=args.remote_commit, remote_tree=args.remote_tree, remote_parent=args.remote_parent,
+        push_exit_code=args.push_exit_code,
     ))
 
 
@@ -654,7 +655,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("release-record"); _add_scope(p); p.add_argument("--artifact-name", required=True); p.add_argument("--artifact-sha256", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_release_record)
     p = sub.add_parser("publish-plan"); _add_scope(p); p.add_argument("--repository", required=True); p.add_argument("--branch", required=True); p.add_argument("--remote-head", required=True); p.add_argument("--remote-tree"); p.add_argument("--remote", default="origin"); p.add_argument("--release-id"); p.add_argument("--source-only", action="store_true"); p.set_defaults(func=cmd_publish_plan)
     p = sub.add_parser("publish-dispatch"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--transport", required=True, choices=["git"]); p.set_defaults(func=cmd_publish_dispatch)
-    p = sub.add_parser("publish-record"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--state", required=True, choices=["terminal_success","terminal_failure","outcome_unknown"]); p.add_argument("--transport", required=True, choices=["git"]); p.add_argument("--remote-commit"); p.add_argument("--remote-tree"); p.add_argument("--remote-parent"); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_publish_record)
+    p = sub.add_parser("publish-record"); _add_scope(p); p.add_argument("--action-id", required=True); p.add_argument("--state", required=True, choices=["terminal_success","terminal_failure","outcome_unknown"]); p.add_argument("--transport", required=True, choices=["git"]); p.add_argument("--remote-commit"); p.add_argument("--remote-tree"); p.add_argument("--remote-parent"); p.add_argument("--push-exit-code", type=int); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_publish_record)
     for name, func in [("poll",cmd_poll),("stdin",cmd_stdin),("interrupt",cmd_interrupt),("terminate",cmd_terminate)]:
         p=sub.add_parser(name); _add_scope(p); p.add_argument("handle"); p.add_argument("--timeout",type=float,default=3.0)
         if name=="stdin": p.add_argument("data")

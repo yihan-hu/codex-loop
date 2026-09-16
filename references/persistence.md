@@ -4,7 +4,7 @@ Persistence exists only to recover a long task after conversation loss. It is no
 
 ## State-only resume manifest
 
-`persistence-export --backend google_drive` writes a small private manifest containing only facts worth carrying across conversations:
+`persistence-export --backend google_drive` writes a small private manifest containing only facts worth carrying across conversations. If the host uploads that manifest to Drive, it belongs under `ChatGPT-Temporary/codex-loop/persistence`, not a top-level `codex-loop/` archive folder:
 
 - immutable request anchor;
 - ordered user steers;

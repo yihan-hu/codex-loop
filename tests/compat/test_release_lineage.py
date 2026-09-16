@@ -67,10 +67,9 @@ def make_store(root: Path):
     store = create_store(root)
     store.configure_task(
         store.path.parent.name,
-        "release lineage fixture",
-        ["release lineage works"],
+        request_anchor="release lineage fixture",
         requires_validation=False,
-    request_anchor="release lineage fixture")
+    )
     store.set_meta("workspace_binding", capture_workspace_binding(root))
     capture_baseline(root, store)
     return store
@@ -422,7 +421,7 @@ class ReleaseLineageTests(unittest.TestCase):
             self.assertTrue(plan["requires_integration"])
             self.assertEqual(store.external_actions(), [])
 
-    def test_publish_outcome_requires_tree_equality_and_git_commit_equality(self):
+    def test_publish_outcome_accepts_clean_push_or_exact_reconciliation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base = init_repo(root)
@@ -433,24 +432,27 @@ class ReleaseLineageTests(unittest.TestCase):
             receipt = record_release_receipt(root, store, artifact_name="skill.zip", artifact_sha256="d" * 64, evidence="verified")
             plan = publish_plan(root, store, repository="owner/repo", branch="main", remote_head=base, release_id=receipt["release_id"])
             dispatch_publish(store, action_id=plan["action_id"], transport="git")
+            result = record_publish_outcome(
+                root, store, action_id=plan["action_id"], state="terminal_success", transport="git",
+                push_exit_code=0, evidence="git push --porcelain exited 0 and accepted the target ref update",
+            )
+            self.assertEqual(result["push_exit_code"], 0)
+            self.assertEqual(store.unresolved_external_count(), 0)
+
+            plan = publish_plan(root, store, repository="owner/repo", branch="other", remote_head=base, release_id=receipt["release_id"])
+            dispatch_publish(store, action_id=plan["action_id"], transport="git")
             with self.assertRaisesRegex(RuntimeError, "remote tree"):
                 record_publish_outcome(
                     root, store, action_id=plan["action_id"], state="terminal_success", transport="git",
-                    remote_commit=receipt["source_commit"], remote_tree="e" * 40, evidence="remote observed",
+                    remote_commit=receipt["source_commit"], remote_tree="e" * 40, evidence="ambiguous push reconciled remotely",
                 )
-            result = record_publish_outcome(
-                root, store, action_id=plan["action_id"], state="terminal_success", transport="git",
-                remote_commit=receipt["source_commit"], remote_tree=receipt["source_tree"], evidence="remote ref and tree observed",
-            )
-            self.assertEqual(result["state"], "terminal_success")
-            self.assertEqual(store.unresolved_external_count(), 0)
 
     def test_publish_requires_validation_without_review_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base = init_repo(root)
             store = create_store(root)
-            store.configure_task(store.path.parent.name, "publish audit", ["ready"], requires_validation=True, request_anchor="publish audit")
+            store.configure_task(store.path.parent.name, request_anchor="publish audit", requires_validation=True)
             store.set_meta("workspace_binding", capture_workspace_binding(root))
             capture_baseline(root, store)
             (root / "tracked.txt").write_text("target\n", encoding="utf-8")

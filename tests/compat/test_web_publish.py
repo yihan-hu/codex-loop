@@ -9,9 +9,9 @@ class WebPublishContractTests(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text()
         deployment = (ROOT / "references" / "skill-deployment.md").read_text()
         web_publish = (ROOT / "references" / "web-mode-publish.md").read_text()
-        self.assertIn("references/web-mode-publish.md", skill)
+        self.assertIn("references/publication-router.md", skill)
         self.assertIn("Web-mode GitHub publishing", deployment)
-        self.assertIn("ChatGPT-GitHub-Staging", web_publish)
+        self.assertIn("ChatGPT-Temporary/codex-loop/github-staging", web_publish)
         self.assertIn("binary Git bundle", web_publish)
         self.assertIn("anyone: reader", web_publish)
         self.assertIn("GitHub Connector is control plane only", web_publish)
@@ -28,7 +28,7 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED", web_publish)
         self.assertIn("GitHub Connector", web_publish)
         self.assertIn("Workspace Download", web_publish)
-        self.assertIn("references/web-mode-publish.md", skill)
+        self.assertIn("references/publication-router.md", skill)
 
     def test_local_mode_remains_native_git_only(self):
         skill = (ROOT / "SKILL.md").read_text()
@@ -38,7 +38,7 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("GitHub connector/object-API source upload is not a supported fallback", release)
         self.assertIn("This path is Web mode only", web_publish)
         self.assertIn("RDC + native Git", web_publish)
-        self.assertIn("explicitly selects Local", skill)
+        self.assertIn("explicitly Local objective", skill)
 
     def test_import_workflow_binds_and_verifies_git_bundle(self):
         workflow = (ROOT / ".github" / "workflows" / "workspace-import.yml").read_text()
@@ -106,10 +106,10 @@ class WebPublishContractTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text()
         self.assertIn("Publishing from Web mode", readme)
         self.assertIn("Google Drive", readme)
-        self.assertIn("ChatGPT-GitHub-Staging", readme)
+        self.assertIn("ChatGPT-Temporary/codex-loop/github-staging", readme)
         self.assertIn("anyone-with-link", readme)
         self.assertIn("workspace-import.yml", readme)
-        self.assertIn("remote commit == audited commit and remote tree == audited tree", readme)
+        self.assertIn("importer verifies exact published commit/tree and emits authoritative receipt", readme)
 
 
 if __name__ == "__main__":

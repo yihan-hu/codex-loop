@@ -22,7 +22,7 @@ CACHE_SCHEMA_VERSION = 1
 CACHE_KIND = "codex_loop_workspace_cache"
 CONSUMPTION_KIND = "codex_loop_workspace_cache_consumed"
 CACHE_TTL_DAYS = 3
-CACHE_DRIVE_FOLDER = "Codex Loop/.runtime/workspace-cache"
+CACHE_DRIVE_FOLDER = "ChatGPT-Temporary/codex-loop/workspace-cache"
 _CACHE_NAME_RE = re.compile(
     r"^workspace-cache-v1-(?P<cache_id>[0-9a-f]{32})-(?P<created>[0-9]{8}T[0-9]{6}Z)-(?P<sha>[0-9a-f]{64})\.tar\.gz$"
 )

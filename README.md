@@ -17,7 +17,7 @@ For normal use in ChatGPT, install Codex Loop and start using it. **You do not n
 Add integrations only when the task needs them:
 
 - GitHub: repository reads/source acquisition/Actions/publication.
-- Google Drive: verified binary staging for Web -> GitHub publication and Web -> local/Mac synchronization. First-time use needs a dedicated staging folder with the temporary read policy required by the receiving host/workflow.
+- Google Drive: verified binary staging for Web -> GitHub publication and Web -> local/Mac synchronization. All temporary Drive material lives under the fixed `ChatGPT-Temporary` root; only retained archives belong under top-level Skill-named folders.
 - Remote Desktop Commander: only for local files, native Git, local Chrome, or macOS GUI interaction.
 
 See `references/consumer-onboarding.md` for the staged setup checklist and exact permission boundaries. Codex Loop should disclose only the dependencies required by the current task and can preflight those capabilities before substantive work.
@@ -34,7 +34,6 @@ Use Codex Loop for objectives such as:
 - fixing bugs, tests, and CI failures;
 - investigating or reviewing a codebase;
 - running repository-native validation;
-- tracking acceptance criteria and review freshness;
 - remembering stable local workspace aliases without turning remembered paths into standing access permission;
 - keeping repository `workspace_mode` independent from browser/computer `interaction_target`;
 - controlling a user's local Chrome through a supported Browser/Chrome bridge attached to the current conversation, with separate host-health and session-capability recovery;
@@ -82,7 +81,7 @@ Use my local Chrome to verify this signed-in flow.
 
 You do not need Remote Desktop Commander for ordinary Web-mode repository work. However, Web mode may still use RDC for **interaction-only** tasks such as controlling your local Chrome or macOS UI; that does not move the repository source of truth onto the Mac.
 
-If you ask to push, Codex Loop intercepts the publication intent before literal Git, resolves Web versus Local, then uses the selected mode's canonical path. Web mode uses the verified Google Drive -> GitHub Actions exact-identity path. Local mode uses native Git from the bound worktree plus exact remote commit/tree readback. Ordinary target repositories do not need to contain Codex Loop runtime files. If Codex Loop itself was edited, a successful requested source push is followed by packaging the updated workspace into the official validated `skill.zip` and byte-identical `codex-loop.zip`.
+If you ask to push, Codex Loop intercepts the publication intent before literal Git, resolves Web versus Local, then uses the selected mode's canonical path. Web mode uses the verified Google Drive -> GitHub Actions exact-identity path. Local mode uses native Git from the bound worktree; clean terminal push success is accepted directly, with targeted remote readback only when the outcome is ambiguous. Ordinary target repositories do not need to contain Codex Loop runtime files. If Codex Loop itself was edited, a successful requested source push is followed by packaging the updated workspace into the official validated `skill.zip` and byte-identical `codex-loop.zip`.
 
 **Local mode is a first-class mode after explicit user selection.** Use it when a task genuinely needs persistent files or tools on an RDC-backed computer, or when you deliberately want that local checkout to be the repository source of truth. macOS is the verified reference host. Windows repository Local mode is also allowed on a best-effort/beta basis: unsupported Windows-specific primitives degrade to host-visible execution or fail only the affected operation. For ordinary development Local mode is usually slower than the Web workspace + GitHub path because each task can add RDC and permission checks, native-host coordination, and extra push/synchronization round trips.
 
@@ -110,7 +109,7 @@ Lifecycle task databases and the workspace-to-active-task pointer live on the li
 
 Web conversations and ephemeral workspaces are not a durable storage contract. Codex Loop therefore separates two optional, default-off Drive recovery layers. `state_only` stores a small schema-whitelisted lifecycle/reconciliation manifest. **Workspace Cache** stores an immutable 7-day Git/worktree capsule so a later conversation can restore the actual development workspace.
 
-`python3 scripts/codex_loop.py workspace-cache-create --cwd REPO --repository OWNER/REPO --output /PRIVATE/TEMP/workspace-cache.tar.gz` preserves the exact HEAD commit/tree plus staged, unstaged, and non-ignored untracked state. It excludes ignored build/runtime material, Git config/hooks, and credentials. Upload the returned binary privately to `Codex Loop/.runtime/workspace-cache` through the Drive connector.
+`python3 scripts/codex_loop.py workspace-cache-create --cwd REPO --repository OWNER/REPO --output /PRIVATE/TEMP/workspace-cache.tar.gz` preserves the exact HEAD commit/tree plus staged, unstaged, and non-ignored untracked state. It excludes ignored build/runtime material, Git config/hooks, and credentials. Upload the returned binary privately to `ChatGPT-Temporary/codex-loop/workspace-cache` through the Drive connector.
 
 On restore, verify the externally retained capsule SHA-256, run `workspace-cache-validate`, restore into a fresh directory with `workspace-cache-restore`, and require exact HEAD/tree + state fingerprint before binding the new workspace. After success, upload the small consumed receipt and delete the exact capsule. If deletion fails, the restore remains successful and cleanup becomes `CACHE_CLEANUP_PENDING`; every later cache create/list/restore operation opportunistically scans only the bounded cache folder and retries cleanup of consumed or >=7-day exact owned objects. Consumed cache IDs are excluded from automatic restore selection even when their capsule could not be deleted.
 
@@ -147,7 +146,7 @@ See `references/local-mode-setup.md` for the exact agent-side resolution and saf
 2. Put or clone the repositories you want Codex Loop to edit under that root.
 3. In a new ChatGPT conversation, explicitly select Local mode and provide the root if it has not already been established, for example: `Use local development under /Users/alice/PiWork.` or `Use local development under C:\Users\Alice\PiWork.`
 4. Codex Loop binds each repository task to one canonical Git working tree under that root. It does not treat copied archives, installed Skills, or release staging folders as later development baselines.
-5. If you want to push to GitHub, make sure native Git on the RDC host is authenticated. The verified path uses native Git and remote commit/tree readback; credentials remain host-owned.
+5. If you want to push to GitHub, make sure native Git on the RDC host is authenticated. The verified path uses native Git; credentials remain host-owned, and remote readback is reserved for ambiguous push outcomes.
 
 For GitHub CLI authentication, an interactive setup can use:
 
@@ -329,14 +328,14 @@ For a repository developed in the current ChatGPT Web workspace, publication now
 ChatGPT Web Git workspace
   -> validated clean audited commit/tree
   -> verified Git bundle + exact size/SHA-256
-  -> Google Drive `ChatGPT-GitHub-Staging` via binary file_uri
+  -> Google Drive `ChatGPT-Temporary/codex-loop/github-staging` via binary file_uri
   -> tiny GitHub import-request trigger commit
   -> audited `.github/workflows/workspace-import.yml`
   -> bundle verify + source commit/tree + ancestry verification
   -> bounded force-with-lease replacing only that trigger commit
   -> remote branch points to the original audited commit
-  -> require remote commit == audited commit and remote tree == audited tree
-  -> permanently delete the temporary Drive bundle
+  -> importer verifies exact published commit/tree and emits authoritative receipt
+  -> clean up the exact temporary Drive bundle through the shared Drive cleanup adapter
 ```
 
 The GitHub Connector remains control plane only; source Git objects travel through the Drive binary bridge. The staging folder is a temporary anyone-with-link trust boundary for the GitHub-hosted runner. If that is unacceptable for the source, stop rather than invent another transport.
@@ -345,7 +344,7 @@ The GitHub Connector remains control plane only; source Git objects travel throu
 
 The importer is allowed one narrowly scoped non-fast-forward action: it may use `force-with-lease` only to remove the single request trigger commit it just received, after proving that trigger's parent equals the previously observed branch base and its only file delta is the request JSON. Any branch concurrency, extra trigger delta, ancestry failure, bundle mismatch, or lease failure stops publication. This is not general force-push permission.
 
-Repository setup therefore needs Actions enabled, `contents: write` for the audited importer, and branch policy that permits this exact lease-guarded trigger replacement. The workflow never creates a new source commit; its receipt and independent remote readback must both equal the audited workspace commit/tree. See `references/web-mode-publish.md`.
+Repository setup therefore needs Actions enabled, `contents: write` for the audited importer, and branch policy that permits this exact lease-guarded trigger replacement. The workflow never creates a new source commit; its own audited readback is bound into the terminal receipt, so the host does not repeat the same remote readback after clean success. See `references/web-mode-publish.md`.
 
 ## Publishing from Local mode
 
@@ -358,8 +357,7 @@ LOCAL_ROOT repository
   -> validate / review
   -> git commit
   -> native git push through RDC
-  -> native git fetch/readback
-  -> require remote commit and tree == audited local commit and tree
+  -> clean terminal push success is authoritative; targeted remote reconciliation only if outcome is ambiguous
 ```
 
 Source bytes stay in Git's data plane. GitHub connector/object APIs, model-carried Base64, copied source trees, and release ZIP contents are not fallback publication transports.
@@ -436,15 +434,15 @@ Switch back to Web mode for the next task.
 
 ## How Codex Loop works
 
-The deterministic runtime tracks repository/task facts such as workspace binding, mutation generation, validation evidence, acceptance criteria, review freshness, process state, and external-action state. ChatGPT still decides what to do and dispatches the actual host tools.
+Once Codex Loop is selected, the runtime first creates or resumes the durable task identity and retains the exact request plus steers. Repository work may then bind a workspace. Ordinary reasoning, editing, tool use, testing, and repair stay host-native; optional capability state such as external-action reconciliation or durable validation exists only when the task actually needs it.
 
 The normal lifecycle is:
 
 ```text
-assess -> observe -> act -> integrate -> validate -> review -> evidence -> completion gate
+mandatory admission -> optional orient -> host-native inspect/edit/test/repair -> final semantic acceptance -> deterministic completion
 ```
 
-Simple explanation-only requests can stay on a direct path without bootstrapping durable runtime state.
+Domain Skills may run their own required workflows/state machines inside that lifecycle; Codex Loop does not replace them.
 
 For implementation details, start with `SKILL.md`. Deeper contracts live under `references/`, and executable runtime code lives under `scripts/`.
 
@@ -453,8 +451,8 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 - Preserve pre-existing user changes and untracked files.
 - Treat RDC host roots as capability ceilings. Once a repository task is bound, keep filesystem/search/process access inside that canonical worktree or an explicitly named task-owned path; sibling repositories remain out of scope unless separately granted.
 - Never read credential files directly.
-- Treat exact commit/tree readback as publication success evidence in both modes: native Git readback in Local mode, and bundle-bound workflow receipt plus independent GitHub branch readback in Web mode.
-- Treat the public-read Google Drive staging folder as a temporary publication trust boundary and delete staged Git bundles after verified success.
+- Accept one authoritative publication proof at the owning boundary: clean native Git push success in Local mode, or the importer-owned exact-identity terminal receipt in Web mode. Re-read remote state only for ambiguity, reconciliation, concurrency, or an explicit current-state request.
+- Treat the public-read Google Drive staging folder as a temporary publication trust boundary and clean up staged Git bundles after verified success.
 - Do not invent a binary transfer route when no verified bridge exists.
 - Never edit an installed Skill in place or treat it as ongoing source authority. An installed Skill may bootstrap a fresh workspace only after explicit current-conversation source authorization; downloaded artifacts and copied release folders remain transport/release material rather than development baselines.
 - Materialize GitHub source into Web mode through the exact-commit `workspace-download.yml` Actions artifact path, not shell `git clone` or per-file reconstruction.
@@ -467,7 +465,7 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 
 **RDC cannot access the repository.** Confirm that the repository is under the directory you authorized in Remote Desktop Commander and that the integration is connected.
 
-**A Web-mode push does not start.** Confirm Google Drive is connected, `ChatGPT-GitHub-Staging` is anyone-with-link readable, the target repository has Actions enabled, and workflow permissions allow read/write.
+**A Web-mode push does not start.** Confirm Google Drive is connected, `ChatGPT-Temporary/codex-loop/github-staging` is anyone-with-link readable, the target repository has Actions enabled, and workflow permissions allow read/write.
 
 **`git push` fails.** Fix the reported native Git authentication/network/permission/divergence problem on the RDC host. Codex Loop intentionally does not switch to a different source-upload transport.
 

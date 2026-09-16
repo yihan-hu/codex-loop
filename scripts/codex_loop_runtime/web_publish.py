@@ -492,7 +492,7 @@ def web_publish_plan(
             "do not run FULL_VERIFIED_PUBLISH, standard importer, production packaging, or already-fresh gates before retry"
         )
     elif already:
-        next_action = "skip transport; continue post-push reconciliation"
+        next_action = "skip transport; the observed remote already equals the audited source"
     elif mode == "FAST_PUBLISH_CONTROL_PLANE_REFRESH_REQUIRED":
         next_action = (
             "stop before bundle staging/request creation; update only control_plane_workflow_updates through the GitHub Connector "
@@ -564,7 +564,7 @@ def web_publish_plan(
             "rule": (
                 "GitHub Actions is not a host write-permission preflight for Web publication because the importer is "
                 "triggered by the request push. After the request commit, require the matching import workflow run, "
-                "its verified receipt/log evidence, and exact remote commit/tree readback before SOURCE_PUSHED."
+                "its authoritative terminal receipt before SOURCE_PUSHED; inspect logs or remote state only for failure, ambiguity, or reconciliation."
             ),
         },
         "bundle": bundle,
@@ -587,7 +587,7 @@ def web_publish_plan(
         "workflow_path": workflow_path,
         "request_directory": request_directory,
         "receipt_mode": receipt_mode,
-        "post_push_success_requirement": "read back target branch and require remote commit == audited source commit and remote tree == audited source tree",
+        "post_push_success_requirement": "accept the importer-owned terminal receipt binding published_commit/tree to the audited source; do not repeat remote readback on the clean success path",
         "remote_source_object_presence_required": False,
         "remote_source_object_absence_is_blocker": False,
         "source_object_introduction": "the verified Git bundle carries the audited source commit object into the importer; GitHub need not already contain that object",

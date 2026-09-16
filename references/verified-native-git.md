@@ -27,12 +27,12 @@ The example root is illustrative only; use the root resolved for the current con
 
 1. Validate and review the intended final content in the canonical worktree.
 2. Commit the source and record the local commit/tree identity. If the commit only records already-reviewed content, do not rerun validation solely because the commit SHA changed unless the runtime freshness gate requires it.
-3. Run `git fetch origin main` and observe the current remote commit/tree. Route the push through the **bundled Codex Loop controller**; its Local `publish-enter --controller-abi 1 --workspace-granted` helper may plan the exact native-Git action, but the target repository itself does not need `scripts/codex_loop.py` or any Codex Loop runtime file. Do not package a Skill or create a release receipt first. If lineage diverged, integrate it locally and revalidate; never force around it.
+3. Run `git fetch origin main` and observe the current remote commit/tree before publication. Route the push through the **bundled Codex Loop controller**; its Local `publish-enter --controller-abi 1 --workspace-granted` helper may plan the exact native-Git action, but the target repository itself does not need `scripts/codex_loop.py` or any Codex Loop runtime file. Do not package a Skill or create a release receipt first. If lineage diverged, integrate it locally and revalidate; never force around it.
 4. Push with native Git from the canonical worktree, for example `GIT_TERMINAL_PROMPT=0 git push --porcelain origin main:main`, with a `GH_CONFIG_DIR` derived from `LOCAL_ROOT` when that helper layout is used.
-5. Run native `git fetch origin main` after the push.
-6. Require both `git rev-parse HEAD == git rev-parse origin/main` and `git rev-parse HEAD^{tree} == git rev-parse origin/main^{tree}` before recording success.
+5. If native Git returns a clean terminal success and the porcelain result reports the intended ref update as accepted, treat that terminal push result as authoritative; do not immediately fetch/read the same remote ref again.
+6. If the command fails after dispatch, times out, reports a local remote-tracking update error, or otherwise leaves publication outcome ambiguous, run one targeted `git ls-remote origin refs/heads/main`. If the observed remote commit equals the audited local commit, publication succeeded; otherwise report/reconcile the blocker before any retry. Exact commit equality already fixes the tree identity.
 
-A transport command returning zero is not enough by itself; commit/tree readback is the success criterion.
+Do not turn a clean successful push into a mandatory second readback ceremony. Remote observation is an exception path for ambiguity/concurrency or when the user explicitly asks for current remote state.
 
 ## Failure and bootstrap boundaries
 

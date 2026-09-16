@@ -11,19 +11,19 @@ There is exactly one supported automatic Web -> Local transport family:
 ```text
 ordinary file
   -> exact source bytes + size + SHA-256
-  -> Google Drive binary staging via real file_uri
+  -> Google Drive binary staging under `ChatGPT-Temporary/codex-loop/handoff` via real file_uri
   -> exact Drive object id + size readback
   -> minimum temporary download access needed by the authorized host
   -> RDC downloads the exact binary to the authorized local path
   -> local size + SHA-256 verification
-  -> permanently delete the exact Drive staging object after verified consumption
+  -> clean up the exact Drive staging object after verified consumption
 
 Web-authoritative repository
   -> exact self-contained verified Git bundle
   -> the same Google Drive staging -> RDC path
   -> local size + SHA-256 + git bundle verify
   -> optional Git import only under the separate local-source-mutation gate
-  -> permanently delete the exact Drive staging object after verified consumption
+  -> clean up the exact Drive staging object after verified consumption
 ```
 
 Do not choose among transports. Do not substitute GitHub Actions artifacts, repository archive URLs, GitHub contents/blob/tree source relay, Dropbox/IDrive, an unmodeled direct binary bridge, model-carried Base64/chunks/heredocs, or source regeneration/retyping. A failure in the fixed path is a transfer blocker, not permission to invent a fallback. If the configured staging boundary is public-read, do not stage credentials, secrets, or content that cannot tolerate that temporary exposure.
@@ -62,13 +62,13 @@ If the planner returns `WEB_LOCAL_SYNC_REQUIREMENTS_UNMET`, satisfy only the nam
 1. Keep `workspace_mode=web`. Record audited Web commit/tree.
 2. Call `web-local-sync-plan` for the exact authorized destination path.
 3. Build or reuse the exact self-contained Git bundle requested by the plan. A reusable bundle receipt must match current generation, source commit/tree, exact size/SHA-256, and `prerequisite_commit=None`.
-4. Upload the real binary with Google Drive `upload_file(file_uri=...)` to the dedicated staging boundary. Do not model-transcribe the bytes.
+4. Upload the real binary with Google Drive `upload_file(file_uri=...)` to the dedicated `ChatGPT-Temporary/codex-loop/handoff` staging boundary. Do not model-transcribe the bytes.
 5. Read the exact Drive object back and require expected parent, size, and object identity. Expose only the minimum temporary download access needed by the authorized RDC host.
 6. Through Remote Desktop Commander, download that exact Drive object into the explicitly authorized destination path. Do not search the host for a convenient alternative path.
 7. On the local host require exact byte size, SHA-256, and `git bundle verify` success before considering the transfer complete.
 8. If the user only asked to save/synchronize the bytes, stop with Web still authoritative. If the user separately asks to import/update a local canonical repository, require the ordinary local workspace grant + current-task local-source-mutation authorization before changing repository refs/worktrees.
 9. If the user separately chooses to continue development locally, only then record `route-transition --workspace-mode local --selection-evidence "..."` and bind the same lifecycle to that canonical local worktree.
-10. After verified local consumption, permanently delete the exact Drive staging object using `drive-deletion.md`. Never broaden cleanup to sibling files/folders.
+10. After verified local consumption, clean up the exact Drive staging object using `drive-deletion.md`. Never broaden cleanup to sibling files/folders.
 
 ## Publication fallback
 

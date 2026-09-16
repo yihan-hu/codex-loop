@@ -19,7 +19,7 @@ canonical Web Git workspace
   -> audited clean HEAD commit/tree
   -> deterministic/verified Git bundle + SHA-256/size
   -> private local file_uri
-  -> dedicated Google Drive ChatGPT-GitHub-Staging folder
+  -> dedicated Google Drive `ChatGPT-Temporary/codex-loop/github-staging` folder
   -> temporary anyone: reader visibility required by GitHub-hosted runner
   -> audited .github/workflows/workspace-import.yml
   -> exact audited commit installed on target branch
@@ -52,7 +52,7 @@ python3 scripts/codex_loop.py publish-enter --task-id TASK --cwd REPO \
   --remote-tree FULL_REMOTE_TREE \
   --controller-abi 1 \
   --capability-scope github_push=repo:OWNER/REPO \
-  --capability-scope google_drive_write=drive:ChatGPT-GitHub-Staging
+  --capability-scope google_drive_write=drive:ChatGPT-Temporary/codex-loop/github-staging
 ```
 
 The router begins/reuses the publish-only continuation and calls this Web planner. Low-level debugging may still use `web-publish-plan` / `web-publish-bundle`. `web-publish-archive` remains only a compatibility alias for bundle creation; it no longer creates a tar source archive.
@@ -89,7 +89,7 @@ Do not create a FAST/standard import request before this refresh is complete. Do
 
 ## Staging and trigger request
 
-Upload the exact bundle binary to the dedicated `ChatGPT-GitHub-Staging` Drive folder through the real `file_uri` bridge. The host/runtime must first materialize the local bundle as its connector file reference; on ChatGPT Web this may be a `sandbox:/mnt/data/...` runtime reference or a returned `sediment://file_...` handle. `upload_file` consumes that reference, not a bare `/mnt/data/...` path or `file://` URL. Do not replace this binary upload with native Google Workspace `create_file`. Record returned Drive file ID, exact size, and SHA-256. Apply temporary `anyone: reader` access only to that exact staging object/folder boundary required by the runner.
+Upload the exact bundle binary to the dedicated `ChatGPT-Temporary/codex-loop/github-staging` Drive folder through the real `file_uri` bridge. The host/runtime must first materialize the local bundle as its connector file reference; on ChatGPT Web this may be a `sandbox:/mnt/data/...` runtime reference or a returned `sediment://file_...` handle. `upload_file` consumes that reference, not a bare `/mnt/data/...` path or `file://` URL. Do not replace this binary upload with native Google Workspace `create_file`. Record returned Drive file ID, exact size, and SHA-256. Apply temporary `anyone: reader` access only to that exact staging object/folder boundary required by the runner.
 
 Create exactly one tiny request file on the **target branch**:
 
@@ -140,16 +140,16 @@ This is not general force-push authorization. The only permitted non-fast-forwar
 
 ## Receipt and remote verification
 
+The importer owns publication readback. Its audited workflow already verifies bundle integrity, source commit/tree, ancestry, bounded lease publication, and the final target ref before emitting terminal receipt evidence. Do not make the host repeat those same checks after a successful authoritative receipt.
+
 Before reporting `SOURCE_PUSHED`:
 
-1. require the exact selected import workflow run to complete successfully;
-2. inspect its job steps/logs for bundle download/hash/verify, source commit/tree verification, ancestry check, bounded lease push, and remote readback;
-3. for `FAST_PUBLISH`, require the one-line `CODEX_LOOP_FAST_IMPORT_RECEIPT=<json>` log receipt from `.github/workflows/workspace-import-fast.yml`; that receipt must bind the uploaded `published-source-<run_id>` acquisition artifact by artifact ID/name plus raw bundle SHA-256/size and `fresh_restore=PASS`; do not download it during the current publish unless reconciliation requires it;
-4. for `FULL_VERIFIED_PUBLISH`, download and verify the ordinary receipt artifact from `.github/workflows/workspace-import.yml`;
-5. require receipt `published_commit == audited source_commit`;
-6. require receipt `published_tree == audited source_tree`;
-7. independently read target branch from GitHub;
-8. require remote commit == audited source commit and remote tree == audited source tree.
+1. require the exact selected import workflow run to reach terminal success;
+2. for `FAST_PUBLISH`, require the one-line `CODEX_LOOP_FAST_IMPORT_RECEIPT=<json>` receipt from `.github/workflows/workspace-import-fast.yml`; the receipt must bind transfer ID, transport bundle identity, `published_commit`, `published_tree`, the uploaded `published-source-<run_id>` artifact, and `fresh_restore=PASS`;
+3. for `FULL_VERIFIED_PUBLISH`, download and verify the ordinary receipt artifact from `.github/workflows/workspace-import.yml`;
+4. require receipt `published_commit == audited source_commit` and receipt `published_tree == audited source_tree`.
+
+On this clean success path, do **not** independently fetch the target branch or inspect every job step/log after the receipt has already proven the same facts. Inspect jobs/logs or re-read GitHub only when the run fails, the receipt is missing/malformed, the result is ambiguous, concurrent branch movement must be reconciled, or the user specifically asks for current remote state.
 
 Tree-only equivalence is insufficient. A newly generated importer commit is a contract violation under this exact-identity design.
 
@@ -172,13 +172,13 @@ For a push-bound change set, perform the authorized `git add`/index update **bef
 
 ## Cleanup
 
-After exact remote readback succeeds:
+After authoritative importer receipt succeeds:
 
-1. permanently delete the exact staged Drive bundle after a fresh ID/title/parent readback, using `drive-deletion.md` for connector dispatch and verification;
+1. clean up the exact staged Drive bundle after a fresh ID/title/parent readback, using `drive-deletion.md`;
 2. report any residue explicitly; never broaden deletion scope or touch Workspace Cache/private persistence folders;
 3. tiny request trigger history should already be absent because the branch was lease-replaced by the audited source commit.
 
-`ChatGPT-GitHub-Staging` is public transport, not durable persistence. The Workspace Cache retention/consumption rules in `persistence.md` do not apply here.
+`ChatGPT-Temporary/codex-loop/github-staging` is public transport, not durable persistence. The Workspace Cache retention/consumption rules in `persistence.md` do not apply here.
 
 ## Failure classifications
 

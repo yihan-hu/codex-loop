@@ -18,7 +18,7 @@ class ConsumerOnboardingTests(unittest.TestCase):
             "Not required: GitHub, Google Drive",
             "Level 1",
             "Level 2",
-            "ChatGPT-GitHub-Staging",
+            "ChatGPT-Temporary/codex-loop/github-staging",
             "Anyone with the link -> Viewer/reader",
             "contents: write",
             "Level 3",

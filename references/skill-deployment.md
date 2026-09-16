@@ -98,7 +98,7 @@ For Codex Loop, source/package work ends after validated package bytes and fresh
 
 When the conversation is still in Web mode and the user asks to push/publish, use `web-mode-publish.md` as the standard path. Keep the current ChatGPT workspace authoritative; do not switch to RDC/local development just to gain Git transport.
 
-The verified data plane is Workspace binary file -> dedicated `ChatGPT-GitHub-Staging` folder in Google Drive -> audited `.github/workflows/workspace-import.yml` -> target Git branch. The GitHub Connector is control plane only: it may bootstrap the trusted workflow and create a tiny `.github/import-requests/*.json` trigger that binds the Drive Git-bundle file ID, bundle size/SHA-256/ref, exact audited source commit/tree, expected base commit, and target branch. It must not carry source bytes through blobs, trees, contents payloads, comments, or Base64.
+The verified data plane is Workspace binary file -> dedicated `ChatGPT-Temporary/codex-loop/github-staging` folder in Google Drive -> audited `.github/workflows/workspace-import.yml` -> target Git branch. The GitHub Connector is control plane only: it may bootstrap the trusted workflow and create a tiny `.github/import-requests/*.json` trigger that binds the Drive Git-bundle file ID, bundle size/SHA-256/ref, exact audited source commit/tree, expected base commit, and target branch. It must not carry source bytes through blobs, trees, contents payloads, comments, or Base64.
 
 If the same user request also asks to synchronize the published result to a local host, do not inspect the local host before publication. Finish Web-mode edit/validation/review and prove `SOURCE_PUSHED` first. Then use `web-local-sync-plan` and the fixed exact-bundle -> Google Drive staging -> RDC download path to the authorized local destination. Keep `workspace_mode=web`; the local copy is a downstream destination of the completed Web generation, not a source for deciding or modifying it. Only a separate explicit request to continue local development may later transition workspace authority.
 
@@ -124,7 +124,7 @@ For other Skills, packaging/install behavior follows the user's request and the 
 
 ## Local post-push workspace synchronization
 
-This path applies when the current conversation is in local mode and a native-Git push has been verified by remote commit/tree readback. It reuses the same verified GitHub -> Web materialization contract defined above; the difference is that synchronization is opt-in after a local push. After that success, generate a deterministic offer:
+This path applies when the current conversation is in local mode and a native-Git push has terminally succeeded or an ambiguous outcome has been reconciled to the exact audited commit. It reuses the same verified GitHub -> Web materialization contract defined above; the difference is that synchronization is opt-in after a local push. After that success, generate a deterministic offer:
 
 ```bash
 python3 scripts/codex_loop.py workspace-sync-offer --repository OWNER/REPO --commit FULL_40_HEX_SHA

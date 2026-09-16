@@ -30,7 +30,7 @@ Ordinary Web -> Mac/local file transfer and Web publication use Google Drive as 
 One-time setup:
 
 1. Connect/install the Google Drive integration available to ChatGPT.
-2. In Google Drive, create a dedicated folder named `ChatGPT-GitHub-Staging`.
+2. In Google Drive, create the fixed temporary root `ChatGPT-Temporary`, then create `codex-loop/github-staging` beneath it. Keep the temporary root itself private; only the publication staging child needs the configured anyone-with-link read boundary.
 3. Set that folder to **Anyone with the link -> Viewer/reader**. This is required so the audited GitHub-hosted runner can download the staged bundle without Google credentials. The current Drive connector may not expose public folder-sharing controls, so this permission can require a one-time manual Drive UI step.
 4. Copy the folder ID from its Drive URL. Optionally store the non-sensitive locator in Codex Loop's private Host Profile:
 
@@ -42,7 +42,7 @@ python3 scripts/codex_loop.py host-config set web_publish.staging_folder_id DRIV
 6. If repository or organization policy restricts the workflow token to read-only, change the repository/organization Actions workflow-permission policy so the import workflow can receive the declared write permission. Do not weaken unrelated branch or organization protections.
 7. Keep branch/ruleset protections compatible with Codex Loop's verified, lease-guarded publication path. If policy blocks it, report that exact blocker rather than bypassing protections.
 
-Security boundary: files staged in `ChatGPT-GitHub-Staging` are temporarily readable by anyone who has the link. The same configured folder may be reused for ordinary Web -> local file transfers, so no second Drive staging setup is required. Codex Loop deletes only the exact staging object after verified consumption, subject to the global Drive deletion gate; the explicit transfer/publish request supplies the per-object cleanup intent, so no second cleanup confirmation is required. Do not use this staging boundary for source or files that cannot tolerate that temporary exposure.
+Security boundary: files staged in `ChatGPT-Temporary/codex-loop/github-staging` are temporarily readable by anyone who has the link. Ordinary Web -> local transfer uses the sibling `ChatGPT-Temporary/codex-loop/handoff` boundary; both remain under the one fixed temporary root. Codex Loop cleans up only the exact staging object after verified consumption, subject to the global Drive cleanup gate; the explicit transfer/publish request supplies the per-object cleanup intent, so no second cleanup confirmation is required. Do not use this staging boundary for source or files that cannot tolerate that temporary exposure.
 
 Before the first publish, a useful request is: `Check my Codex Loop Web publishing setup before changing anything.` Codex Loop should preflight GitHub push permission, GitHub Actions, and Google Drive write access and report only the missing prerequisites.
 

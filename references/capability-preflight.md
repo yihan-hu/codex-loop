@@ -1,6 +1,6 @@
 # Capability and permission preflight
 
-Use one bounded permission-smoke stage only when an external side effect is imminent and the host permission must be proven before dispatch.
+Use one bounded permission-smoke stage only when an external side effect is imminent and the host permission must be proven before dispatch. On Web, this probe is also an intentional UX prewarm: it may surface the host permission prompt before a long workflow so later authorized work can continue without an avoidable mid-flow interruption. Do not remove it merely because the production action would also exercise the same permission.
 
 Permission preflight is a side-effect-boundary check, not a Skill-admission ritual. Earlier knowledge that a later step may push, write Drive, or use local interaction may inform routing, but it does not authorize or require an early live probe. Preflight does not weaken host security, grant itself permissions, or replace a host-required per-action approval.
 
@@ -82,7 +82,7 @@ Exercise an **Actions write-scoped** host operation only against a workflow/job 
 For the Codex Loop repository, `Workspace Download` is an acceptable permission probe because it has `contents: read` and only packages the current source. `Workspace Import` is **not** a permission probe because it has `contents: write` and can publish source changes.
 Record the resulting `github_actions` observation at repository scope (`actions:OWNER/REPO`), not at workflow-name scope. The safe `Workspace Download` job is the probe mechanism; the observed Actions write capability is repository-scoped, so later publication must not miss the observation merely because the production workflow is `Workspace Import`.
 
-Require this `github_actions` host-permission probe only when the planned host path will actually call an Actions write API such as workflow dispatch or rerun. Do **not** require it merely because a push-triggered workflow will execute. Web publication uses a repository push to trigger `Workspace Import` / `Workspace Import Fast`; its host permission preflight therefore requires `github_push` and `google_drive_write`, while Actions readiness is proven after the request push by observing the matching workflow run, its verified receipt/log evidence, and the exact remote commit/tree readback.
+Require this `github_actions` host-permission probe only when the planned host path will actually call an Actions write API such as workflow dispatch or rerun. Do **not** require it merely because a push-triggered workflow will execute. Web publication uses a repository push to trigger `Workspace Import` / `Workspace Import Fast`; its host permission preflight therefore requires `github_push` and `google_drive_write`, while Actions readiness is proven after the request push by observing the matching workflow run and its authoritative verified receipt; logs or remote readback are reconciliation tools only when that terminal evidence is missing or ambiguous.
 
 If the host path really does require an Actions write API and no safe representative probe exists, classify the capability as `GITHUB_ACTIONS_PERMISSION_NOT_PROVEN` before that Actions-API operation. Do not invent a source mutation to force an approval prompt. For push-triggered publication, if no matching workflow run appears after the request commit, classify the trigger/runtime dependency as unproven and reconcile the request/branch state before any retry.
 
@@ -92,12 +92,12 @@ Run a live list/search/metadata operation in the exact Drive scope needed by the
 
 ### Google Drive write
 
-When later workflow steps require Drive creation/upload/delete capability, use one uniquely named non-sensitive sentinel owned by this preflight:
+When later workflow steps require Drive creation/upload/delete capability, use one uniquely named non-sensitive sentinel owned by this preflight under `ChatGPT-Temporary/<skill-or-purpose>/smoke` (see `drive-storage.md`):
 
 ```text
 create sentinel
   -> read back exact ID/metadata
-  -> delete that exact sentinel immediately
+  -> clean up that exact sentinel immediately
 ```
 
 Match the probe to the real Drive write path. When the eventual workflow stages a workspace binary through `upload_file(file_uri=...)`, create a tiny local sentinel file, let the host/runtime turn that mounted file into its connector file reference, and call `upload_file` into the exact staging folder. On ChatGPT Web, a runtime reference such as `sandbox:/mnt/data/...` or a returned `sediment://file_...` handle is valid input; a bare `/mnt/data/...` path or `file://` URL is not. Do not use native Google Workspace `create_file` as a substitute; those alternatives exercise a different or invalid boundary and must not be recorded as `google_drive_write` proof for binary staging.

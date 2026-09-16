@@ -10,7 +10,7 @@ Treat `git push`, `push main`, `publish`, and equivalent wording as publication 
 publication intent
   -> Codex Loop routing
      -> Web   -> verified exact-identity Web publication
-     -> Local -> native Git from the bound worktree + exact remote commit/tree readback
+     -> Local -> native Git from the bound worktree + targeted remote reconciliation only when push outcome is ambiguous
 ```
 
 The bundled controller may call its own stable helper:

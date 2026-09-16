@@ -147,13 +147,12 @@ def publication_enter(
             source_only=source_only,
         )
         if plan.get("already_published"):
-            next_action = "skip transport; continue post-push reconciliation"
+            next_action = "skip transport; the observed remote already equals the audited source"
         elif not plan.get("ready"):
             next_action = str(plan.get("reason") or "satisfy the local native-Git publish precondition and rerun publish-enter")
         else:
             next_action = (
-                "execute only planner_result.git.argv through the authorized local host, then perform the required native-Git "
-                "remote commit/tree readback; do not switch transport on failure"
+                "execute only planner_result.git.argv through the authorized local host; accept a clean terminal push success, and use one targeted remote read only if the outcome is ambiguous; do not switch transport on failure"
             )
         return {
             "entrypoint": "publish-enter",

@@ -68,6 +68,8 @@ After mandatory admission and any required one-time orientation, use the host-na
 
 Ordinary shell/file/edit/test operations go directly through host tools. Do not wrap them in lifecycle commands, record every step, or call `next` between actions. The lifecycle stays active without being polled. A strong model should choose its own execution trajectory and rerun only checks plausibly affected by a repair.
 
+If another selected Skill requires its own domain workflow or state machine, that workflow remains authoritative inside that Skill's scope. Codex Loop wraps it with the durable lifecycle but must not flatten, replace, reinterpret, or bypass its required states/transitions. The domain Skill owns its workflow semantics and persistence; Codex Loop owns task identity, retained user authority, routing/side-effect safety, and final lifecycle completion.
+
 ### Scope contract
 
 The user owns **what** may change; the model owns **how**. The effective request plus later steers define scope. Plans, reviews, architecture preferences, discovered cleanup, failing unrelated tests, or model judgment may guide execution but never expand it. In an existing system, make the smallest coherent change that satisfies the request and preserve unrelated user work.
@@ -167,6 +169,7 @@ Routing is one of the few deterministic boundaries worth keeping because it cont
 
 Detailed references:
 
+- Drive temporary/archive placement and cleanup semantics: `references/drive-storage.md`;
 - repository reuse/acquisition: `references/repository-continuity.md`, then `references/source-acquisition.md` only for cold acquisition;
 - Web/Local routing: `references/interaction-routing.md`;
 - publication: `references/publication-router.md`, then the selected publication reference;
@@ -177,7 +180,7 @@ Detailed references:
 
 ## External actions and safety
 
-For consequential non-idempotent external actions, keep `planned -> dispatched -> terminal_success|terminal_failure|outcome_unknown` reconciliation. Never blindly retry `outcome_unknown`; inspect external reality first. Sandboxing, approvals, connector authentication, and actual tool dispatch remain host-owned. Interactive task-owned processes remain observable/terminable and are cleaned up before completion.
+For consequential non-idempotent external actions, keep `planned -> dispatched -> terminal_success|terminal_failure|outcome_unknown` reconciliation. Never blindly retry `outcome_unknown`; inspect external reality first. When the action itself or its owning adapter returns authoritative terminal evidence for the requested external state, accept that evidence once; do not add a second host readback merely to prove the same fact again. Re-observe only for asynchronous acknowledgement, ambiguity, concurrency, reconciliation, or when current external state is itself the requested result. Sandboxing, approvals, connector authentication, and actual tool dispatch remain host-owned. Interactive task-owned processes remain observable/terminable and are cleaned up before completion.
 
 ## Optional capabilities
 

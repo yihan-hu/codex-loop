@@ -564,7 +564,7 @@ def publish_plan(
             "requires_host_visible_execution": True,
             "cwd": str(root),
             "argv": ["git", "push", "--porcelain", remote_name, f"{target_commit}:refs/heads/{branch_name}"],
-            "success_requirement": "read back the remote ref and tree with native Git and require remote commit/tree == audited local source commit/tree",
+            "success_requirement": "accept clean terminal git push --porcelain success; only if outcome is ambiguous, read the target ref with git ls-remote and require remote commit == audited local source commit before retrying",
             "failure_rule": "fail closed and report the native Git/network/authentication blocker; do not switch publish transport",
         },
     }
@@ -2133,6 +2133,7 @@ def record_publish_outcome(
     remote_commit: str | None = None,
     remote_tree: str | None = None,
     remote_parent: str | None = None,
+    push_exit_code: int | None = None,
 ) -> dict[str, Any]:
     if state not in {"terminal_success", "terminal_failure", "outcome_unknown"}:
         raise ValueError("publish outcome must be terminal_success, terminal_failure, or outcome_unknown")
@@ -2167,16 +2168,23 @@ def record_publish_outcome(
     if receipt is not None:
         result_details["release_id"] = receipt["release_id"]
     if state == "terminal_success":
-        if not remote_commit or not remote_tree:
-            raise ValueError("successful publish requires observed remote commit and tree")
-        observed_commit = _validate_sha(remote_commit, field="remote commit")
-        observed_tree = _validate_sha(remote_tree, field="remote tree")
-        if observed_tree != source_tree:
-            raise RuntimeError("remote tree does not equal the audited source tree")
-        if observed_commit != source_commit:
-            raise RuntimeError("native git push did not publish the audited local commit")
-        result_details.update({"remote_commit": observed_commit, "remote_tree": observed_tree})
+        if push_exit_code == 0:
+            result_details["push_exit_code"] = 0
+            if remote_commit or remote_tree:
+                raise ValueError("clean terminal push success does not require duplicate remote readback fields")
+        else:
+            if not remote_commit or not remote_tree:
+                raise ValueError("successful publish requires either push_exit_code=0 or reconciled remote commit and tree")
+            observed_commit = _validate_sha(remote_commit, field="remote commit")
+            observed_tree = _validate_sha(remote_tree, field="remote tree")
+            if observed_tree != source_tree:
+                raise RuntimeError("remote tree does not equal the audited source tree")
+            if observed_commit != source_commit:
+                raise RuntimeError("native git push did not publish the audited local commit")
+            result_details.update({"remote_commit": observed_commit, "remote_tree": observed_tree})
     else:
+        if push_exit_code is not None:
+            result_details["push_exit_code"] = int(push_exit_code)
         if remote_commit:
             result_details["remote_commit"] = _validate_sha(remote_commit, field="remote commit")
         if remote_tree:
