@@ -60,6 +60,8 @@ python3 scripts/codex_loop.py instructions --task-id TASK --cwd PATH
 
 If instruction discovery is incomplete, reload that scope with a sufficient byte budget before mutation. Otherwise keep the loaded instruction authority stable; do not rediscover it as a heartbeat.
 
+If an existing lifecycle has a stale or legacy workspace binding that lacks enough Git identity to verify a move, do not rewrite lifecycle state manually or bootstrap a replacement task. First verify the recovered canonical Git workspace with `source-acquisition-verify --task-id TASK` against authoritative repository + commit/tree evidence; a `PASS` records only that verified rebind evidence. Then run `orient --task-id TASK --cwd REPO --rebind-verified`. `orient` consumes the stronger verified recovery evidence, preserves the same lifecycle, and clears it after a successful rebind.
+
 ## Default execution model
 
 After mandatory admission and any required one-time orientation, use the host-native Codex-like loop:

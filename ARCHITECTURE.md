@@ -46,6 +46,9 @@ flowchart TD
   C -. real re-entry .-> RR
   RR --> RO[Deep re-observe workspace + instructions]
   RO --> H
+  RR -. stale/legacy binding lacks Git identity .-> RV[Verify recovered repo<br/>repository + commit/tree + origin]
+  RV --> RB[Rebind same task_id]
+  RB --> RO
 
   H -. consequential side effect .-> G[Routing / approvals / external-action reconciliation]
   H -. managed process only if needed .-> M[Process supervision]
@@ -67,6 +70,7 @@ flowchart TD
 - **Scoped instructions are stable authority.** Load root-to-cwd instructions during orientation and load a deeper scope only before first touching it. Do not rediscover instructions as a heartbeat.
 - **`next` is state-only.** It never reconciles the repository, hashes workspace content, rediscover instructions, or suggests that the model should finish. Use it only when a cheap lifecycle-state read is useful.
 - **`resume` owns real re-entry.** After context loss/reconnect/cross-turn recovery, resume the same lifecycle and re-observe the bound workspace and applicable instructions. Historical summaries or validation never outrank current reality.
+- **Workspace recovery keeps the same lifecycle.** If a stale/legacy binding lacks enough Git identity to prove a move, `source-acquisition-verify --task-id` records stronger exact repository/commit/tree/origin evidence and `orient --rebind-verified` consumes it. Never bootstrap a replacement task or manually rewrite lifecycle state just to escape a workspace mismatch.
 - **Plan is optional working memory.** Its only states are `pending | in_progress | completed`; it is not authority and an unfinished plan is not a deterministic completion blocker.
 - **Validation is direct by default.** The host runs the smallest relevant test/build/lint check. Durable validation receipts exist only for explicit high-risk/durable workflows such as release/publication/persistence.
 - **One semantic acceptance, one machine completion check.** The model first compares the actual result with the exact request. `completion` then checks only machine-observable blockers and never certifies semantic correctness or emits a “finish now” instruction.

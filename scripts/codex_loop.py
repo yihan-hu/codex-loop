@@ -228,7 +228,15 @@ def _verify_rebind(root: Path, expected: dict[str, object]) -> dict[str, object]
     if not any((expected_commit, expected_tree, expected_origin, expected_repository)):
         raise RuntimeError('verified lifecycle rebind requires a retained commit/tree or repository identity')
     current_origin = str(current.get('origin_hint') or '').strip()
-    if not expected_commit and not expected_tree:
+    strict_repository_identity = bool(expected.get('verification_method'))
+    if strict_repository_identity:
+        if expected_origin and current_origin != expected_origin:
+            raise RuntimeError('recovered workspace origin does not match the retained lifecycle evidence')
+        if expected_repository and not expected_origin:
+            expected_repository_origin = f'github.com/{expected_repository}'
+            if current_origin != expected_repository_origin:
+                raise RuntimeError('recovered workspace repository does not match the retained lifecycle repository')
+    elif not expected_commit and not expected_tree:
         if expected_origin and current_origin != expected_origin:
             raise RuntimeError('recovered workspace origin does not match the prior lifecycle binding')
         if expected_repository and not expected_origin:
@@ -285,7 +293,8 @@ def _cmd_orient(argv: list[str]) -> int:
         if not status.get('matches'):
             binding_ok = False
             if args.rebind_verified:
-                current_binding = _verify_rebind(root, old_binding)
+                old_identity = any(old_binding.get(key) for key in ('base_commit', 'base_tree', 'origin_hint'))
+                current_binding = _verify_rebind(root, expected_resume if expected_resume and not old_identity else old_binding)
                 binding_ok = True
                 rebound = True
     elif expected_resume:
@@ -812,16 +821,31 @@ def _cmd_source_acquisition_verify(argv: list[str]) -> int:
     p.add_argument('--expected-commit', required=True)
     p.add_argument('--expected-tree', required=True)
     p.add_argument('--branch')
+    p.add_argument('--task-id')
     p.add_argument('--method', default='github_git_bundle', choices=sorted({"github_git_bundle", "receipt_bound_git_bundle"} | FALLBACK_METHODS))
     args = p.parse_args(argv[1:])
-    emit_ok(verify_restored_git_workspace(
+    result = verify_restored_git_workspace(
         Path(args.cwd).resolve(),
         repository=args.repository,
         expected_commit=args.expected_commit,
         expected_tree=args.expected_tree,
         branch=args.branch,
         method=args.method,
-    ))
+    )
+    if args.task_id and result.get('status') == 'PASS':
+        store = open_store(None, args.task_id)
+        store.ensure_active()
+        store.set_meta('resume_expected_workspace', {
+            'repository': result['repository'],
+            'source_commit': result['commit'],
+            'source_tree': result['tree'],
+            'origin_hint': result['origin_hint'],
+            'branch': result.get('branch'),
+            'verification_method': result['method'],
+        })
+        result['task_id'] = store.task_id
+        result['lifecycle_rebind_ready'] = True
+    emit_ok(result)
     return 0
 
 

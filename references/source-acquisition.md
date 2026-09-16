@@ -48,6 +48,7 @@ Before workspace rebind or any source mutation, run the deterministic verifier f
 
 ```bash
 python3 scripts/codex_loop.py source-acquisition-verify \
+  --task-id EXISTING_TASK \
   --cwd /FRESH/WEB/REPO \
   --repository OWNER/REPO \
   --expected-commit FULL_COMMIT \
@@ -56,7 +57,7 @@ python3 scripts/codex_loop.py source-acquisition-verify \
   --method github_git_bundle
 ```
 
-For a receipt-bound publication artifact use `--method receipt_bound_git_bundle`. `PASS` proves the restored working tree is a real non-shallow Git repository whose HEAD/tree, canonical GitHub origin, and intended branch match the acquisition contract. `BLOCKED` means the workspace must not be bootstrapped or rebound as canonical source. A source-only snapshot initialized as a new root commit is therefore rejected before development begins.
+For a receipt-bound publication artifact use `--method receipt_bound_git_bundle`. When repairing an already-admitted lifecycle, pass its existing `--task-id`; `PASS` then stores the verified repository/commit/tree/origin evidence for that lifecycle, after which `orient --task-id EXISTING_TASK --cwd /FRESH/WEB/REPO --rebind-verified` performs the actual rebind. The verifier never creates a lifecycle and never binds on failure. Without `--task-id` it remains a read-only verifier. `PASS` proves the restored working tree is a real non-shallow Git repository whose HEAD/tree, canonical GitHub origin, and intended branch match the acquisition contract. `BLOCKED` means the workspace must not be bootstrapped or rebound as canonical source. A source-only snapshot initialized as a new root commit is therefore rejected before development begins.
 
 Do not substitute any of the following as the ordinary Web acquisition path:
 

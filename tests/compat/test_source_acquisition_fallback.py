@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -152,6 +153,59 @@ class SourceAcquisitionFallbackTests(unittest.TestCase):
                 text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
             )
             self.assertEqual(json.loads(verified.stdout)["data"]["status"], "PASS")
+
+    def test_verified_source_can_rebind_lifecycle_from_legacy_non_git_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            legacy = base / "legacy"
+            repo = base / "repo"
+            legacy.mkdir()
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "t@e"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+            (repo / "tracked.txt").write_text("exact\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "exact"], cwd=repo, check=True)
+            subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/repo.git"], cwd=repo, check=True)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+            tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=repo, text=True).strip()
+            env = os.environ.copy()
+            env["CODEX_LOOP_HOME"] = str(base / "runtime")
+
+            boot = subprocess.run(
+                [sys.executable, str(CLI), "bootstrap", "--request-anchor", "rebind legacy workspace"],
+                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            )
+            task_id = json.loads(boot.stdout)["data"]["task_id"]
+            subprocess.run(
+                [sys.executable, str(CLI), "orient", "--task-id", task_id, "--cwd", str(legacy)],
+                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            )
+            verified = subprocess.run(
+                [sys.executable, str(CLI), "source-acquisition-verify",
+                 "--task-id", task_id, "--cwd", str(repo), "--repository", "owner/repo",
+                 "--expected-commit", commit, "--expected-tree", tree, "--branch", "main"],
+                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            )
+            verified_data = json.loads(verified.stdout)["data"]
+            self.assertTrue(verified_data["lifecycle_rebind_ready"])
+            subprocess.run(["git", "remote", "set-url", "origin", "git@github.com:other/repo.git"], cwd=repo, check=True)
+            rejected = subprocess.run(
+                [sys.executable, str(CLI), "orient", "--task-id", task_id, "--cwd", str(repo), "--rebind-verified"],
+                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("origin does not match", rejected.stdout + rejected.stderr)
+            subprocess.run(["git", "remote", "set-url", "origin", "git@github.com:owner/repo.git"], cwd=repo, check=True)
+            rebound = subprocess.run(
+                [sys.executable, str(CLI), "orient", "--task-id", task_id, "--cwd", str(repo), "--rebind-verified"],
+                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            )
+            rebound_data = json.loads(rebound.stdout)["data"]
+            self.assertTrue(rebound_data["rebound"])
+            self.assertTrue(rebound_data["safe_to_mutate"])
+            self.assertEqual(rebound_data["workspace_binding"]["base_commit"], commit)
 
 
 if __name__ == "__main__":
