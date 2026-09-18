@@ -174,6 +174,52 @@ class DelegationTests(unittest.TestCase):
                     input_sha256='3' * 64, instruction_sha256='4' * 64,
                 )
 
+    def test_semantic_result_preserves_large_rule_role_list_losslessly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make(root)
+            projection = create_semantic_isolation(
+                root, root, store,
+                objective='classify admitted rules',
+                consumer='epi-prose', stage='task-semantics',
+                input_sha256='5' * 64, instruction_sha256='6' * 64,
+            )
+            rule_roles = [
+                {'rule_id': f'rule-{i:03d}', 'role': 'APPLY'}
+                for i in range(361)
+            ]
+            domain_result = {
+                'status': 'PASS',
+                'task_semantics': {'rule_roles': rule_roles},
+                'metadata': {f'key-{i:03d}': i for i in range(80)},
+            }
+            finished = finish_semantic_isolation(
+                root, root, store, projection['isolation_id'], domain_result
+            )
+            resolved = resolve_semantic_result(
+                root, store, finished['semantic_result']['semantic_result_id'],
+                consumer='epi-prose', stage='task-semantics',
+                input_sha256='5' * 64, instruction_sha256='6' * 64,
+            )
+            self.assertEqual(len(resolved['result']['task_semantics']['rule_roles']), 361)
+            self.assertEqual(resolved['result']['task_semantics']['rule_roles'], rule_roles)
+            self.assertEqual(len(resolved['result']['metadata']), 80)
+
+    def test_semantic_result_over_total_size_limit_fails_instead_of_truncating(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make(root)
+            projection = create_semantic_isolation(
+                root, root, store,
+                objective='return oversized semantic payload',
+                consumer='epi-prose', stage='task-semantics',
+                input_sha256='7' * 64, instruction_sha256='8' * 64,
+            )
+            oversized = {'rows': [{'id': i, 'text': 'x' * 1024} for i in range(300)]}
+            with self.assertRaisesRegex(ValueError, 'exceeds 256 KiB'):
+                finish_semantic_isolation(root, root, store, projection['isolation_id'], oversized)
+
+
 
 if __name__ == '__main__':
     unittest.main()

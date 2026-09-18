@@ -214,6 +214,36 @@ def scrub_persisted_value(value: Any, *, depth: int = 0, string_limit: int = 409
     return scrub_persisted_text(str(value), limit=string_limit) or ""
 
 
+def scrub_semantic_result_value(value: Any, *, depth: int = 0, string_limit: int = 128 * 1024) -> Any:
+    """Sanitize authoritative semantic results without changing their structure."""
+    if depth > 64:
+        raise ValueError("semantic result nesting exceeds 64 levels")
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        text = _unicode_safe(value)
+        if len(text) > string_limit:
+            raise ValueError(f"semantic result string exceeds {string_limit} characters")
+        return scrub_persisted_text(text, limit=string_limit) or ""
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            raw_key = _unicode_safe(str(key))
+            if len(raw_key) > 256:
+                raise ValueError("semantic result object key exceeds 256 characters")
+            clean_key = scrub_persisted_text(raw_key, limit=256) or ""
+            if clean_key in result:
+                raise ValueError("semantic result object keys collide after sanitization")
+            result[clean_key] = scrub_semantic_result_value(item, depth=depth + 1, string_limit=string_limit)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [scrub_semantic_result_value(item, depth=depth + 1, string_limit=string_limit) for item in value]
+    text = _unicode_safe(str(value))
+    if len(text) > string_limit:
+        raise ValueError(f"semantic result scalar exceeds {string_limit} characters")
+    return scrub_persisted_text(text, limit=string_limit) or ""
+
+
 def _prune_isolation_events(db: sqlite3.Connection, *, keep_warnings: int = 64, keep_other: int = 448) -> None:
     # Preserve a bounded warning history even if a long isolation emits many steer/progress events.
     db.execute(
@@ -1205,7 +1235,11 @@ self, generation: int) -> dict[str, Any]:
         workspace_changed: bool,
         semantic_result_id: str | None = None,
     ) -> dict[str, Any]:
-        safe_result = scrub_persisted_value(result, string_limit=128 * 1024 if semantic_result_id is not None else 4096)
+        safe_result = (
+            scrub_semantic_result_value(result)
+            if semantic_result_id is not None
+            else scrub_persisted_value(result, string_limit=4096)
+        )
         if not isinstance(safe_result, dict):
             raise ValueError("isolated result must be an object")
         encoded = json.dumps(safe_result, ensure_ascii=True, sort_keys=True)

@@ -9,7 +9,7 @@ from typing import Any
 from .change_tracker import sync_generation
 from .checkpoint import create as create_checkpoint
 from codex_loop_context_projection import build_isolation, build_working
-from .state import StateStore, scrub_persisted_text, scrub_persisted_value
+from .state import StateStore, scrub_persisted_text, scrub_persisted_value, scrub_semantic_result_value
 
 CAPABILITY_KEYS = (
     "fresh_model_context",
@@ -445,7 +445,7 @@ def finish_semantic_isolation(
 
     if not isinstance(result, dict):
         raise ValueError("semantic result must be a JSON object")
-    clean_result = scrub_persisted_value(result, string_limit=128 * 1024)
+    clean_result = scrub_semantic_result_value(result)
     encoded = json.dumps(clean_result, ensure_ascii=True, sort_keys=True).encode("utf-8")
     if len(encoded) > MAX_SEMANTIC_RESULT_BYTES:
         raise ValueError("semantic result exceeds 256 KiB after scrubbing")
