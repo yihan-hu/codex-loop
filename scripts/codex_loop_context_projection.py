@@ -263,7 +263,8 @@ def isolation_projection(facts: dict[str, Any], isolation: dict[str, Any]) -> di
     context_spec = isolation.get("context_spec") or {}
     projected = context_spec.get("projected_context") or {}
     actual = isolation.get("actual_capabilities") or {}
-    return {
+    semantic = isolation.get("semantic_work")
+    result = {
         "context_version": 2,
         "isolation_id": isolation.get("isolation_id"),
         "status": isolation.get("status"),
@@ -285,6 +286,26 @@ def isolation_projection(facts: dict[str, Any], isolation: dict[str, Any]) -> di
             "delegated_result_semantics": "evidence_not_truth",
         },
     }
+    if semantic is not None:
+        result["semantic_work"] = {
+            "consumer": semantic.get("consumer"),
+            "stage": semantic.get("stage"),
+            "input_sha256": semantic.get("input_sha256"),
+            "instruction_sha256": semantic.get("instruction_sha256"),
+            "request_sha256": semantic.get("request_sha256"),
+            "authority": "logical_isolation_only",
+        }
+        result["guardrails"] = [
+            "read-only",
+            "perform the semantic judgment inside this logical isolation",
+            "do not use scripts, templates, loops, or prefilled verdicts to manufacture the semantic result",
+            "return only the owning domain stage result",
+        ]
+        result["result_contract"] = {
+            "fields": "defined by the owning domain stage",
+            "semantic_result_semantics": "authority exists only after semantic-work-finish mints semantic_result_id",
+        }
+    return result
 
 
 def build_isolation(root: Path, cwd: Path, store: StateStore, isolation_id: str, *, reconcile: bool = True) -> dict[str, Any]:
@@ -292,6 +313,9 @@ def build_isolation(root: Path, cwd: Path, store: StateStore, isolation_id: str,
     isolation = store.isolation(isolation_id)
     if isolation is None:
         raise ValueError(f"unknown isolation: {isolation_id}")
+    semantic = store.semantic_work_for_isolation(isolation_id)
+    if semantic is not None:
+        isolation["semantic_work"] = semantic
     return isolation_projection(facts, isolation)
 
 

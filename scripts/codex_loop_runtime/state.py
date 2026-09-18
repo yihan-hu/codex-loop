@@ -135,6 +135,20 @@ CREATE TABLE IF NOT EXISTS isolations (
     completed_at TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_isolation ON isolations(status) WHERE status='active';
+CREATE TABLE IF NOT EXISTS semantic_work (
+    isolation_id TEXT PRIMARY KEY,
+    consumer TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    input_sha256 TEXT NOT NULL,
+    instruction_sha256 TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    parent_generation INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    semantic_result_id TEXT UNIQUE,
+    result_generation INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
 CREATE TABLE IF NOT EXISTS isolation_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     isolation_id TEXT NOT NULL,
@@ -181,23 +195,23 @@ def scrub_request_authority_text(value: str | None) -> str:
     return scrub_persisted_text(text, limit=MAX_REQUEST_AUTHORITY_CHARS) or ""
 
 
-def scrub_persisted_value(value: Any, *, depth: int = 0) -> Any:
+def scrub_persisted_value(value: Any, *, depth: int = 0, string_limit: int = 4096) -> Any:
     if depth > 6:
         return "[truncated]"
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
-        return scrub_persisted_text(value, limit=4096) or ""
+        return scrub_persisted_text(value, limit=string_limit) or ""
     if isinstance(value, dict):
         result: dict[str, Any] = {}
         for key, item in list(value.items())[:64]:
             clean_key = (scrub_persisted_text(str(key), limit=256) or "").strip()
             if clean_key:
-                result[clean_key] = scrub_persisted_value(item, depth=depth + 1)
+                result[clean_key] = scrub_persisted_value(item, depth=depth + 1, string_limit=string_limit)
         return result
     if isinstance(value, (list, tuple)):
-        return [scrub_persisted_value(item, depth=depth + 1) for item in list(value)[:128]]
-    return scrub_persisted_text(str(value), limit=4096) or ""
+        return [scrub_persisted_value(item, depth=depth + 1, string_limit=string_limit) for item in list(value)[:128]]
+    return scrub_persisted_text(str(value), limit=string_limit) or ""
 
 
 def _prune_isolation_events(db: sqlite3.Connection, *, keep_warnings: int = 64, keep_other: int = 448) -> None:
@@ -453,7 +467,7 @@ class StateStore:
         if existing_anchor and existing_anchor != request_anchor:
             raise RuntimeError("task request anchor is immutable once configured")
         with self.connect() as db:
-            for table in ("baseline", "mutations", "validations", "external_actions", "checkpoints", "processes", "steers", "release_receipts", "isolation_events", "isolations"):
+            for table in ("baseline", "mutations", "validations", "external_actions", "checkpoints", "processes", "steers", "release_receipts", "isolation_events", "semantic_work", "isolations"):
                 db.execute(f"DELETE FROM {table}")
             db.execute("DELETE FROM metadata")
         self.set_meta("task_id", task_id)
@@ -542,6 +556,10 @@ class StateStore:
                 db.execute(
                     "UPDATE isolations SET status='aborted',exit_generation=?,completed_at=CURRENT_TIMESTAMP WHERE isolation_id=? AND status='active'",
                     (generation, isolation_id),
+                )
+                db.execute(
+                    "UPDATE semantic_work SET status='aborted',completed_at=CURRENT_TIMESTAMP WHERE isolation_id=? AND status='active'",
+                    (isolation_id,),
                 )
                 db.execute(
                     "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",
@@ -1032,6 +1050,7 @@ self, generation: int) -> dict[str, Any]:
         mutation_policy: str,
         context_spec: dict[str, Any],
         checkpoint_id: int | None,
+        semantic_work: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         self.ensure_active()
         fields = {
@@ -1047,6 +1066,17 @@ self, generation: int) -> dict[str, Any]:
         context_encoded = json.dumps(safe_context_spec, ensure_ascii=True, sort_keys=True)
         if len(context_encoded.encode("utf-8")) > 256 * 1024:
             raise ValueError("isolation context projection is too large")
+        semantic_fields: dict[str, str] | None = None
+        if semantic_work is not None:
+            semantic_fields = {
+                "consumer": (scrub_persisted_text(semantic_work.get("consumer"), limit=256) or "").strip(),
+                "stage": (scrub_persisted_text(semantic_work.get("stage"), limit=512) or "").strip(),
+                "input_sha256": (scrub_persisted_text(semantic_work.get("input_sha256"), limit=64) or "").strip(),
+                "instruction_sha256": (scrub_persisted_text(semantic_work.get("instruction_sha256"), limit=64) or "").strip(),
+            }
+            if not all(semantic_fields.values()):
+                raise ValueError("semantic work consumer/stage/input/instruction identity must not be empty")
+        request_sha256 = self.effective_request_sha256()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT 1 FROM isolations WHERE status='active' LIMIT 1").fetchone() is not None:
@@ -1068,6 +1098,23 @@ self, generation: int) -> dict[str, Any]:
                 "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",
                 (str(isolation_id), "entered", int(parent_generation), json.dumps({"role": fields["role"]}, ensure_ascii=True)),
             )
+            if semantic_fields is not None:
+                db.execute(
+                    "INSERT INTO semantic_work(isolation_id,consumer,stage,input_sha256,instruction_sha256,request_sha256,parent_generation,status) "
+                    "VALUES(?,?,?,?,?,?,?,'active')",
+                    (
+                        str(isolation_id), semantic_fields["consumer"], semantic_fields["stage"],
+                        semantic_fields["input_sha256"], semantic_fields["instruction_sha256"],
+                        request_sha256, int(parent_generation),
+                    ),
+                )
+                db.execute(
+                    "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",
+                    (
+                        str(isolation_id), "semantic_work_entered", int(parent_generation),
+                        json.dumps({"consumer": semantic_fields["consumer"], "stage": semantic_fields["stage"]}, ensure_ascii=True),
+                    ),
+                )
             _prune_isolation_events(db)
         created = self.isolation(isolation_id)
         if created is None:
@@ -1128,6 +1175,27 @@ self, generation: int) -> dict[str, Any]:
                 result.append(details)
         return result
 
+    def semantic_work_for_isolation(self, isolation_id: str) -> dict[str, Any] | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM semantic_work WHERE isolation_id=?", (str(isolation_id),)).fetchone()
+        return None if row is None else dict(row)
+
+    def semantic_result(self, semantic_result_id: str) -> dict[str, Any] | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT sw.*,i.result_json,i.actual_executor,i.workspace_changed,i.exit_generation "
+                "FROM semantic_work sw JOIN isolations i ON i.isolation_id=sw.isolation_id "
+                "WHERE sw.semantic_result_id=?",
+                (str(semantic_result_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        raw = item.pop("result_json", None)
+        item["result"] = None if raw is None else json.loads(raw)
+        item["workspace_changed"] = bool(item.get("workspace_changed", 0))
+        return item
+
     def finish_isolation(
         self,
         isolation_id: str,
@@ -1135,27 +1203,62 @@ self, generation: int) -> dict[str, Any]:
         result: dict[str, Any],
         exit_generation: int,
         workspace_changed: bool,
+        semantic_result_id: str | None = None,
     ) -> dict[str, Any]:
-        safe_result = scrub_persisted_value(result)
+        safe_result = scrub_persisted_value(result, string_limit=128 * 1024 if semantic_result_id is not None else 4096)
         if not isinstance(safe_result, dict):
             raise ValueError("isolated result must be an object")
         encoded = json.dumps(safe_result, ensure_ascii=True, sort_keys=True)
-        if len(encoded.encode("utf-8")) > 64 * 1024:
-            raise ValueError("isolated result is too large")
+        result_limit = 256 * 1024 if semantic_result_id is not None else 64 * 1024
+        if len(encoded.encode("utf-8")) > result_limit:
+            label = "semantic result" if semantic_result_id is not None else "isolated result"
+            raise ValueError(f"{label} is too large")
+        current_request_sha256 = self.effective_request_sha256()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT status FROM isolations WHERE isolation_id=?", (str(isolation_id),)).fetchone()
+            row = db.execute("SELECT status,actual_executor FROM isolations WHERE isolation_id=?", (str(isolation_id),)).fetchone()
             if row is None:
                 raise ValueError(f"unknown isolation: {isolation_id}")
             if str(row["status"]) != "active":
                 raise RuntimeError(f"isolation is not active: {isolation_id}")
+            semantic_row = db.execute(
+                "SELECT status,request_sha256 FROM semantic_work WHERE isolation_id=?", (str(isolation_id),)
+            ).fetchone()
+            if semantic_row is not None and semantic_result_id is None:
+                raise RuntimeError("semantic isolation must finish through semantic-work-finish")
+            if semantic_row is None and semantic_result_id is not None:
+                raise ValueError("semantic_result_id is valid only for a semantic isolation")
+            if semantic_row is not None:
+                if str(semantic_row["status"]) != "active":
+                    raise RuntimeError(f"semantic work is not active: {isolation_id}")
+                if str(row["actual_executor"]) != "logical_isolation":
+                    raise RuntimeError("semantic work authority requires logical_isolation execution")
+                if str(semantic_row["request_sha256"]) != current_request_sha256:
+                    raise RuntimeError("semantic work became stale because the effective user request changed during logical isolation")
+                if bool(workspace_changed):
+                    raise RuntimeError("semantic work became stale because the workspace changed during logical isolation")
             db.execute(
                 "UPDATE isolations SET status='finished',exit_generation=?,result_json=?,workspace_changed=?,completed_at=CURRENT_TIMESTAMP WHERE isolation_id=?",
                 (int(exit_generation), encoded, int(bool(workspace_changed)), str(isolation_id)),
             )
+            if semantic_row is not None:
+                db.execute(
+                    "UPDATE semantic_work SET status='finished',semantic_result_id=?,result_generation=?,completed_at=CURRENT_TIMESTAMP "
+                    "WHERE isolation_id=?",
+                    (str(semantic_result_id), int(exit_generation), str(isolation_id)),
+                )
             db.execute(
                 "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",
-                (str(isolation_id), "finished", int(exit_generation), json.dumps({"workspace_changed": bool(workspace_changed)}, ensure_ascii=True)),
+                (
+                    str(isolation_id), "finished", int(exit_generation),
+                    json.dumps(
+                        {
+                            "workspace_changed": bool(workspace_changed),
+                            "semantic_result_id": semantic_result_id,
+                        },
+                        ensure_ascii=True,
+                    ),
+                ),
             )
             _prune_isolation_events(db)
         item = self.isolation(isolation_id)
@@ -1178,6 +1281,10 @@ self, generation: int) -> dict[str, Any]:
             db.execute(
                 "UPDATE isolations SET status='aborted',exit_generation=?,completed_at=CURRENT_TIMESTAMP WHERE isolation_id=?",
                 (generation, str(isolation_id)),
+            )
+            db.execute(
+                "UPDATE semantic_work SET status='aborted',completed_at=CURRENT_TIMESTAMP WHERE isolation_id=? AND status='active'",
+                (str(isolation_id),),
             )
             db.execute(
                 "INSERT INTO isolation_events(isolation_id,kind,generation,details_json) VALUES(?,?,?,?)",

@@ -72,6 +72,14 @@ Ordinary shell/file/edit/test operations go directly through host tools. Do not 
 
 If another selected Skill requires its own domain workflow or state machine, that workflow remains authoritative inside that Skill's scope. Codex Loop wraps it with the durable lifecycle but must not flatten, replace, reinterpret, or bypass its required states/transitions. The domain Skill owns its workflow semantics and persistence; Codex Loop owns task identity, retained user authority, routing/side-effect safety, and final lifecycle completion.
 
+When a coupled domain Skill requires a semantic stage whose execution itself is completion-relevant, route that stage through Codex Loop semantic work instead of accepting a caller-authored result artifact:
+
+`semantic-work-enter -> logical_isolation -> semantic-work-finish -> semantic-result`
+
+`semantic-work-enter` binds the owning consumer/stage plus exact input and governing-instruction SHA-256 values, captures the current effective user-request hash, and always uses `logical_isolation`. `semantic-work-finish` is the only operation that may mint a `semantic_result_id` for that stage. Generic `isolate-finish`, helper scripts, copied PASS payloads, hashes, receipts, or a domain runtime's own assertion that review happened cannot satisfy this authority boundary. `semantic-result` requires the exact binding and current generation; workspace mutation or a user steer during logical isolation blocks semantic completion, and later mutation or steer makes the result stale. The owning domain Skill still defines the semantic instruction, output schema, repair rules, and state transition.
+
+Do not use scripts, templates, loops, or deterministic code to manufacture the semantic judgment submitted to `semantic-work-finish`. Deterministic code may prepare inputs, persist the returned result, and validate identity/schema after the logical-isolation judgment exists. This contract makes semantic execution provenance completion-relevant; it does not claim physical model independence or that a model judgment is necessarily correct.
+
 ### Scope contract
 
 The user owns **what** may change; the model owns **how**. The effective request plus later steers define scope. Plans, reviews, architecture preferences, discovered cleanup, failing unrelated tests, or model judgment may guide execution but never expand it. In an existing system, make the smallest coherent change that satisfies the request and preserve unrelated user work.

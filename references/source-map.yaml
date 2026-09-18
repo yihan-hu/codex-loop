@@ -310,7 +310,7 @@
       ]
     },
     {
-      "divergence": "Private task-local state keeps durable execution facts only: immutable request anchor, ordered steers, optional Codex-style pending/in_progress/completed plan, optional durable validation observations, and consequential external/process state. Model-written task objective/acceptance, criterion PASS, steer acknowledgement, validation-plan handshake, and semantic lifecycle state machines are absent.",
+      "divergence": "Private task-local state keeps immutable request authority, optional plan/validation and consequential external/process state, plus one narrow semantic-authority record used only when a coupled domain Skill explicitly requires authoritative semantic execution. Semantic authority is bound to logical_isolation, consumer/stage, exact input/instruction hashes, effective user-request hash, and generation; model-written task objective/acceptance, criterion PASS, steer acknowledgement, and validation-plan handshakes remain absent.",
       "local": "scripts/codex_loop_runtime/state.py",
       "mode": "HYBRID",
       "scope": "portable_subset_only",

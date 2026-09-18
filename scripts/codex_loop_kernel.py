@@ -20,8 +20,10 @@ from codex_loop_runtime.command_identity import identify
 from codex_loop_runtime.command_safety import assess as assess_command
 from codex_loop_runtime.completion import CompletionStatus, assess as assess_completion
 from codex_loop_runtime.delegation import (
-    CAPABILITY_KEYS, MAX_RESULT_BYTES, abort_isolation, create_isolation,
-    finish_isolation, isolation_status,
+    CAPABILITY_KEYS, MAX_RESULT_BYTES, MAX_SEMANTIC_RESULT_BYTES,
+    abort_isolation, create_isolation, create_semantic_isolation,
+    finish_isolation, finish_semantic_isolation, isolation_status,
+    resolve_semantic_result,
 )
 from codex_loop_runtime.instructions import discover
 from codex_loop_runtime.process_manager import managed_session_capability, run_one_shot
@@ -604,6 +606,48 @@ def cmd_isolate_finish(args: argparse.Namespace) -> None:
     emit_ok(finish_isolation(root, cwd, store, args.isolation_id, result))
 
 
+def cmd_semantic_work_enter(args: argparse.Namespace) -> None:
+    cwd, root, store = _store(args)
+    emit_ok(create_semantic_isolation(
+        root,
+        cwd,
+        store,
+        objective=args.objective,
+        consumer=args.consumer,
+        stage=args.stage,
+        input_sha256=args.input_sha256,
+        instruction_sha256=args.instruction_sha256,
+        project_files=args.project_file or [],
+        facts=args.fact or [],
+        criteria_refs=args.criterion_ref or [],
+    ))
+
+
+def cmd_semantic_work_finish(args: argparse.Namespace) -> None:
+    cwd, root, store = _store(args)
+    payload = sys.stdin.buffer.read(MAX_SEMANTIC_RESULT_BYTES + 1)
+    if len(payload) > MAX_SEMANTIC_RESULT_BYTES:
+        raise ValueError("semantic result JSON exceeds 256 KiB")
+    try:
+        result = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("semantic result stdin must be valid UTF-8 JSON") from exc
+    emit_ok(finish_semantic_isolation(root, cwd, store, args.isolation_id, result))
+
+
+def cmd_semantic_result(args: argparse.Namespace) -> None:
+    _cwd_path, root, store = _store(args)
+    emit_ok(resolve_semantic_result(
+        root,
+        store,
+        args.semantic_result_id,
+        consumer=args.consumer,
+        stage=args.stage,
+        input_sha256=args.input_sha256,
+        instruction_sha256=args.instruction_sha256,
+    ))
+
+
 def cmd_isolate_abort(args: argparse.Namespace) -> None:
     cwd, root, store = _store(args)
     emit_ok(abort_isolation(root, cwd, store, args.isolation_id, args.reason))
@@ -667,6 +711,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("isolate-status"); _add_scope(p); p.set_defaults(func=cmd_isolate_status)
     p = sub.add_parser("isolate-finish"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.set_defaults(func=cmd_isolate_finish)
     p = sub.add_parser("isolate-abort"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_isolate_abort)
+    p = sub.add_parser("semantic-work-enter"); _add_scope(p); p.add_argument("--objective", required=True); p.add_argument("--consumer", required=True); p.add_argument("--stage", required=True); p.add_argument("--input-sha256", required=True); p.add_argument("--instruction-sha256", required=True); p.add_argument("--project-file", action="append"); p.add_argument("--fact", action="append"); p.add_argument("--criterion-ref", action="append"); p.set_defaults(func=cmd_semantic_work_enter)
+    p = sub.add_parser("semantic-work-finish"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.set_defaults(func=cmd_semantic_work_finish)
+    p = sub.add_parser("semantic-result"); _add_scope(p); p.add_argument("--semantic-result-id", required=True); p.add_argument("--consumer", required=True); p.add_argument("--stage", required=True); p.add_argument("--input-sha256", required=True); p.add_argument("--instruction-sha256", required=True); p.set_defaults(func=cmd_semantic_result)
     p = sub.add_parser("source-verify"); p.set_defaults(func=cmd_source_verify)
     p = sub.add_parser("_serve"); p.add_argument("--cwd", required=True); p.add_argument("--task-id", required=True); p.set_defaults(func=cmd_serve)
     return parser

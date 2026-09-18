@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 from .change_tracker import sync_generation
 from .checkpoint import create as create_checkpoint
 from codex_loop_context_projection import build_isolation, build_working
-from .state import StateStore, scrub_persisted_text
+from .state import StateStore, scrub_persisted_text, scrub_persisted_value
 
 CAPABILITY_KEYS = (
     "fresh_model_context",
@@ -52,9 +53,11 @@ ROLES = {
     "debugger",
     "security-reviewer",
     "architecture-reviewer",
+    "semantic-worker",
 }
 
 MAX_RESULT_BYTES = 64 * 1024
+MAX_SEMANTIC_RESULT_BYTES = 256 * 1024
 MAX_FINDINGS = 24
 MAX_EVIDENCE_PER_FINDING = 16
 MAX_FILES = 64
@@ -62,6 +65,7 @@ MAX_LIMITATIONS = 24
 MAX_PROJECT_FILES = 64
 MAX_FACTS = 48
 MAX_CRITERIA_REFS = 32
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _clean_text(value: Any, *, limit: int, required: bool = False) -> str:
@@ -78,6 +82,13 @@ def _clean_text_list(values: list[Any] | tuple[Any, ...] | None, *, item_limit: 
         if clean:
             result.append(clean)
     return result
+
+
+def _clean_sha256(value: Any, *, name: str) -> str:
+    clean = _clean_text(value, limit=64, required=True).lower()
+    if not SHA256_RE.fullmatch(clean):
+        raise ValueError(f"{name} must be a lowercase 64-character SHA-256 hex digest")
+    return clean
 
 
 def _capability_map(values: dict[str, Any] | None, *, default: dict[str, bool]) -> dict[str, bool]:
@@ -213,6 +224,7 @@ def create_isolation(
     criteria_refs: list[str] | None = None,
     requested_capability_overrides: dict[str, Any] | None = None,
     actual_capability_report: dict[str, Any] | None = None,
+    semantic_work: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     store.ensure_active()
     if role not in ROLES:
@@ -250,6 +262,7 @@ def create_isolation(
         mutation_policy="read_only",
         context_spec=context_spec,
         checkpoint_id=checkpoint_id,
+        semantic_work=semantic_work,
     )
     for warning in build_degradation_warnings(
         requested_executor=requested_executor,
@@ -260,6 +273,43 @@ def create_isolation(
     ):
         store.record_isolation_event(isolation_id, "warning", warning)
     return build_isolation(root, cwd, store, isolation_id, reconcile=False)
+
+
+def create_semantic_isolation(
+    root: Path,
+    cwd: Path,
+    store: StateStore,
+    *,
+    objective: str,
+    consumer: str,
+    stage: str,
+    input_sha256: str,
+    instruction_sha256: str,
+    project_files: list[str] | None = None,
+    facts: list[str] | None = None,
+    criteria_refs: list[str] | None = None,
+) -> dict[str, Any]:
+    clean_consumer = _clean_text(consumer, limit=256, required=True)
+    clean_stage = _clean_text(stage, limit=512, required=True)
+    binding = {
+        "consumer": clean_consumer,
+        "stage": clean_stage,
+        "input_sha256": _clean_sha256(input_sha256, name="input_sha256"),
+        "instruction_sha256": _clean_sha256(instruction_sha256, name="instruction_sha256"),
+    }
+    return create_isolation(
+        root,
+        cwd,
+        store,
+        role="semantic-worker",
+        objective=objective,
+        requested_executor="logical_isolation",
+        actual_executor="logical_isolation",
+        project_files=project_files,
+        facts=facts,
+        criteria_refs=criteria_refs,
+        semantic_work=binding,
+    )
 
 
 def active_isolation(store: StateStore) -> dict[str, Any] | None:
@@ -338,6 +388,8 @@ def finish_isolation(root: Path, cwd: Path, store: StateStore, isolation_id: str
         raise RuntimeError("no active isolated task")
     if str(active["isolation_id"]) != str(isolation_id):
         raise ValueError(f"wrong isolation_id: active isolation is {active['isolation_id']}")
+    if store.semantic_work_for_isolation(str(isolation_id)) is not None:
+        raise RuntimeError("semantic isolation must finish through semantic-work-finish")
     clean_result = validate_isolation_result(result)
     sync_generation(root, store)
     exit_generation = store.generation()
@@ -369,6 +421,123 @@ def finish_isolation(root: Path, cwd: Path, store: StateStore, isolation_id: str
         "warnings": store.isolation_warnings(str(isolation_id), limit=32),
         "main": main,
         "rule": "delegated result is evidence, not truth; current workspace reality wins",
+    }
+
+
+def finish_semantic_isolation(
+    root: Path,
+    cwd: Path,
+    store: StateStore,
+    isolation_id: str,
+    result: Any,
+) -> dict[str, Any]:
+    store.ensure_active()
+    active = store.active_isolation()
+    if active is None:
+        raise RuntimeError("no active isolated task")
+    if str(active["isolation_id"]) != str(isolation_id):
+        raise ValueError(f"wrong isolation_id: active isolation is {active['isolation_id']}")
+    semantic = store.semantic_work_for_isolation(str(isolation_id))
+    if semantic is None:
+        raise RuntimeError("isolation is not semantic work; use isolate-finish")
+    if str(active.get("actual_executor")) != "logical_isolation":
+        raise RuntimeError("semantic work authority requires logical_isolation execution")
+
+    if not isinstance(result, dict):
+        raise ValueError("semantic result must be a JSON object")
+    clean_result = scrub_persisted_value(result, string_limit=128 * 1024)
+    encoded = json.dumps(clean_result, ensure_ascii=True, sort_keys=True).encode("utf-8")
+    if len(encoded) > MAX_SEMANTIC_RESULT_BYTES:
+        raise ValueError("semantic result exceeds 256 KiB after scrubbing")
+
+    sync_generation(root, store)
+    exit_generation = store.generation()
+    if exit_generation != int(active["parent_generation"]):
+        raise RuntimeError(
+            "semantic work became stale because the workspace changed during logical isolation; abort and rerun it"
+        )
+
+    semantic_result_id = "sem_" + uuid.uuid4().hex[:20]
+    item = store.finish_isolation(
+        str(isolation_id),
+        result=clean_result,
+        exit_generation=exit_generation,
+        workspace_changed=False,
+        semantic_result_id=semantic_result_id,
+    )
+    stored = store.semantic_result(semantic_result_id)
+    if stored is None:
+        raise RuntimeError("failed to read semantic result after logical isolation completion")
+    main = build_working(root, cwd, store, reconcile=True)
+    return {
+        "semantic_result": {
+            "semantic_result_id": semantic_result_id,
+            "isolation_id": str(isolation_id),
+            "consumer": stored["consumer"],
+            "stage": stored["stage"],
+            "input_sha256": stored["input_sha256"],
+            "instruction_sha256": stored["instruction_sha256"],
+            "request_sha256": stored["request_sha256"],
+            "generation": int(stored["result_generation"]),
+            "executor": "logical_isolation",
+        },
+        "isolation": item,
+        "main": main,
+        "rule": "semantic authority was minted only from completed logical_isolation work",
+    }
+
+
+def resolve_semantic_result(
+    root: Path,
+    store: StateStore,
+    semantic_result_id: str,
+    *,
+    consumer: str,
+    stage: str,
+    input_sha256: str,
+    instruction_sha256: str,
+) -> dict[str, Any]:
+    store.ensure_active()
+    sync_generation(root, store)
+    item = store.semantic_result(semantic_result_id)
+    if item is None:
+        raise ValueError(f"unknown semantic result: {semantic_result_id}")
+    expected = {
+        "consumer": _clean_text(consumer, limit=256, required=True),
+        "stage": _clean_text(stage, limit=512, required=True),
+        "input_sha256": _clean_sha256(input_sha256, name="input_sha256"),
+        "instruction_sha256": _clean_sha256(instruction_sha256, name="instruction_sha256"),
+    }
+    for key, value in expected.items():
+        if str(item.get(key)) != value:
+            raise RuntimeError(f"semantic result {key} does not match the requested binding")
+    if str(item.get("status")) != "finished" or not item.get("semantic_result_id"):
+        raise RuntimeError("semantic result is not finished")
+    if str(item.get("actual_executor")) != "logical_isolation":
+        raise RuntimeError("semantic result was not produced by logical_isolation")
+    if bool(item.get("workspace_changed")):
+        raise RuntimeError("semantic result is not authoritative because the workspace changed during isolation")
+    current_request_sha256 = store.effective_request_sha256()
+    if str(item.get("request_sha256")) != current_request_sha256:
+        raise RuntimeError("semantic result is stale because the effective user request changed")
+    current_generation = store.generation()
+    result_generation = int(item.get("result_generation") if item.get("result_generation") is not None else -1)
+    if result_generation != current_generation:
+        raise RuntimeError(
+            f"semantic result is stale for generation {current_generation}; expected generation {result_generation}"
+        )
+    return {
+        "semantic_result_id": str(item["semantic_result_id"]),
+        "isolation_id": str(item["isolation_id"]),
+        "consumer": str(item["consumer"]),
+        "stage": str(item["stage"]),
+        "input_sha256": str(item["input_sha256"]),
+        "instruction_sha256": str(item["instruction_sha256"]),
+        "request_sha256": str(item["request_sha256"]),
+        "generation": result_generation,
+        "executor": "logical_isolation",
+        "authoritative_current": True,
+        "result": item.get("result"),
     }
 
 
