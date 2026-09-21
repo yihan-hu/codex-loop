@@ -95,7 +95,7 @@ Completion checks machine-observable blockers only:
 
 - `PASS`: machine blockers are clear. It is not a semantic correctness verdict and emits no “finish now” instruction.
 - `CONTINUE`: a real machine condition remains, such as explicitly required validation, unresolved external action, or managed-process cleanup.
-- `BLOCKED`: a hard state/safety invariant is violated, such as workspace identity mismatch or protected/read-only mutation.
+- `BLOCKED`: a hard state/safety invariant is violated, such as workspace identity mismatch, protected-work mutation under durable tracking, or any mutation in a read-only profile.
 
 An unfinished optional plan is not a blocker.
 

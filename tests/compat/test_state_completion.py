@@ -17,8 +17,6 @@ class LightweightCompletionTests(unittest.TestCase):
         store = create_store(root)
         store.configure_task(
             store.path.parent.name,
-            'objective',
-            [],
             request_anchor='exact user request',
             profile=profile,
             requires_validation=requires_validation,
@@ -33,13 +31,13 @@ class LightweightCompletionTests(unittest.TestCase):
             store = self.make_store(root)
             self.assertEqual(assess(root, store).status, CompletionStatus.PASS)
 
-    def test_unfinished_plan_continues_until_completed(self):
+    def test_unfinished_plan_does_not_gate_completion(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
             store = self.make_store(root)
             store.set_plan([{'step': 'inspect', 'status': 'in_progress'}])
-            self.assertEqual(assess(root, store).status, CompletionStatus.CONTINUE)
+            self.assertEqual(assess(root, store).status, CompletionStatus.PASS)
             store.set_plan([{'step': 'inspect', 'status': 'completed'}])
             self.assertEqual(assess(root, store).status, CompletionStatus.PASS)
 
@@ -60,21 +58,20 @@ class LightweightCompletionTests(unittest.TestCase):
             action_id = store.record_external("github_push", "planned", "push:abc", action_class="external_non_idempotent")
             store.record_external("github_push", "dispatched", "push:abc", action_class="external_non_idempotent", action_id=action_id)
             view = build_lifecycle_working(store)
-            self.assertEqual(view["state"]["completion"], "CONTINUE")
-            self.assertEqual(view["next_actions"][0]["kind"], "required")
-            self.assertIn("external", view["next_actions"][0]["action"])
+            self.assertFalse(view["machine"]["blockers_clear"])
+            self.assertIn("external action state is unresolved", view["machine"]["blockers"])
 
     def test_lifecycle_only_reconciles_external_action_before_plan_work(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             store = create_store(root)
-            store.configure_task(store.path.parent.name, 'objective', [], request_anchor='exact user request')
+            store.configure_task(store.path.parent.name, request_anchor='exact user request')
             store.set_plan([{'step': 'continue implementation', 'status': 'in_progress'}])
             action_id = store.record_external('deploy', 'planned', 'deploy:abc', action_class='external_non_idempotent')
             store.record_external('deploy', 'dispatched', 'deploy:abc', action_class='external_non_idempotent', action_id=action_id)
             view = build_lifecycle_working(store)
-            self.assertIn('external', view['next_actions'][0]['action'])
-            self.assertNotEqual(view['next_actions'][0]['action'], 'continue implementation')
+            self.assertIn('external action state is unresolved', view['machine']['blockers'])
+            self.assertEqual(view['plan'][0]['step'], 'continue implementation')
 
     def test_lifecycle_only_projection_requires_validation_before_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -82,14 +79,12 @@ class LightweightCompletionTests(unittest.TestCase):
             store = create_store(root)
             store.configure_task(
                 store.path.parent.name,
-                'objective',
-                [],
                 request_anchor='exact user request',
                 requires_validation=True,
             )
             view = build_lifecycle_working(store)
-            self.assertEqual(view["state"]["completion"], "CONTINUE")
-            self.assertEqual(view["next_actions"][0]["kind"], "verify")
+            self.assertFalse(view["machine"]["blockers_clear"])
+            self.assertIn("required validation is missing", view["machine"]["blockers"])
 
 
     def test_steer_is_authoritative_without_ack_gate(self):

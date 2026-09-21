@@ -90,10 +90,10 @@ def main() -> None:
         assert orient["instructions"]["complete"] is True
         assert "sample.txt" in orient["preexisting_work"]["protected_paths"]
         assert orient["safe_to_mutate"] is True
-        # Ordinary orientation hashes only pre-existing dirty/protected files, so user work
-        # stays protected without a repository-wide baseline.
-        (repo / "sample.txt").write_text("agent clobber\n", encoding="utf-8")
-        assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "BLOCKED"
+        # Protected paths are semantic context in the lightweight loop, not a whole-file
+        # mutation ban. Codex-style edits may touch a dirty file while preserving user hunks.
+        (repo / "sample.txt").write_text("user work\nagent work\n", encoding="utf-8")
+        assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "PASS"
         (repo / "sample.txt").write_text("user work\n", encoding="utf-8")
         assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "PASS"
         instructions = run("instructions", "--task-id", task_id, "--cwd", str(nested))
@@ -109,6 +109,28 @@ def main() -> None:
         resumed_by_workspace = run("resume", "--cwd", str(nested))
         assert resumed_by_workspace["task"]["task_id"] == task_id
         assert resumed_by_workspace["resume_resolution"]["basis"] == "workspace_active_task"
+
+        authority_home = base / "authority-home"
+        exact_anchor = "Replace literal token=abcdefgh12345678 with token=ijklmnop87654321"
+        authority_task = run_with_home(authority_home, "bootstrap", "--request-anchor", exact_anchor)
+        assert authority_task["request_anchor"] == exact_anchor
+        exact_steer = "Keep literal secret=qrstuvwx12345678 unchanged."
+        run_with_home(authority_home, "steer", "--task-id", authority_task["task_id"], "--text", exact_steer)
+        authority = run_with_home(authority_home, "authority", "--task-id", authority_task["task_id"])
+        assert authority["request_anchor"] == exact_anchor
+        assert authority["steers"] == [exact_steer]
+
+        readonly_home = base / "readonly-home"
+        (repo / "sample.txt").write_text("user work\n", encoding="utf-8")
+        readonly_task = run_with_home(
+            readonly_home, "bootstrap", "--request-anchor", "Review only.", "--profile", "code_review"
+        )
+        run_with_home(readonly_home, "orient", "--task-id", readonly_task["task_id"], "--cwd", str(repo))
+        (repo / "sample.txt").write_text("user work\nmutated during review\n", encoding="utf-8")
+        assert run_with_home(
+            readonly_home, "completion", "--task-id", readonly_task["task_id"], "--cwd", str(repo)
+        )["status"] == "BLOCKED"
+        (repo / "sample.txt").write_text("user work\n", encoding="utf-8")
 
         # Local mode keeps lifecycle authority on the local host, independent of the
         # ChatGPT host's CODEX_LOOP_HOME and across separate runtime processes.

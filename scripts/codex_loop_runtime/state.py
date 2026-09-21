@@ -184,7 +184,7 @@ def scrub_persisted_text(value: str | None, *, limit: int = 8192) -> str | None:
     return text
 
 
-def scrub_request_authority_text(value: str | None) -> str:
+def normalize_request_authority_text(value: str | None) -> str:
     if value is None:
         return ""
     text = _unicode_safe(str(value))
@@ -192,7 +192,7 @@ def scrub_request_authority_text(value: str | None) -> str:
         raise ValueError(
             f"request authority text exceeds {MAX_REQUEST_AUTHORITY_CHARS} characters; refusing to silently truncate it"
         )
-    return scrub_persisted_text(text, limit=MAX_REQUEST_AUTHORITY_CHARS) or ""
+    return text
 
 
 def scrub_persisted_value(value: Any, *, depth: int = 0, string_limit: int = 4096) -> Any:
@@ -490,7 +490,7 @@ class StateStore:
         task_id = validate_task_id(task_id)
         if profile not in PROFILES:
             raise ValueError(f"invalid task profile: {profile}")
-        request_anchor = scrub_request_authority_text(request_anchor)
+        request_anchor = normalize_request_authority_text(request_anchor)
         if not request_anchor.strip():
             raise ValueError("task request anchor must not be empty")
         existing_anchor = self.request_anchor()
@@ -1331,7 +1331,7 @@ self, generation: int) -> dict[str, Any]:
         return item
 
     def record_steer(self, text: str) -> str:
-        clean = scrub_request_authority_text(text)
+        clean = normalize_request_authority_text(text)
         if not clean.strip():
             raise ValueError("steer text must not be empty")
         steer_id = uuid.uuid4().hex

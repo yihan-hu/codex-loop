@@ -112,14 +112,12 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
                     now = None
                 if now != before:
                     changed_protected.append(str(rel))
-            if changed_protected:
-                blockers.append("protected pre-existing user changes were modified")
             changed_any = False
             git_now = None
             if profile in READ_ONLY_PROFILES or profile == "command_only":
                 git_now = git_state(root, include_content_hashes=False)
                 git_before = store.get_meta("orientation_git", {}) or {}
-                changed_any = (
+                changed_any = bool(changed_protected) or (
                     git_now.get("head") != git_before.get("head")
                     or git_now.get("branch") != git_before.get("branch")
                     or git_now.get("status") != git_before.get("status")
@@ -130,7 +128,7 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
                 "root": str(root), "generation": generation, "tracking_active": False,
                 "added": [], "modified": [], "deleted": [], "renamed": [],
                 "protected_paths": sorted(protected_hashes),
-                "agent_owned_paths": [], "unexpected_protected_changes": changed_protected,
+                "agent_owned_paths": [], "unexpected_protected_changes": [],
                 "ignored_watch": store.get_meta("ignored_watch", {"watched_paths": [], "opaque_paths": []}),
                 "git": git_now or {"is_git": bool(binding.get("is_git"))},
             }

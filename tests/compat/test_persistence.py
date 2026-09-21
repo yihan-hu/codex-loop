@@ -17,7 +17,7 @@ class PersistenceTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         path = Path(tmp.name) / "state.sqlite3"
         store = StateStore(path)
-        store.configure_task("a" * 32, "Recover this objective", ["Do the thing"], profile="feature", requires_validation=False, request_anchor="Recover this objective")
+        store.configure_task("a" * 32, profile="feature", requires_validation=False, request_anchor="Recover this objective")
         store.set_meta("workspace_binding", {"base_commit": "1" * 40, "base_tree": "2" * 40, "canonical_root": "/secret/path"})
         return tmp, store
 
@@ -41,6 +41,22 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(manifest["workspace"]["repository"], "owner/repo")
         self.assertEqual(manifest["expires_at"], "2026-10-01T00:00:00Z")
         validate_state_manifest(manifest)
+
+    def test_manifest_preserves_exact_request_authority(self):
+        tmp, store = self.make_store()
+        self.addCleanup(tmp.cleanup)
+        store.record_steer("Keep the public API unchanged.")
+        manifest = build_state_manifest(Path("/repo"), Path("/repo"), store)
+        self.assertEqual(manifest["task"]["request_anchor"], "Recover this objective")
+        self.assertEqual(manifest["steers"], ["Keep the public API unchanged."])
+
+    def test_manifest_refuses_credential_like_authority_instead_of_redacting_it(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = StateStore(Path(tmp.name) / "state.sqlite3")
+        store.configure_task("b" * 32, request_anchor="Use token=abcdefgh12345678 exactly.")
+        with self.assertRaisesRegex(ValueError, "credential-like request authority"):
+            build_state_manifest(Path("/repo"), Path("/repo"), store)
 
     def test_cleanup_is_adapter_specific_and_requires_scope_proof(self):
         tmp, store = self.make_store()

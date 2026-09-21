@@ -13,7 +13,7 @@ Persistence exists only to recover a long task after conversation loss. It is no
 - hashed lineage for consequential unresolved external actions;
 - whether validation existed historically.
 
-It must not contain chain of thought, hidden instructions, credentials, cookies, approval/session tokens, raw tool transcripts, environment secrets, or raw external-action identities.
+It must not contain chain of thought, hidden instructions, credentials, cookies, approval/session tokens, raw tool transcripts, environment secrets, or raw external-action identities. Request authority is never silently redacted: if its exact text matches credential-like material, persistence export fails closed instead of changing the request or steer.
 
 ```bash
 python3 scripts/codex_loop.py persistence-export --task-id TASK --cwd REPO \

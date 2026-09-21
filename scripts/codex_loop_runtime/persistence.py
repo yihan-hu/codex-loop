@@ -10,7 +10,7 @@ from typing import Any
 
 from .change_tracker import capture_baseline
 from .release_lineage import capture_workspace_binding
-from .state import MAX_REQUEST_AUTHORITY_CHARS, StateStore, create_store, open_store, scrub_persisted_text, set_active_task, validate_task_id
+from .state import MAX_REQUEST_AUTHORITY_CHARS, StateStore, create_store, normalize_request_authority_text, open_store, scrub_persisted_text, set_active_task, validate_task_id
 
 SCHEMA_VERSION = 5
 BACKENDS = {"off", "google_drive"}
@@ -44,6 +44,15 @@ def _hash_identity(value: str | None) -> str | None:
 def _canonical_sha256(value: Any) -> str:
     payload = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _persistence_authority_text(value: str | None) -> str:
+    text = normalize_request_authority_text(value)
+    if scrub_persisted_text(text, limit=MAX_REQUEST_AUTHORITY_CHARS) != text:
+        raise ValueError(
+            "cross-conversation persistence cannot store credential-like request authority without changing it"
+        )
+    return text
 
 
 def persistence_policy(backend: str = "off") -> dict[str, Any]:
@@ -116,13 +125,13 @@ def build_state_manifest(
         "task": {
             "task_id": store.task_id,
             "status": status,
-            "request_anchor": scrub_persisted_text(store.request_anchor(), limit=MAX_REQUEST_AUTHORITY_CHARS) or "",
+            "request_anchor": _persistence_authority_text(store.request_anchor()),
             "profile": str(store.get_meta("profile", "regular")),
             "requires_validation": bool(store.get_meta("requires_validation", False)),
             "requires_clean_process_exit": bool(store.get_meta("requires_clean_process_exit", False)),
         },
         "plan": store.plan(),
-        "steers": [scrub_persisted_text(str(x.get("text", "")), limit=MAX_REQUEST_AUTHORITY_CHARS) or "" for x in store.request_steers()],
+        "steers": [_persistence_authority_text(str(x.get("text", ""))) for x in store.request_steers()],
         "external_actions": external_actions,
         "resume": {
             "checkpoint_present": checkpoint is not None,

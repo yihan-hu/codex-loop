@@ -340,7 +340,7 @@
       ]
     },
     {
-      "divergence": "Deterministic finish guard only. It checks machine-observable blockers such as missing explicitly required current validation, unresolved external/process state, protected/read-only mutation, and workspace binding mismatch. Optional plan state never gates completion; semantic final acceptance is model-owned.",
+      "divergence": "Deterministic finish guard only. It checks machine-observable blockers such as missing explicitly required current validation, unresolved external/process state, protected-work mutation when durable tracking is active, read-only mutation, and workspace binding mismatch. Optional plan state never gates completion; semantic final acceptance is model-owned.",
       "local": "scripts/codex_loop_runtime/completion.py",
       "mode": "HYBRID",
       "tests": {
