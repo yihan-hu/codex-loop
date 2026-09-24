@@ -86,6 +86,52 @@ class LightweightCompletionTests(unittest.TestCase):
             self.assertFalse(view["machine"]["blockers_clear"])
             self.assertIn("required validation is missing", view["machine"]["blockers"])
 
+    def test_lifecycle_status_transitions_are_distinct_from_execution_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            store = self.make_store(root)
+            store.pause()
+            self.assertEqual(store.task_status(), 'paused')
+            self.assertEqual(assess(root, store).status, CompletionStatus.BLOCKED)
+            previous, reason = store.resume()
+            self.assertEqual((previous, reason), ('paused', None))
+            store.block('waiting for user input')
+            view = build_lifecycle_working(store)
+            self.assertEqual(view['continuation']['mode'], 'blocked')
+            self.assertEqual(view['continuation']['blocked_reason'], 'waiting for user input')
+            previous, reason = store.resume()
+            self.assertEqual((previous, reason), ('blocked', 'waiting for user input'))
+            store.mark_complete()
+            self.assertEqual(store.task_status(), 'complete')
+            with self.assertRaisesRegex(RuntimeError, 'not resumable'):
+                store.resume()
+
+    def test_task_board_is_a_projection_of_the_three_state_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make_store(root)
+            store.set_plan([
+                {'step': 'done step', 'status': 'completed'},
+                {'step': 'current step', 'status': 'in_progress'},
+                {'step': 'later step', 'status': 'pending'},
+            ])
+            view = build_lifecycle_working(store)
+            self.assertEqual(view['task_board'], {
+                'doing': ['current step'], 'pending': ['later step'], 'done': ['done step'],
+            })
+
+    def test_live_process_projects_verified_wait_without_inventing_new_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make_store(root)
+            store.upsert_process('job-1', 123, ['pytest', '-q'], str(root), 'running')
+            view = build_lifecycle_working(store)
+            self.assertEqual(view['live_work']['mode'], 'verified_wait')
+            self.assertEqual(view['live_work']['processes'][0]['handle'], 'job-1')
+            self.assertIn('do not restart', view['live_work']['rule'])
+            self.assertEqual(assess(root, store).status, CompletionStatus.CONTINUE)
+
 
     def test_steer_is_authoritative_without_ack_gate(self):
         with tempfile.TemporaryDirectory() as tmp:

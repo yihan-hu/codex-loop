@@ -10,11 +10,11 @@ from typing import Any
 
 from .change_tracker import capture_baseline
 from .release_lineage import capture_workspace_binding
-from .state import MAX_REQUEST_AUTHORITY_CHARS, StateStore, create_store, normalize_request_authority_text, open_store, scrub_persisted_text, set_active_task, validate_task_id
+from .state import MAX_REQUEST_AUTHORITY_CHARS, TASK_STATUSES, StateStore, create_store, normalize_request_authority_text, open_store, scrub_persisted_text, set_workspace_task, validate_task_id
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 BACKENDS = {"off", "google_drive"}
-DEFAULT_TTL_DAYS = {"active": 30, "completed": 7, "cancelled": 7, "abandoned": 14}
+DEFAULT_TTL_DAYS = {"active": 30, "paused": 30, "blocked": 30, "complete": 7, "cancelled": 7}
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA64_RE = re.compile(r"^[0-9a-f]{64}$")
 _EXTERNAL_REQUIRES_RECONCILIATION = {"dispatched", "outcome_unknown"}
@@ -96,7 +96,7 @@ def build_state_manifest(
     if not policy["enabled"]:
         raise ValueError("persistence export requires an enabled backend")
     current = _utc_now(now)
-    status = str(store.get_meta("task_status", "active"))
+    status = store.task_status()
     ttl = int(ttl_days if ttl_days is not None else DEFAULT_TTL_DAYS.get(status, 14))
     if ttl < 1 or ttl > 365:
         raise ValueError("ttl_days must be between 1 and 365")
@@ -125,6 +125,7 @@ def build_state_manifest(
         "task": {
             "task_id": store.task_id,
             "status": status,
+            "blocked_reason": store.get_meta("blocked_reason") if status == "blocked" else None,
             "request_anchor": _persistence_authority_text(store.request_anchor()),
             "profile": str(store.get_meta("profile", "regular")),
             "requires_validation": bool(store.get_meta("requires_validation", False)),
@@ -193,6 +194,14 @@ def validate_state_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     task = result["task"]
     if not str(task.get("request_anchor") or "").strip():
         raise ValueError("persistence task requires request_anchor")
+    status = str(task.get("status") or "")
+    if status not in TASK_STATUSES:
+        raise ValueError(f"invalid persistence task status: {status}")
+    blocked_reason = task.get("blocked_reason")
+    if status == "blocked" and not str(blocked_reason or "").strip():
+        raise ValueError("blocked persistence task requires blocked_reason")
+    if status != "blocked" and blocked_reason is not None:
+        raise ValueError("blocked_reason is only valid for blocked persistence tasks")
     if not isinstance(task.get("requires_validation"), bool) or not isinstance(task.get("requires_clean_process_exit"), bool):
         raise ValueError("persistence task validation flags must be boolean")
     if not isinstance(result["plan"], list) or not isinstance(result["steers"], list):
@@ -386,7 +395,7 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
             store.set_meta("workspace_binding", capture_workspace_binding(root))
             store.set_meta("workspace_cwd", str(root))
             baseline_files = capture_baseline(root, store)
-            set_active_task(root, store.task_id)
+            set_workspace_task(root, store.task_id)
 
         observed_actions = {(x["kind"], x["identity_sha256"]): x for x in observations["external_actions"]}
         unresolved_external = []
@@ -433,6 +442,15 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
 
         store.set_meta("resume_lineage", {"resumed": True, "resume_source_manifest_sha256": _canonical_sha256(manifest), "resume_source_task": task_id})
         store.set_meta("historical_recovery_evidence", {"validation": "HISTORICAL", "historical": manifest["historical"]})
+        prior_status = str(task["status"])
+        if prior_status == "paused":
+            store.pause()
+        elif prior_status == "blocked":
+            store.block(str(task["blocked_reason"]))
+        elif prior_status == "complete":
+            store.mark_complete()
+        elif prior_status == "cancelled":
+            store.cancel("restored cancelled lifecycle")
     except Exception:
         shutil.rmtree(store.path.parent, ignore_errors=True)
         raise
@@ -454,6 +472,7 @@ def resume_state_manifest(root: Path, manifest: dict[str, Any], observations: di
         "baseline_files": baseline_files, "source_diverged": source_diverged,
         "missing_source_observations": missing_source, "unresolved_external_actions": unresolved_external,
         "plan": store.plan(), "historical_validation": "HISTORICAL",
+        "lifecycle_status": store.task_status(),
         "workspace_bound": bool(store.get_meta("workspace_binding")),
         "rule": "the original lifecycle id, request, steers, and plan resume; current repository/tool/external reality is authoritative",
     }

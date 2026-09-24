@@ -48,10 +48,9 @@ def ready_store(root: Path) -> StateStore:
     store = StateStore(root / ".git" / "codex-loop-test" / "router-state.sqlite3")
     store.configure_task(
         root.name,
-        "publication router",
-        ["route publication"],
         requires_validation=False,
-    request_anchor="publication router")
+        request_anchor="publication router",
+    )
     store.set_meta("workspace_binding", capture_workspace_binding(root))
     store.record_observed_validation(["pytest", "-q"], 0, cwd=root, evidence="publication fixture validation passed")
     return store

@@ -100,7 +100,7 @@ from codex_loop_runtime.workspace_cache import (
     validate_workspace_cache,
     workspace_cache_cleanup_plan,
 )
-from codex_loop_runtime.state import active_task_id, latest_active_task_id, open_store, set_active_task
+from codex_loop_runtime.state import workspace_task_id, latest_resumable_task_id, open_store, set_workspace_task
 from codex_loop_runtime.workspace import git_state, hash_workspace_path, repo_root, run_git, workspace_identity_status
 from codex_loop_runtime.workspace_registry import (
     grant_workspace,
@@ -181,7 +181,7 @@ def _scope_from_argv(argv: list[str]) -> tuple[Path, Path, object]:
     explicit_cwd = _cwd(argv[argv.index('--cwd') + 1]) if '--cwd' in argv else None
     task_id = argv[argv.index('--task-id') + 1] if '--task-id' in argv else None
     if not task_id and explicit_cwd is not None:
-        task_id = active_task_id(repo_root(explicit_cwd))
+        task_id = workspace_task_id(repo_root(explicit_cwd))
     if not task_id:
         raise RuntimeError('no active codex-loop lifecycle; pass --task-id')
     store = open_store(None, task_id)
@@ -312,7 +312,7 @@ def _cmd_orient(argv: list[str]) -> int:
         store.set_meta('protected_paths', list(git.get('protected_paths', [])))
         store.set_meta('protected_path_hashes', protected_hashes)
         store.set_meta('instruction_complete', bool(instruction_state['complete']))
-        set_active_task(root, store.task_id)
+        set_workspace_task(root, store.task_id)
         if rebound:
             store.bump_generation()
             store.set_meta('baseline_enabled', False)
@@ -380,8 +380,8 @@ def _cmd_authority(argv: list[str]) -> int:
 def _continuation_payload(
     store, raw_cwd: str | None = None, *, reentry: bool = False,
 ) -> dict[str, object]:
-    """Return cheap active-turn context for next; do full recovery observation only for resume."""
-    store.ensure_active()
+    """Return lifecycle context for next; do full recovery observation only for resume."""
+    store.task_status()
     binding = store.get_meta('workspace_binding')
     if not binding:
         return build_lifecycle_working(store)
@@ -434,10 +434,10 @@ def _cmd_resume(argv: list[str]) -> int:
     task_id = args.task_id
     if not task_id and args.cwd:
         root = repo_root(_cwd(args.cwd))
-        task_id = active_task_id(root)
-        resolution = 'workspace_active_task'
+        task_id = workspace_task_id(root)
+        resolution = 'workspace_task_pointer'
         if not task_id:
-            task_id = latest_active_task_id(root)
+            task_id = latest_resumable_task_id(root)
             resolution = 'workspace_bound_latest'
         if not task_id:
             raise RuntimeError(
@@ -445,16 +445,21 @@ def _cmd_resume(argv: list[str]) -> int:
                 'do not fall back to another lifecycle'
             )
     elif not task_id:
-        task_id = latest_active_task_id()
-        resolution = 'latest_active_task'
+        task_id = latest_resumable_task_id()
+        resolution = 'latest_resumable_task'
         if not task_id:
             raise RuntimeError('no resumable codex-loop lifecycle was found; bootstrap only if this is a genuinely new objective')
 
-    working = _continuation_payload(open_store(None, task_id), args.cwd, reentry=True)
+    store = open_store(None, task_id)
+    previous_status, prior_blocked_reason = store.resume()
+    working = _continuation_payload(store, args.cwd, reentry=True)
     working['resume_resolution'] = {
         'task_id': task_id,
         'basis': resolution,
         'created_new_lifecycle': False,
+        'previous_status': previous_status,
+        'requires_blocker_recheck': previous_status == 'blocked',
+        'prior_blocked_reason': prior_blocked_reason,
     }
     emit_ok(working)
     return 0
@@ -579,7 +584,7 @@ def _cmd_validation_record(argv: list[str]) -> int:
     args = p.parse_args(argv[1:])
     cwd = _cwd(args.cwd)
     root = repo_root(cwd)
-    task_id = args.task_id or active_task_id(root)
+    task_id = args.task_id or workspace_task_id(root)
     if not task_id:
         raise RuntimeError('no active codex-loop task; run bootstrap or pass --task-id')
     store = open_store(root, task_id)

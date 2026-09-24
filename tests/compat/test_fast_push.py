@@ -31,9 +31,10 @@ def init_repo(root: Path) -> str:
 def make_store(root: Path):
     store = create_store(root)
     store.configure_task(
-        store.path.parent.name, "fast push", ["fast path works"],
+        store.path.parent.name,
         requires_validation=False,
-    request_anchor="fast push")
+        request_anchor="fast push",
+    )
     store.set_meta("workspace_binding", capture_workspace_binding(root))
     capture_baseline(root, store)
     return store

@@ -103,7 +103,7 @@ class SourceAcquisitionFallbackTests(unittest.TestCase):
             self.assertEqual(result["classification"], "WORKSPACE_GIT_IDENTITY_MISMATCH")
             self.assertFalse(result["fallback_allowed"])
             self.assertIn("Git HEAD does not equal expected source commit", result["reasons"])
-            self.assertIn("stop before bootstrap or mutation", result["next"])
+            self.assertIn("stop before lifecycle rebind or mutation", result["next"])
 
     def test_identity_mismatch_never_auto_falls_back(self):
         result = restored_identity_result(

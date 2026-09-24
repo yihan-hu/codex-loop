@@ -73,7 +73,7 @@ def main() -> None:
         task_id = lifecycle["task_id"]
         state_path = Path(lifecycle["state"])
         assert lifecycle["workspace_bound"] is False
-        assert run("completion", "--task-id", task_id)["status"] == "PASS"
+        assert run("next", "--task-id", task_id)["machine"]["blockers_clear"] is True
         task_db_count = lambda: len(list(state_path.parent.parent.glob("*/state.sqlite3")))
         assert task_db_count() == 1
         immediate_resume = run("resume", "--last")
@@ -93,9 +93,9 @@ def main() -> None:
         # Protected paths are semantic context in the lightweight loop, not a whole-file
         # mutation ban. Codex-style edits may touch a dirty file while preserving user hunks.
         (repo / "sample.txt").write_text("user work\nagent work\n", encoding="utf-8")
-        assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "PASS"
+        assert run("snapshot", "--task-id", task_id, "--cwd", str(repo))["completion"]["status"] == "PASS"
         (repo / "sample.txt").write_text("user work\n", encoding="utf-8")
-        assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "PASS"
+        assert run("snapshot", "--task-id", task_id, "--cwd", str(repo))["completion"]["status"] == "PASS"
         instructions = run("instructions", "--task-id", task_id, "--cwd", str(nested))
         assert [item["contents"] for item in instructions["entries"]] == [
             "root instruction\n", "nested instruction\n"
@@ -108,7 +108,7 @@ def main() -> None:
         assert state_path.is_relative_to(host_home.resolve() / "runtime" / "tasks")
         resumed_by_workspace = run("resume", "--cwd", str(nested))
         assert resumed_by_workspace["task"]["task_id"] == task_id
-        assert resumed_by_workspace["resume_resolution"]["basis"] == "workspace_active_task"
+        assert resumed_by_workspace["resume_resolution"]["basis"] == "workspace_task_pointer"
 
         authority_home = base / "authority-home"
         exact_anchor = "Replace literal token=abcdefgh12345678 with token=ijklmnop87654321"
@@ -144,7 +144,7 @@ def main() -> None:
         run_with_home(local_home, "orient", "--task-id", local_task_id, "--cwd", str(repo))
         local_resumed = run_with_home(local_home, "resume", "--cwd", str(repo))
         assert local_resumed["task"]["task_id"] == local_task_id
-        assert local_resumed["resume_resolution"]["basis"] == "workspace_active_task"
+        assert local_resumed["resume_resolution"]["basis"] == "workspace_task_pointer"
 
         unbound = base / "unbound-repo"
         unbound.mkdir()
@@ -171,9 +171,10 @@ def main() -> None:
         assert "objective" not in next_view["task"]
         assert "acceptance" not in next_view
         assert "next_actions" not in next_view
-        assert all("finish" not in line.lower() for line in next_view["execution_contract"])
+        assert next_view["task_board"]["doing"] == ["Finish sample"]
+        assert all("finish now" not in line.lower() for line in next_view["continuation_contract"])
         # A Codex-style plan is working memory, not a deterministic completion gate.
-        assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "PASS"
+        assert run("snapshot", "--task-id", task_id, "--cwd", str(repo))["completion"]["status"] == "PASS"
         assert run("authority", "--task-id", task_id)["steers"] == ["Keep the file newline-terminated."]
         resumed_without_id = run("resume", "--last")
         assert resumed_without_id["task"]["task_id"] == task_id
@@ -182,12 +183,24 @@ def main() -> None:
         assert resumed_without_id["request"]["steers"] == ["Keep the file newline-terminated."]
         assert task_db_count() == 1
 
+        run("pause", "--task-id", task_id)
+        assert run("next", "--task-id", task_id)["task"]["status"] == "paused"
+        resumed_from_pause = run("resume", "--task-id", task_id)
+        assert resumed_from_pause["task"]["status"] == "active"
+        assert resumed_from_pause["resume_resolution"]["previous_status"] == "paused"
+        run("block", "--task-id", task_id, "--reason", "waiting for external confirmation")
+        blocked_view = run("next", "--task-id", task_id)
+        assert blocked_view["continuation"]["mode"] == "blocked"
+        assert blocked_view["continuation"]["blocked_reason"] == "waiting for external confirmation"
+        resumed_from_block = run("resume", "--task-id", task_id)
+        assert resumed_from_block["task"]["status"] == "active"
+        assert resumed_from_block["resume_resolution"]["requires_blocker_recheck"] is True
+        assert resumed_from_block["resume_resolution"]["prior_blocked_reason"] == "waiting for external confirmation"
+
         run(
             "plan", "--task-id", task_id, "--plan-json",
             '[{"step":"Inspect sample","status":"completed"},{"step":"Finish sample","status":"completed"}]',
         )
-        assert run("completion", "--task-id", task_id, "--cwd", str(repo))["status"] == "PASS"
-
         exported = run(
             "persistence-export", "--task-id", task_id, "--cwd", str(repo),
             "--backend", "google_drive", "--repository", "smoke/repo",
@@ -217,6 +230,17 @@ def main() -> None:
         rebound = run("orient", "--task-id", task_id, "--cwd", str(repo), "--rebind-verified")
         assert rebound["rebound"] is True
         assert run("next", "--task-id", task_id)["workspace"]["recovery_required"] is False
+
+        completed = run("completion", "--task-id", task_id, "--cwd", str(repo))
+        assert completed["status"] == "PASS"
+        assert completed["lifecycle_status"] == "complete"
+        assert run("next", "--task-id", task_id)["task"]["status"] == "complete"
+        completed_resume = subprocess.run(
+            [sys.executable, str(CLI), "resume", "--task-id", task_id],
+            text=True, capture_output=True, env=os.environ.copy(),
+        )
+        assert completed_resume.returncode != 0
+        assert "not resumable: complete" in (completed_resume.stdout + completed_resume.stderr)
 
     print("codex-loop smoke: PASS")
 

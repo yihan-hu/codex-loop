@@ -34,9 +34,17 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
     if reconcile and binding is not None:
         sync_generation(root, store)
 
-    task_status = str(store.get_meta("task_status", "uninitialized"))
+    task_status = store.task_status()
+    if task_status == "complete":
+        return CompletionDecision(CompletionStatus.PASS, (), {"task_status": task_status})
     if task_status == "cancelled":
         return CompletionDecision(CompletionStatus.BLOCKED, ("task is cancelled",), {"task_status": task_status})
+    if task_status == "paused":
+        return CompletionDecision(CompletionStatus.BLOCKED, ("task is paused",), {"task_status": task_status})
+    if task_status == "blocked":
+        reason = str(store.get_meta("blocked_reason", "") or "").strip()
+        message = f"task is blocked: {reason}" if reason else "task is blocked"
+        return CompletionDecision(CompletionStatus.BLOCKED, (message,), {"task_status": task_status})
     if task_status != "active":
         return CompletionDecision(
             CompletionStatus.BLOCKED,
@@ -79,10 +87,14 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
     if store.ambiguous_non_idempotent_identity_count():
         blockers.append("non-idempotent external action identity is ambiguous")
 
-    running_processes = store.running_process_count()
+    live_processes = len(store.live_process_rows())
+    orphaned_processes = store.orphaned_process_count()
+    running_processes = live_processes + orphaned_processes
     unresolved_process_failures = store.unresolved_process_failure_count()
-    if running_processes:
-        reasons.append(f"{running_processes} managed process(es) still need cleanup")
+    if live_processes:
+        reasons.append(f"{live_processes} managed process(es) are still live; observe the existing handle instead of restarting")
+    if orphaned_processes:
+        blockers.append(f"{orphaned_processes} orphaned managed process(es) require reconciliation")
     if unresolved_process_failures:
         reasons.append(f"{unresolved_process_failures} managed process failure(s) are unresolved")
 
@@ -159,6 +171,8 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
             "unresolved_external": unresolved_external,
             "unresolved_external_failures": unresolved_external_failures,
             "running_processes": running_processes,
+            "live_processes": live_processes,
+            "orphaned_processes": orphaned_processes,
             "unresolved_process_failures": unresolved_process_failures,
             "warnings": warnings,
             "latest_release": store.latest_release_receipt(),

@@ -32,13 +32,54 @@ def _steers(items: list[dict[str, Any]]) -> tuple[list[str], int]:
     return result, omitted
 
 
-EXECUTION_CONTRACT = (
-    "Keep working until the user's actual requested end state is true.",
-    "Do not stop at diagnosis, a plan, a plausible partial fix, or passing checks while authorized work remains.",
-    "Prefer current repository/tool evidence over lifecycle summaries.",
-    "Repair resolvable failures and continue.",
-    "Before yielding, compare the actual result with the exact user request and run the smallest relevant validation.",
+CONTINUATION_CONTRACT = (
+    "Keep the exact request plus later steers as the objective; do not shrink it to what fits this turn.",
+    "Work from current repository, tool, process, and external state; re-observe anything that may have gone stale.",
+    "Make concrete progress toward the real requested end state; status restatements and unexecuted plan updates are not progress.",
+    "If task-owned work is confirmed live, observe the existing handle instead of restarting it; an observation timeout is not terminal evidence.",
+    "Repair resolvable failures and continue; use blocked only for a genuine impasse with no remaining safe useful work.",
+    "Treat completion as unproven: derive material requirements from the request, verify each against current authoritative evidence, then run the smallest relevant validation.",
 )
+
+
+def _task_board(plan: list[dict[str, str]]) -> dict[str, list[str]]:
+    return {
+        "doing": [item["step"] for item in plan if item["status"] == "in_progress"],
+        "pending": [item["step"] for item in plan if item["status"] == "pending"],
+        "done": [item["step"] for item in plan if item["status"] == "completed"],
+    }
+
+
+def _continuation_state(store: StateStore) -> dict[str, Any]:
+    status = store.task_status()
+    mode = {
+        "active": "execute",
+        "paused": "paused",
+        "blocked": "blocked",
+        "complete": "terminal",
+        "cancelled": "terminal",
+    }[status]
+    result: dict[str, Any] = {
+        "mode": mode,
+        "resumable": status in {"active", "paused", "blocked"},
+    }
+    if status == "blocked":
+        result["blocked_reason"] = store.get_meta("blocked_reason")
+    return result
+
+
+def _live_work_projection(store: StateStore) -> dict[str, Any] | None:
+    rows = store.live_process_rows()
+    if not rows:
+        return None
+    return {
+        "mode": "verified_wait",
+        "processes": [
+            {"handle": row.get("handle"), "state": row.get("state"), "pid": row.get("pid"), "cwd": row.get("cwd")}
+            for row in rows[:8]
+        ],
+        "rule": "observe these existing handles; do not restart solely because a prior observation timed out",
+    }
 
 
 def _validation_status(store: StateStore, generation: int, state: dict[str, Any]) -> str:
@@ -117,7 +158,7 @@ def full_projection(facts: dict[str, Any]) -> dict[str, Any]:
         }
     return {
         "task_id": store.task_id,
-        "task_status": store.get_meta("task_status", "uninitialized"),
+        "task_status": store.task_status(),
         "profile": store.get_meta("profile", "regular"),
         "request_anchor": store.request_anchor(),
         "request_steers": [str(x.get("text", "")) for x in facts["request_steers"]],
@@ -158,24 +199,26 @@ def _request_projection(store: StateStore) -> tuple[dict[str, Any], bool, dict[s
 def _base_working_projection(store: StateStore) -> dict[str, Any]:
     request, reload_required, truncated = _request_projection(store)
     result: dict[str, Any] = {
-        "context_version": 5,
+        "context_version": 6,
         "task": {
             "task_id": store.task_id,
             "profile": store.get_meta("profile", "regular"),
-            "status": store.get_meta("task_status", "uninitialized"),
+            "status": store.task_status(),
         },
         "request": request,
-        "execution_contract": list(EXECUTION_CONTRACT),
+        "continuation": _continuation_state(store),
+        "continuation_contract": list(CONTINUATION_CONTRACT),
         "authority_reload_required": reload_required,
         "resume_rule": (
-            "resume this same lifecycle; reload complete authority if truncated; re-observe current external "
-            "reality only where it may have gone stale; never re-bootstrap or redo completed work merely for bookkeeping"
+            "resume this same lifecycle; a plain user continue is not a steer; reload complete authority if truncated; "
+            "re-observe stale reality and existing live work before starting replacements"
         ),
         "truncated": truncated,
     }
     plan = store.plan()
     if plan:
         result["plan"] = plan
+        result["task_board"] = _task_board(plan)
     return result
 
 
@@ -207,6 +250,9 @@ def working_projection(facts: dict[str, Any]) -> dict[str, Any]:
         "blockers": blockers,
         "warnings": warnings,
     }
+    live_work = _live_work_projection(store)
+    if live_work is not None:
+        result["live_work"] = live_work
     result["truncated"]["machine_blockers"] = max(0, len(decision.reasons) - MAX_REASONS)
     return result
 
@@ -227,8 +273,12 @@ def build_lifecycle_working(store: StateStore, *, workspace_status: dict[str, An
         blockers.append("delegated work is still active")
     if store.unresolved_external_count() or store.unresolved_external_failure_count():
         blockers.append("external action state is unresolved")
-    if store.running_process_count() or store.unresolved_process_failure_count():
-        blockers.append("task-owned process state is unresolved")
+    live_processes = store.live_process_rows()
+    if live_processes:
+        blockers.append(f"{len(live_processes)} task-owned process(es) are still live")
+        result["live_work"] = _live_work_projection(store)
+    if store.orphaned_process_count() or store.unresolved_process_failure_count():
+        blockers.append("task-owned process state requires reconciliation")
     validation = store.validation_state_for_generation(store.generation())
     validation_status = _validation_status(store, store.generation(), validation)
     if validation_status in {"missing", "stale"}:

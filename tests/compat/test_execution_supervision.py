@@ -96,12 +96,11 @@ class CompletionSeparationTests(unittest.TestCase):
         store = create_store(root)
         store.configure_task(
             store.path.parent.name,
-            "run tests",
-            ["tests pass"],
+            request_anchor="run tests",
             profile="feature",
             requires_validation=True,
             requires_clean_process_exit=clean_exit,
-        request_anchor="run tests")
+        )
         capture_baseline(root, store)
         return store
 

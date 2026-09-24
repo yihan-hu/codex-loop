@@ -10,15 +10,16 @@ VALIDATE MANIFEST -> OBSERVE CURRENT REALITY -> RECONCILE -> RESTORE REQUEST/PLA
 
 `persistence-resume-plan` requests only facts that can become stale outside the manifest, such as workspace presence, expected Git HEAD/tree, and unresolved consequential external actions. The host supplies those observations.
 
-A v5 resume restores:
+A v6 resume restores:
 
 - request anchor and ordered steers;
+- lifecycle status (`active | paused | blocked | complete | cancelled`) and the concrete blocked reason when applicable;
 - optional three-state plan;
 - profile and validation requirement;
 - workspace lineage;
 - unresolved external-action lineage after real provider reconciliation.
 
-It does **not** restore semantic PASS state. Historical validation remains historical. The resumed model should inspect the repository/tool state, update the plan if needed, then continue from the smallest useful next action.
+It does **not** restore semantic PASS state. Historical validation remains historical. Persistence restoration itself does not silently reactivate `paused`/`blocked` or terminal work. A later explicit user continuation goes through normal `resume`: paused/blocked become a fresh active attempt, a prior blocker is re-observed, and complete/cancelled remain terminal. Current repository/tool/process/external state still outranks the restored plan.
 
 If current source commit/tree differs from the manifest, report `SOURCE_DIVERGED` and keep the same lifecycle id and reconcile it to current reality. Do not pretend old validation still applies.
 

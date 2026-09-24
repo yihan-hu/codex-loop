@@ -57,6 +57,10 @@ Generic lifecycle pathology belongs in the execution-supervision layer. Do not d
 
 Host capability remains authoritative. Where the host cannot expose process groups, descendants, signals, or teardown grace, record partial supervision (`PROCESS_SUPERVISION_PARTIAL`) instead of pretending full lifecycle control.
 
+## Verified wait on continuation
+
+When `next`/`resume` observes a task-owned process in `running` or `draining`, expose it as `live_work.mode = verified_wait` with its existing handle. Re-poll or otherwise inspect that same owned work. A prior observation timeout, transient polling failure, conversation summary, or state-file hint is not terminal evidence and never justifies starting a duplicate process. Treat work as stopped only when authoritative process state is terminal or ownership/handle reconciliation shows it is missing. Orphaned ownership remains a machine blocker that must be reconciled; it is not a verified wait.
+
 ## Host/RDC execution safety
 
 This is the single safety policy for host-visible and RDC-launched commands. Do not create a parallel state machine for these rules.

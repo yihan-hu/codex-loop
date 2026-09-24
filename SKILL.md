@@ -26,25 +26,36 @@ python3 scripts/codex_loop.py bootstrap \
   --request-anchor 'EXACT CURRENT USER REQUEST'
 ```
 
-Keep the returned `task_id` as the lifecycle identity for the rest of the objective. Pass it explicitly to every later command that reads or mutates lifecycle state; do not let a workspace-local active-task pointer choose the lifecycle for model execution. Lifecycle creation is workspace-independent; repository/filesystem tasks bind a workspace afterward with `orient`. Creating the lifecycle must not depend on repository acquisition, a plan, a checkpoint, or cross-chat persistence.
+Keep the returned `task_id` as the lifecycle identity for the rest of the objective. Pass it explicitly to every later command that reads or mutates lifecycle state; do not let a workspace-local task pointer choose the lifecycle for model execution. Lifecycle creation is workspace-independent; repository/filesystem tasks bind a workspace afterward with `orient`. Creating the lifecycle must not depend on repository acquisition, a plan, a checkpoint, or cross-chat persistence.
 
 For an explicitly Local objective, perform that same bootstrap through RDC on the local host. Use the dedicated local runtime cache `~/.codex-loop/runtime-src`; if it is absent, provision it from the public canonical Codex Loop repository, and if it is present require it to be a clean runtime-owned checkout before fast-forwarding it. Then run `python3 ~/.codex-loop/runtime-src/scripts/codex_loop.py ...`. The resulting `~/.codex-loop/runtime` on the local host is authoritative for the lifecycle. A ChatGPT-host `/home/oai/.codex-loop` copy is not a fallback or mirror for that Local objective.
 
-After Local admission, every lifecycle command for that objective (`orient`, `next`, `resume`, `steer`, `plan`, `validate`, `completion`, and related state mutations) runs on the same local runtime through RDC. If the local runtime or its durable state is unavailable, fail closed instead of bootstrapping or resuming a second lifecycle on the ChatGPT host.
+After Local admission, every lifecycle command for that objective (`orient`, `next`, `resume`, `steer`, `plan`, `pause`, `block`, `validate`, `completion`, and related state mutations) runs on the same local runtime through RDC. If the local runtime or its durable state is unavailable, fail closed instead of bootstrapping or resuming a second lifecycle on the ChatGPT host.
 
 Do not create a second lifecycle for an ordinary follow-up to the same objective. Never re-bootstrap merely because the user says `continue`, `resume`, or `继续`. A successful `bootstrap` is immediately resumable from its durable task state, even before workspace orientation.
+
+Lifecycle status is deliberately small and separate from plan state:
+
+- `active`: work may proceed;
+- `paused`: the user explicitly asked to pause; only an explicit continuation/resume reactivates it;
+- `blocked`: a concrete blocker is currently confirmed, no remaining safe useful action can advance the objective, and progress requires user input or an external-state change;
+- `complete`: terminal success after semantic acceptance plus the final machine completion check;
+- `cancelled`: terminal user cancellation.
+
+Never invent host-owned `usage_limited` or `budget_limited` states when the host does not expose authoritative budget data. Plan items remain only `pending | in_progress | completed`; do not duplicate lifecycle `blocked` inside the plan.
 
 ## Always-on execution authority
 
 Keep lifecycle authority separate from optional capabilities. The exact initial user request plus later user corrections are the task authority. Do not create a model-written objective or acceptance specification for the same task.
 
-Use this execution contract after admission:
+Use this continuation contract after admission:
 
-1. Keep working until the user's actual requested end state is true.
-2. Do not stop at diagnosis, a plan, a plausible partial fix, or passing checks while authorized work remains.
-3. Prefer current repository/tool evidence over lifecycle summaries.
-4. If a resolvable failure appears, repair it and continue.
-5. Before yielding, compare the actual result with the exact user request and run the smallest relevant validation.
+1. Keep the exact request plus later steers as the objective; never shrink it to what fits one turn.
+2. Work from current repository, tool, process, and external state. Re-observe anything that may have gone stale; current reality outranks lifecycle summaries, plans, checkpoints, and historical validation.
+3. Make concrete progress toward the requested end state. A status explanation or plan update without executed work/evidence is not progress.
+4. If task-owned work is confirmed live, observe the existing handle instead of restarting it. An observation timeout or transient polling failure is not terminal evidence.
+5. Repair resolvable failures and continue. Use `blocked` only for a genuine impasse with no remaining safe useful work; do not use it merely because work is difficult, slow, uncertain, or incomplete.
+6. Treat completion as unproven until the actual request is verified requirement by requirement against current authoritative evidence.
 
 For repository or filesystem work, bind/orient the existing lifecycle once before the first mutation:
 
@@ -89,26 +100,27 @@ The user owns **what** may change; the model owns **how**. The effective request
 Before finishing:
 
 1. Re-read the exact request plus later steers.
-2. Inspect the actual final artifact/diff/state that matters.
-3. Remove unrelated or merely beneficial changes.
-4. Check applicable repository instructions and preserve pre-existing user work.
-5. Run the smallest relevant validation not already current for the changed behavior.
-6. If a material requirement remains unsatisfied, continue working.
-7. Otherwise run `completion` once and finish if no machine blocker remains.
+2. Derive the material requirements that must be true, including named artifacts, commands, invariants, gates, and deliverables.
+3. For each material requirement, identify current authoritative evidence that would prove it, then inspect the actual artifact/diff/runtime/external state at the matching scope.
+4. Treat missing, stale, indirect, or narrower-than-required evidence as not proven; gather stronger evidence or continue working.
+5. Remove unrelated or merely beneficial changes, check applicable repository instructions, and preserve pre-existing user work.
+6. Run the smallest relevant validation not already current for the changed behavior.
+7. If any material requirement remains unsatisfied or unverified, continue working. If no safe useful action remains because of a concrete external/user dependency, use `block --reason ...`.
+8. Otherwise run `completion` once. A `PASS` transitions the lifecycle to terminal `complete`; do not use `completion` as a mid-task probe.
 
 Passing tests or a clear lifecycle status never substitutes for this semantic acceptance.
 
 ## Continuation and steering
 
-A continuation never creates a new lifecycle. If the task is still active in the current model context, keep using the known `task_id`; no lifecycle heartbeat is required.
+A continuation never creates a new lifecycle. If the task is still known in the current model context, keep using the known `task_id`; no lifecycle heartbeat is required.
 
-`next` is a cheap **state-only** capsule for the already-known lifecycle. It does not reconcile the repository, rediscover instructions, hash workspace content, or tell the model to finish:
+`next` is a cheap **state-only** capsule for the already-known lifecycle, including current lifecycle status, the optional plan and its task-board projection, and any known live-work handles. It does not change `paused`/`blocked` status, reconcile the repository, rediscover instructions, hash workspace content, or tell the model to finish:
 
 ```bash
 python3 scripts/codex_loop.py next --task-id TASK
 ```
 
-Use `resume` only for real re-entry after context loss, reconnect, cross-turn identity recovery, or other interruption. `resume` re-observes the bound workspace and scoped instructions before work continues:
+Use `resume` for real re-entry after context loss/reconnect/cross-turn recovery and for an explicit user request such as `continue`, `resume`, or `继续`. User wording stays natural; `resume` is the internal recovery mechanism:
 
 ```bash
 python3 scripts/codex_loop.py resume --task-id TASK
@@ -116,7 +128,18 @@ python3 scripts/codex_loop.py resume --cwd REPO
 python3 scripts/codex_loop.py resume --last
 ```
 
+For `active`, `resume` continues the same lifecycle. For `paused`, it reactivates the same lifecycle. For `blocked`, it reactivates only as a fresh attempt to advance the objective and returns the prior blocker so the model must re-observe that condition; re-block if the same concrete dependency still prevents all useful work. `complete` and `cancelled` are terminal and must never be silently revived by `resume`.
+
 For a Local lifecycle, all lifecycle commands continue through RDC on the same Mac runtime. Never resume or bootstrap a second host-side lifecycle. If the returned authority is truncated, fetch the complete request/steers with `authority` before acting. Re-observe only reality that may have gone stale; do not redo completed work because a plan or historical receipt exists.
+
+When the user explicitly pauses or a genuine impasse is reached:
+
+```bash
+python3 scripts/codex_loop.py pause --task-id TASK
+python3 scripts/codex_loop.py block --task-id TASK --reason 'concrete currently observed blocker'
+```
+
+Do not emulate upstream Goal's repeated-auto-turn blocker threshold: the ChatGPT Skill host cannot start autonomous continuation turns, so a local turn counter would be fake orchestration. `blocked` instead means the current evidence shows a genuine impasse and no safe useful work remains.
 
 Every later task-relevant user correction is recorded exactly before acting:
 
@@ -128,11 +151,11 @@ A pure `continue`/`resume` adds no new authority and needs no steer record.
 
 ## Thin lifecycle state
 
-The always-on state is intentionally small: exact request anchor, ordered steers, lifecycle identity/status, optional three-state plan, and only machine state needed by capabilities the task actually uses. Ordinary model-facing continuation context contains request authority, the execution contract, minimal workspace identity, active blockers, and optional plan. Internal telemetry, hashes, validation history, changed-path inventories, release receipts, and other diagnostics stay runtime-side unless explicitly pulled for debugging or a capability needs them.
+The always-on state is intentionally small: exact request anchor, ordered steers, lifecycle identity/status, optional `blocked_reason`, optional three-state plan, and only machine state needed by capabilities the task actually uses. Ordinary model-facing continuation context contains request authority, the continuation contract, minimal workspace identity, current lifecycle status, active machine blockers/live work, and optional plan. Internal telemetry, hashes, validation history, changed-path inventories, release receipts, and other diagnostics stay runtime-side unless explicitly pulled for debugging or a capability needs them.
 
 ### Codex-style plan
 
-A plan is optional working memory, not authority and not a completion gate. When useful, it uses only `pending | in_progress | completed`, with at most one `in_progress` item. Do not create a plan for a short task and do not update it after every action. An unfinished/stale plan never blocks completion when the actual user request is already satisfied.
+A plan is optional durable working memory, not authority, not a collaboration mode, and not a completion gate. Create one when the next work is meaningfully multi-step, the user explicitly asks for planning, or cross-turn continuity benefits from a concise work map; skip it for trivial one-step work. It uses only `pending | in_progress | completed`, with at most one `in_progress` item. Update it when meaningful stages finish or the best execution trajectory materially changes, not after every tool call. Current reality always outranks a stale plan, and an unfinished plan never blocks completion when the actual request is already satisfied.
 
 ```bash
 python3 scripts/codex_loop.py plan --task-id TASK --plan-json '[
@@ -141,6 +164,8 @@ python3 scripts/codex_loop.py plan --task-id TASK --plan-json '[
   {"step":"Run relevant tests","status":"pending"}
 ]'
 ```
+
+`next` derives a read-only task board from this same plan (`doing`, `pending`, `done`). The board has no separate storage or state machine. Do not add per-item blocked/retry/dependency semantics merely to make the board richer; if one item cannot proceed but other useful work exists, revise/reorder the plan and stay `active`; if the entire objective is genuinely stuck, use lifecycle `blocked`.
 
 ## Validation
 
@@ -154,7 +179,7 @@ Trivial or well-covered changes need no separate reviewer. Large, unfamiliar, we
 
 ## Deterministic completion blockers
 
-After semantic acceptance, call `completion --task-id TASK` once. It checks machine-observable safety/side-effect conditions only, such as:
+After semantic acceptance, call `completion --task-id TASK` once. It checks machine-observable safety/side-effect conditions only and, on `PASS`, atomically transitions the lifecycle from `active` to terminal `complete`. Do not call it merely to ask whether work seems done; use current evidence, `next`, or diagnostic projections while still working. Machine blockers include:
 
 - explicitly required durable validation is missing;
 - consequential external actions remain unresolved;
@@ -163,7 +188,7 @@ After semantic acceptance, call `completion --task-id TASK` once. It checks mach
 - a read-only task profile observed mutation;
 - the bound repository/workspace identity no longer matches.
 
-An unfinished plan is not a blocker. `PASS` means only `machine_blockers_clear`; it is not a semantic correctness verdict and must not generate a model-facing “finish now” instruction.
+An unfinished plan is not a blocker. `PASS` means only that the model already performed semantic acceptance and the final machine blockers are clear; the runtime itself still does not certify semantic correctness or generate a model-facing “finish now” instruction.
 
 ## Heavy reconciliation is lazy
 
@@ -171,7 +196,7 @@ Full repository content fingerprints, ignored-file watches, complete baselines, 
 
 ## Checkpoints and persistence
 
-Use ordinary host conversation continuity first. Checkpoint only before a genuinely long/noisy transition or when durable re-entry matters. Cross-conversation persistence is opt-in; its canonical authority is still request anchor + steers, not a model-written objective/acceptance restatement.
+Use ordinary host conversation continuity first. Checkpoint only before a genuinely long/noisy transition or when durable re-entry matters. Cross-conversation persistence is opt-in; its canonical authority is still request anchor + steers, not a model-written objective/acceptance restatement. Persistence restores the same lifecycle status, including a concrete blocked reason, plus the plan; it never turns historical validation into current proof. A later explicit user `continue` still passes through normal `resume` semantics.
 
 ## Repository and host routing
 

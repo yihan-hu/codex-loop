@@ -38,7 +38,7 @@ class SemanticCompatibilityRoutingTests(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text()
         routing = (ROOT / "references" / "interaction-routing.md").read_text()
         self.assertIn("references/interaction-routing.md", skill)
-        self.assertIn("Keep routing checks at the action boundary", skill)
+        self.assertIn("Before repository mutation, Git publication, local computer use, Skill deployment, or Web/Local transfer", skill)
         self.assertNotIn("Common command intent interception", skill)
         self.assertIn("`git clone`, `git pull`, `git fetch`", routing)
         self.assertIn("`git push`", routing)

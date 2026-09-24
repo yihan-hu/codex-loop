@@ -103,7 +103,7 @@ The preference is user-specific and is never committed. `python3 scripts/codex_l
 
 The host config is private runtime state outside the repository and outside `skill.zip`. It may coexist with non-sensitive workspace locators/preferences, but it does not store current `workspace_mode`, `interaction_target`, or `deployment_target`; those live in the conversation routing file. Host config must never contain credentials, approval/session tokens, or other secrets.
 
-Lifecycle task databases and the workspace-to-active-task pointer live on the lifecycle's execution surface at `~/.codex-loop/runtime` (or `CODEX_LOOP_HOME/runtime`). Web/default objectives use the ChatGPT host runtime. An explicitly Local objective bootstraps and resumes through RDC on the local Codex Loop runtime, so the authoritative state is the Mac's `~/.codex-loop/runtime`, not the transient ChatGPT host filesystem. The local runtime code itself is cached separately under `~/.codex-loop/runtime-src`; project checkouts are never lifecycle authority. If the local runtime/state is temporarily unavailable, Codex Loop fails closed rather than creating a host-side replacement lifecycle. Conversation routing state remains separate and temporary.
+Lifecycle task databases and the workspace-to-task pointer live on the lifecycle's execution surface at `~/.codex-loop/runtime` (or `CODEX_LOOP_HOME/runtime`). Web/default objectives use the ChatGPT host runtime. An explicitly Local objective bootstraps and resumes through RDC on the local Codex Loop runtime, so the authoritative state is the Mac's `~/.codex-loop/runtime`, not the transient ChatGPT host filesystem. The local runtime code itself is cached separately under `~/.codex-loop/runtime-src`; project checkouts are never lifecycle authority. If the local runtime/state is temporarily unavailable, Codex Loop fails closed rather than creating a host-side replacement lifecycle. Conversation routing state remains separate and temporary.
 
 ## Optional cross-conversation persistence
 
@@ -113,7 +113,7 @@ Web conversations and ephemeral workspaces are not a durable storage contract. C
 
 On restore, verify the externally retained capsule SHA-256, run `workspace-cache-validate`, restore into a fresh directory with `workspace-cache-restore`, and require exact HEAD/tree + state fingerprint before binding the new workspace. After success, upload the small consumed receipt and delete the exact capsule. If deletion fails, the restore remains successful and cleanup becomes `CACHE_CLEANUP_PENDING`; every later cache create/list/restore operation opportunistically scans only the bounded cache folder and retries cleanup of consumed or >=7-day exact owned objects. Consumed cache IDs are excluded from automatic restore selection even when their capsule could not be deleted.
 
-State-only manifests retain their separate TTL/reconciliation rules and always resume into a new freshness domain. Drive is recovery transport, not a second mutable truth source. See `references/persistence.md` and `references/persistence-resume.md`.
+State-only manifests retain their separate TTL/reconciliation rules and always resume into a new freshness domain. They preserve `active | paused | blocked | complete | cancelled`, the concrete blocked reason when applicable, and the optional three-state plan, but historical validation never becomes current proof. Drive is recovery transport, not a second mutable truth source. See `references/persistence.md` and `references/persistence-resume.md`.
 
 ## Architecture fidelity governance
 
@@ -434,13 +434,15 @@ Switch back to Web mode for the next task.
 
 ## How Codex Loop works
 
-Once Codex Loop is selected, the runtime first creates or resumes the durable task identity and retains the exact request plus steers. Repository work may then bind a workspace. Ordinary reasoning, editing, tool use, testing, and repair stay host-native; optional capability state such as external-action reconciliation or durable validation exists only when the task actually needs it.
+Once Codex Loop is selected, the runtime first creates or resumes the durable task identity and retains the exact request plus steers. Lifecycle status is explicit (`active | paused | blocked | complete | cancelled`) but remains separate from the optional plan. Repository work may then bind a workspace. Ordinary reasoning, editing, tool use, testing, and repair stay host-native; optional capability state such as external-action reconciliation or durable validation exists only when the task actually needs it.
 
 The normal lifecycle is:
 
 ```text
-mandatory admission -> optional orient -> host-native inspect/edit/test/repair -> final semantic acceptance -> deterministic completion
+mandatory admission -> active continuation -> optional orient/plan -> host-native inspect/act/observe/test/repair -> requirement/evidence semantic acceptance -> deterministic completion -> complete
 ```
+
+For meaningfully multi-step work, the model may keep a concise durable plan with only `pending | in_progress | completed`; `next` derives a task board (`doing | pending | done`) from that same plan. If task-owned work is already live, continuation exposes a verified-wait handle so the model observes it instead of starting a duplicate. A user can still simply say `continue` / `resume` / `继续`: the internal `resume` path reuses the same task, reactivates paused/blocked work as a fresh attempt, and refuses to revive terminal complete/cancelled tasks.
 
 Domain Skills may run their own required workflows/state machines inside that lifecycle; Codex Loop does not replace them.
 

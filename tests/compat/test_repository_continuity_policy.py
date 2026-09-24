@@ -12,7 +12,7 @@ class RepositoryContinuityPolicyTests(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         continuity = (ROOT / "references" / "repository-continuity.md").read_text(encoding="utf-8")
         self.assertIn("references/repository-continuity.md", skill)
-        self.assertIn("Keep routing checks at the action boundary", skill)
+        self.assertIn("Before repository mutation, Git publication, local computer use, Skill deployment, or Web/Local transfer", skill)
         self.assertIn("HOT -> WARM -> COLD", continuity)
         self.assertIn("`HOT_REUSE` always wins", continuity)
         self.assertIn("COLD_ACQUIRE_REQUIRED", continuity)

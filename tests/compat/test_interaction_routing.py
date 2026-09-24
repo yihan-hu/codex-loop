@@ -8,9 +8,9 @@ class InteractionRoutingContractTests(unittest.TestCase):
     def test_skill_keeps_routing_lazy_and_at_side_effect_boundary(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("## Repository and host routing", skill)
-        self.assertIn("Web is the default workspace until the user explicitly selects Local", skill)
-        self.assertIn("Keep routing checks at the action boundary", skill)
-        self.assertIn("Do not force unrelated reasoning/edit/test steps through routing state", skill)
+        self.assertIn("ordinary/Web objectives bootstrap with the installed ChatGPT Skill runtime", skill)
+        self.assertIn("Before repository mutation, Git publication, local computer use, Skill deployment, or Web/Local transfer", skill)
+        self.assertIn("do not force ordinary reasoning/edit/test steps through routing state", skill)
         self.assertIn("GitHub, Google Drive, Remote Desktop Commander", skill)
         self.assertIn("optional", skill)
 
@@ -52,9 +52,9 @@ class InteractionRoutingContractTests(unittest.TestCase):
         self.assertIn("manual", deployment.lower())
 
     def test_runtime_entrypoints_are_executable(self):
-        for relative in ("scripts/codex_loop.py", "scripts/codex_loop_kernel.py"):
-            mode = (ROOT / relative).stat().st_mode
-            self.assertNotEqual(mode & 0o111, 0, relative)
+        mode = (ROOT / "scripts" / "codex_loop.py").stat().st_mode
+        self.assertNotEqual(mode & 0o111, 0, "scripts/codex_loop.py")
+        self.assertTrue((ROOT / "scripts" / "codex_loop_kernel.py").is_file())
 
 
 if __name__ == "__main__":

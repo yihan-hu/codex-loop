@@ -25,6 +25,8 @@ MAX_REQUEST_AUTHORITY_CHARS = 65536
 READ_ONLY_PROFILES = {"code_review", "investigation"}
 NO_WRITE_PROFILES = READ_ONLY_PROFILES | {"command_only"}
 PLAN_STATUSES = {"pending", "in_progress", "completed"}
+TASK_STATUSES = {"active", "paused", "blocked", "complete", "cancelled"}
+RESUMABLE_TASK_STATUSES = {"active", "paused", "blocked"}
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 SCHEMA = """
@@ -301,7 +303,7 @@ def _active_path(cwd: str | Path) -> Path:
     return root_state_dir(cwd) / "active_task.json"
 
 
-def set_active_task(cwd: str | Path, task_id: str) -> None:
+def set_workspace_task(cwd: str | Path, task_id: str) -> None:
     task_id = validate_task_id(task_id)
     path = _active_path(cwd)
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -320,7 +322,7 @@ def set_active_task(cwd: str | Path, task_id: str) -> None:
             pass
 
 
-def active_task_id(cwd: str | Path) -> str | None:
+def workspace_task_id(cwd: str | Path) -> str | None:
     path = _active_path(cwd)
     try:
         st = path.lstat()
@@ -341,14 +343,14 @@ def new_task_id() -> str:
     return uuid.uuid4().hex
 
 
-def latest_active_task_id(cwd: str | Path | None = None) -> str | None:
+def latest_resumable_task_id(cwd: str | Path | None = None) -> str | None:
     root = Path(cwd).resolve() if cwd is not None else None
     if root is not None:
-        pointer = active_task_id(root)
+        pointer = workspace_task_id(root)
         if pointer:
             try:
                 store = open_store(None, pointer)
-                store.ensure_active()
+                store.ensure_resumable()
                 return pointer
             except RuntimeError:
                 pass
@@ -370,7 +372,7 @@ def latest_active_task_id(cwd: str | Path | None = None) -> str | None:
     for _mtime_ns, task_id in sorted(candidates, reverse=True):
         try:
             store = open_store(None, task_id)
-            store.ensure_active()
+            store.ensure_resumable()
         except RuntimeError:
             continue
         if root is not None:
@@ -389,7 +391,7 @@ def _tasks_dir() -> Path:
 
 
 def state_dir_for(cwd: str | Path | None = None, task_id: str | None = None, *, create: bool = True) -> Path:
-    resolved = task_id or (active_task_id(cwd) if cwd is not None else None)
+    resolved = task_id or (workspace_task_id(cwd) if cwd is not None else None)
     if not resolved:
         raise RuntimeError("no active codex-loop lifecycle; pass --task-id")
     resolved = validate_task_id(resolved)
@@ -465,10 +467,67 @@ class StateStore:
     def task_id(self) -> str:
         return str(self.get_meta("task_id", ""))
 
-    def ensure_active(self) -> None:
+    def task_status(self) -> str:
         status = str(self.get_meta("task_status", "uninitialized"))
+        if status not in TASK_STATUSES:
+            raise RuntimeError(f"invalid task status: {status}")
+        return status
+
+    def ensure_resumable(self) -> None:
+        status = self.task_status()
+        if status not in RESUMABLE_TASK_STATUSES:
+            raise RuntimeError(f"task is not resumable: {status}")
+
+    def ensure_active(self) -> None:
+        status = self.task_status()
         if status != "active":
             raise RuntimeError(f"task is not active: {status}")
+
+    def _transition_status(self, expected: set[str], target: str, *, blocked_reason: str | None = None) -> str:
+        if target not in TASK_STATUSES:
+            raise ValueError(f"invalid task status: {target}")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT value FROM metadata WHERE key='task_status'").fetchone()
+            current = str(json.loads(row["value"]) if row is not None else "uninitialized")
+            if current not in expected:
+                raise RuntimeError(f"invalid task status transition: {current} -> {target}")
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES('task_status',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (json.dumps(target),),
+            )
+            if target == "blocked":
+                clean = (scrub_persisted_text(blocked_reason, limit=2048) or "").strip()
+                if not clean:
+                    raise ValueError("blocked status requires a concrete reason")
+                db.execute(
+                    "INSERT INTO metadata(key,value) VALUES('blocked_reason',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (json.dumps(clean),),
+                )
+            else:
+                db.execute("DELETE FROM metadata WHERE key='blocked_reason'")
+        return current
+
+    def pause(self) -> None:
+        self._transition_status({"active"}, "paused")
+
+    def block(self, reason: str) -> None:
+        self._transition_status({"active"}, "blocked", blocked_reason=reason)
+
+    def resume(self) -> tuple[str, str | None]:
+        status = self.task_status()
+        reason = str(self.get_meta("blocked_reason", "") or "") or None
+        if status == "active":
+            return status, None
+        if status not in {"paused", "blocked"}:
+            raise RuntimeError(f"task is not resumable: {status}")
+        self._transition_status({status}, "active")
+        return status, reason
+
+    def mark_complete(self) -> None:
+        self._transition_status({"active"}, "complete")
 
     def generation(self) -> int:
         return int(self.get_meta("generation", 0))
@@ -576,8 +635,8 @@ class StateStore:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT value FROM metadata WHERE key='task_status'").fetchone()
             status = json.loads(row["value"]) if row is not None else "uninitialized"
-            if str(status) != "active":
-                raise RuntimeError(f"task is not active: {status}")
+            if str(status) not in RESUMABLE_TASK_STATUSES:
+                raise RuntimeError(f"task cannot be cancelled: {status}")
             generation_row = db.execute("SELECT value FROM metadata WHERE key='generation'").fetchone()
             generation = int(json.loads(generation_row["value"])) if generation_row is not None else 0
             active_iso = db.execute("SELECT isolation_id FROM isolations WHERE status='active' LIMIT 1").fetchone()
@@ -617,6 +676,7 @@ class StateStore:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (json.dumps(clean_reason),),
             )
+            db.execute("DELETE FROM metadata WHERE key='blocked_reason'")
 
     def replace_baseline(self, entries: list[tuple[str, str, int, int, bool]]) -> None:
         with self.connect() as db:
@@ -1376,6 +1436,19 @@ self, keep: int = 64) -> int:
         with self.connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM processes ORDER BY updated_at DESC")]
 
+    def live_process_rows(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            return [
+                dict(row) for row in db.execute(
+                    "SELECT * FROM processes WHERE state IN ('running','draining') ORDER BY updated_at DESC"
+                )
+            ]
+
+    def orphaned_process_count(self) -> int:
+        with self.connect() as db:
+            row = db.execute("SELECT COUNT(*) AS n FROM processes WHERE state='orphaned'").fetchone()
+        return int(row["n"])
+
     def mark_running_processes_orphaned(self, reason: str) -> int:
         clean = scrub_persisted_text(reason, limit=2048) or "helper ownership lost"
         with self.connect() as db:
@@ -1425,7 +1498,7 @@ def create_store(cwd: str | Path | None = None, *, task_id: str | None = None) -
 
 
 def open_store(cwd: str | Path | None = None, task_id: str | None = None) -> StateStore:
-    resolved = task_id or (active_task_id(cwd) if cwd is not None else None)
+    resolved = task_id or (workspace_task_id(cwd) if cwd is not None else None)
     if not resolved:
         raise RuntimeError("no active codex-loop lifecycle; pass --task-id")
     resolved = validate_task_id(resolved)

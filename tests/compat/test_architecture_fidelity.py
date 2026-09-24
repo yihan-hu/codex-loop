@@ -46,7 +46,7 @@ class ArchitectureFidelityTests(unittest.TestCase):
         result = json.loads(proc.stdout)
         self.assertTrue(result["ok"])
         self.assertGreaterEqual(result["architecture_surfaces"], 8)
-        self.assertEqual(result["architecture_observed_commit"], "2b7c279735d0d096cf7b34fe98938f46792f4d4f")
+        self.assertEqual(result["architecture_observed_commit"], "b19cebecc0169097bda7539af03c886e03bdeafe")
 
 
 if __name__ == "__main__":

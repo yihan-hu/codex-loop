@@ -8,8 +8,9 @@ def _current_args(parts):
   if '--no-validation' in parts: parts.remove('--no-validation')
   if '--no-validation-reason' in parts:
    i=parts.index('--no-validation-reason'); del parts[i:i+2]
-  if '--request-anchor' not in parts and '--objective' in parts:
-   objective=parts[parts.index('--objective')+1]; parts += ['--request-anchor', objective]
+  if '--objective' in parts:
+   i=parts.index('--objective'); objective=parts[i+1]; del parts[i:i+2]
+   if '--request-anchor' not in parts: parts += ['--request-anchor', objective]
  return parts
 def call(root,*args,check=True):
  parts=_current_args(args);
@@ -217,7 +218,7 @@ class ProcessRetentionBoundTests(unittest.TestCase):
   from codex_loop_runtime.state import create_store
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp); subprocess.run(['git','init','-q'],cwd=root,check=True)
-   store=create_store(root); store.configure_task(store.path.parent.name,'retention',[],requires_validation=False, request_anchor='retention'); capture_baseline(root,store)
+   store=create_store(root); store.configure_task(store.path.parent.name, requires_validation=False, request_anchor='retention'); capture_baseline(root,store)
    reg=ProcessRegistry(root,store.task_id,'token')
    for _ in range(80):
     spawned=reg.dispatch({'token':'token','task_id':store.task_id,'op':'spawn','argv':['true'],'cwd':str(root)})

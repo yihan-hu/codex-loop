@@ -2,8 +2,8 @@
   "schema_version": 1,
   "observed_upstream": {
     "repository": "openai/codex",
-    "commit": "2b7c279735d0d096cf7b34fe98938f46792f4d4f",
-    "observed_date": "2026-09-01",
+    "commit": "b19cebecc0169097bda7539af03c886e03bdeafe",
+    "observed_date": "2026-09-24",
     "note": "Architecture observation pin; independent from the frozen exact-resource maintenance baseline in source-map.yaml."
   },
   "review_statuses": [
@@ -105,6 +105,23 @@
       "status": "HOST_GAP",
       "divergence": "The current Web Skill surface has no start_turn_if_idle primitive for automatic continuation.",
       "upgrade_path": "Keep durable objective/manual resume semantics behind a continuation adapter that can swap to automatic idle dispatch later."
+    },
+    {
+      "id": "goal_continuation_contract",
+      "layer": "control_plane",
+      "paths": [
+        "codex-rs/ext/goal/templates/goals/continuation.md",
+        "codex-rs/ext/goal/src/spec.rs"
+      ],
+      "required_patterns": [
+        "No-progress check",
+        "verified wait",
+        "Progress visibility",
+        "Completion audit"
+      ],
+      "status": "PARTIAL",
+      "divergence": "Codex Loop ports full-objective preservation, evidence-first work, progress/verified-wait/no-progress semantics, optional three-state planning, and requirement-by-requirement completion audit. It cannot port the upstream automatic-turn blocked threshold or authoritative token-budget lifecycle because the ChatGPT Skill host exposes neither autonomous idle dispatch nor exact Goal budget accounting.",
+      "upgrade_path": "If the host exposes native Goal/idle continuation and authoritative budget metadata, bind the same lifecycle statuses and continuation contract to those primitives; until then keep user-driven resume and never synthesize turn-count or budget state."
     },
     {
       "id": "token_and_rollout_budget",

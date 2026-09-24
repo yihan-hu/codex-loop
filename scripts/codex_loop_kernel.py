@@ -38,7 +38,7 @@ from codex_loop_runtime.release_lineage import (
 from codex_loop_runtime.service import request as service_request, serve as service_serve, start as service_start
 from codex_loop_runtime.shell_snapshot import capture_plan as shell_snapshot_plan
 from codex_loop_runtime.state import (
-    active_task_id, create_store, open_store, root_state_dir, set_active_task,
+    workspace_task_id, create_store, open_store, root_state_dir, set_workspace_task,
     state_dir_for, validate_task_id, scrub_persisted_text,
 )
 from codex_loop_runtime.upstream_verify import verify as verify_upstream
@@ -65,7 +65,7 @@ def _store(args: argparse.Namespace, *, create: bool = False):
         task_id = getattr(args, "task_id", None)
         if not task_id:
             if getattr(args, "use_active_task", False):
-                task_id = active_task_id(root)
+                task_id = workspace_task_id(root)
             else:
                 raise RuntimeError("explicit --task-id is required for task-scoped runtime commands; --use-active-task is human CLI convenience only")
         store = open_store(None, task_id)
@@ -113,7 +113,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
             requires_clean_process_exit=args.require_clean_process_exit,
         )
         if cwd is not None:
-            set_active_task(repo_root(cwd), task_id)
+            set_workspace_task(repo_root(cwd), task_id)
     except Exception:
         shutil.rmtree(store.path.parent, ignore_errors=True)
         raise
@@ -268,7 +268,7 @@ def cmd_plan(args: argparse.Namespace) -> None:
 
 def cmd_steer(args: argparse.Namespace) -> None:
     _cwd_path, _root_path, store = _store(args)
-    store.ensure_active()
+    store.ensure_resumable()
     steer_id = store.record_steer(args.text)
     emit_ok({
         "steer_id": steer_id,
@@ -504,12 +504,35 @@ def cmd_checkpoint_restore(args: argparse.Namespace) -> None:
 
 def cmd_completion(args: argparse.Namespace) -> None:
     _cwd_path, root, store = _store(args)
-    emit_ok(assess_completion(root, store))
+    if store.task_status() == "complete":
+        emit_ok({"status": "PASS", "reasons": [], "details": {"task_status": "complete"}, "lifecycle_status": "complete", "already_complete": True})
+        return
+    decision = assess_completion(root, store)
+    if decision.status == CompletionStatus.PASS:
+        store.mark_complete()
+    emit_ok({
+        "status": decision.status.value,
+        "reasons": list(decision.reasons),
+        "details": decision.details,
+        "lifecycle_status": store.task_status(),
+        "already_complete": False,
+    })
+
+
+def cmd_pause(args: argparse.Namespace) -> None:
+    _cwd_path, _root_path, store = _store(args)
+    store.pause()
+    emit_ok({"task_id": store.task_id, "status": "paused"})
+
+
+def cmd_block(args: argparse.Namespace) -> None:
+    _cwd_path, _root_path, store = _store(args)
+    store.block(args.reason)
+    emit_ok({"task_id": store.task_id, "status": "blocked", "reason": store.get_meta("blocked_reason")})
 
 
 def cmd_cancel(args: argparse.Namespace) -> None:
     _cwd_path, root, store = _store(args)
-    store.ensure_active()
     store.cancel(args.reason)
     # Do not revert workspace. Best-effort service stop; unresolved ownership remains in state.
     try:
@@ -523,11 +546,9 @@ def cmd_cancel(args: argparse.Namespace) -> None:
 
 def cmd_cleanup(args: argparse.Namespace) -> None:
     _cwd_path, root, store = _store(args)
-    task_status = str(store.get_meta("task_status", "uninitialized"))
-    if task_status == "active":
-        decision = assess_completion(root, store)
-        if decision.status != CompletionStatus.PASS:
-            raise RuntimeError(f"refusing cleanup before completion PASS: {', '.join(decision.reasons)}")
+    task_status = store.task_status()
+    if task_status == "complete":
+        pass
     elif task_status == "cancelled":
         if (
             store.unresolved_external_count()
@@ -559,9 +580,9 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
         raise RuntimeError("refusing cleanup while managed process ownership is unresolved")
     task_id = store.task_id
     task_dir = state_dir_for(root, task_id, create=False)
-    active = active_task_id(root)
+    bound = workspace_task_id(root)
     shutil.rmtree(task_dir)
-    if active == task_id:
+    if bound == task_id:
         active_path = root_state_dir(root) / "active_task.json"
         try:
             active_path.unlink()
@@ -706,6 +727,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=func)
     p = sub.add_parser("process-resolve"); _add_scope(p); p.add_argument("--handle", required=True); p.add_argument("--evidence", required=True); p.set_defaults(func=cmd_process_resolve)
     p = sub.add_parser("checkpoint"); _add_scope(p); p.add_argument("--key-finding", action="append"); p.add_argument("--next-action"); p.set_defaults(func=cmd_checkpoint)
+    p = sub.add_parser("pause"); _add_scope(p); p.set_defaults(func=cmd_pause)
+    p = sub.add_parser("block"); _add_scope(p); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_block)
     p = sub.add_parser("cancel"); _add_scope(p); p.add_argument("--reason"); p.set_defaults(func=cmd_cancel)
     p = sub.add_parser("isolate-enter"); _add_scope(p); p.add_argument("--role", required=True, choices=["reviewer","researcher","tester","debugger","security-reviewer","architecture-reviewer"]); p.add_argument("--objective", required=True); p.add_argument("--requested-executor", choices=["native_subagent","logical_isolation"], default="native_subagent"); p.add_argument("--actual-executor", choices=["native_subagent","logical_isolation"], default="logical_isolation"); p.add_argument("--project-file", action="append"); p.add_argument("--fact", action="append"); p.add_argument("--criterion-ref", action="append"); p.add_argument("--request-capability", action="append", choices=list(CAPABILITY_KEYS)); p.add_argument("--actual-capability", action="append", choices=list(CAPABILITY_KEYS)); p.set_defaults(func=cmd_isolate_enter)
     p = sub.add_parser("isolate-status"); _add_scope(p); p.set_defaults(func=cmd_isolate_status)

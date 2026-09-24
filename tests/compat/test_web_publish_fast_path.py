@@ -36,7 +36,7 @@ def init_repo(root, *, with_fast_workflow=True):
 
 def ready_store(root):
     store = StateStore(root / ".git" / "codex-loop-test" / "state.sqlite3")
-    store.configure_task(root.name, "publish", ["publish"], requires_validation=False, request_anchor="publish")
+    store.configure_task(root.name, requires_validation=False, request_anchor="publish")
     store.set_meta("workspace_binding", capture_workspace_binding(root))
     store.record_observed_validation(["pytest", "-q"], 0, cwd=root, evidence="fast publish fixture validation passed")
     return store

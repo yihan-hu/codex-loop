@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 import uuid
@@ -17,8 +18,6 @@ class PersistenceResumeTests(unittest.TestCase):
         task_id = uuid.uuid4().hex
         state.configure_task(
             task_id,
-            "Resume this objective safely",
-            ["Functional result", "Publication reconciled"],
             profile="feature",
             requires_validation=False,
             request_anchor="Resume this objective safely",
@@ -32,11 +31,12 @@ class PersistenceResumeTests(unittest.TestCase):
         return state
 
     def _runtime_dir(self, root: Path):
-        runtime = root / "runtime"
-        runtime.mkdir(exist_ok=True)
-        old = tempfile.tempdir
-        tempfile.tempdir = str(runtime)
-        self.addCleanup(setattr, tempfile, "tempdir", old)
+        old = os.environ.get("CODEX_LOOP_HOME")
+        os.environ["CODEX_LOOP_HOME"] = str(root / "host-home")
+        self.addCleanup(
+            lambda: os.environ.pop("CODEX_LOOP_HOME", None)
+            if old is None else os.environ.__setitem__("CODEX_LOOP_HOME", old)
+        )
 
     def test_resume_plan_requires_current_source_observations(self):
         with tempfile.TemporaryDirectory() as td:
@@ -70,6 +70,26 @@ class PersistenceResumeTests(unittest.TestCase):
             self.assertEqual([x["text"] for x in resumed.request_steers()], ["preserve this correction"])
             self.assertEqual(resumed.validation_state_for_generation(resumed.generation())["passed_count"], 0)
             self.assertEqual(resumed.get_meta("historical_recovery_evidence")["validation"], "HISTORICAL")
+
+    def test_resume_preserves_blocked_lifecycle_reason(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._runtime_dir(root)
+            source = self._source_store(root)
+            source.block("waiting for an external approval")
+            manifest = build_state_manifest(root, root, source, repository="owner/repo")
+            self.assertEqual(manifest["schema_version"], 6)
+            self.assertEqual(manifest["task"]["status"], "blocked")
+            result = resume_state_manifest(root, manifest, {
+                "workspace_presence": True,
+                "repository_head": "1" * 40,
+                "repository_tree": "2" * 40,
+                "external_actions": [],
+            })
+            resumed = StateStore(Path(result["state"]))
+            self.assertEqual(result["lifecycle_status"], "blocked")
+            self.assertEqual(resumed.task_status(), "blocked")
+            self.assertEqual(resumed.get_meta("blocked_reason"), "waiting for an external approval")
 
     def test_missing_workspace_still_restores_same_lifecycle(self):
         with tempfile.TemporaryDirectory() as td:
