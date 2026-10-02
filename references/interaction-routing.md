@@ -29,6 +29,8 @@ A negative transport rule such as “do not execute literal `git clone` before r
 
 ## Conversation-scoped routing state
 
+The optional WSL terminal adapter uses `route-check --action wsl_repository` for Local repository access and the separate `repository_mutate` gate before writes. Read `wsl-mcp.md` when explicitly selecting WSL; its local-runtime admission exception and transport examples apply instead of RDC. A WSL connection changes neither `interaction_target` nor `deployment_target` and cannot select Local mode by availability alone.
+
 Before the first routing-sensitive host action, initialize the deterministic routing plane with `route-init`. The runtime writes one private JSON file under the system temp directory for the current conversation. The file is not repository state, Host Profile state, authorization state, or durable cross-conversation memory. Its session id is opaque and remains current-conversation context only.
 
 In ChatGPT Web, initialize with `--host-surface chatgpt_web`. The initial state is:

@@ -20,6 +20,7 @@ ROUTE_ACTIONS = frozenset({
     "repository_observe",
     "repository_mutate",
     "rdc_repository",
+    "wsl_repository",
     "rdc_transfer",
     "rdc_host_config",
     "browser_interaction",
@@ -364,10 +365,10 @@ def route_check(
         result["allowed"] = True
         return result
 
-    if action in {"repository_observe", "repository_mutate", "rdc_repository", "github_publish"}:
-        if action == "rdc_repository" and state["workspace_mode"] != "local":
+    if action in {"repository_observe", "repository_mutate", "rdc_repository", "wsl_repository", "github_publish"}:
+        if action in {"rdc_repository", "wsl_repository"} and state["workspace_mode"] != "local":
             result.update({
-                "rule": "RDC availability cannot select Local mode; repository access remains Web-routed until explicit local workspace selection is recorded",
+                "rule": "Local transport availability cannot select Local mode; repository access remains Web-routed until explicit local workspace selection is recorded",
                 "effective_workspace": "web",
             })
             return result

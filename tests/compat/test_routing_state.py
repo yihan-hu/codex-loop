@@ -219,6 +219,26 @@ class RoutingStateTests(unittest.TestCase):
         finally:
             self.cleanup(state)
 
+    def test_wsl_repository_requires_explicit_local_selection_and_current_grant(self):
+        state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
+        sid = state["session_id"]
+        try:
+            self.assertFalse(route_check(action="wsl_repository", session_id=sid)["allowed"])
+            route_transition(session_id=sid, workspace_mode="local",
+                             selection_evidence="user selected their WSL checkout",
+                             current_user_selection_observed=True)
+            self.assertFalse(route_check(action="wsl_repository", session_id=sid)["allowed"])
+            self.assertTrue(route_check(action="wsl_repository", session_id=sid,
+                                        workspace_granted=True)["allowed"])
+            # Transport access never grants source mutation by itself.
+            self.assertFalse(route_check(action="repository_mutate", session_id=sid,
+                                         workspace_granted=True)["allowed"])
+            self.assertTrue(route_check(action="repository_mutate", session_id=sid,
+                                        workspace_granted=True,
+                                        local_source_mutation_authorized=True)["allowed"])
+        finally:
+            self.cleanup(state)
+
     def test_rdc_host_config_is_a_routed_read_only_action(self):
         state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
         try:

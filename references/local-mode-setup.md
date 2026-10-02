@@ -1,5 +1,7 @@
 # Local mode setup, workspace registry, and effective local roots
 
+For an explicitly selected WSL/Linux terminal, use the optional MCP adapter in `wsl-mcp.md` instead of RDC. Its Local runtime, task grants and mutation authorization remain on that WSL host. The RDC setup below continues to apply to RDC-backed hosts.
+
 Use this reference when the user explicitly selects local repository development or when a registered local workspace must be resolved. Remote Desktop Commander (RDC) is an execution/interaction transport, not a development-mode selector: using RDC for local Chrome or macOS computer use does not by itself enter Local mode.
 
 Codex Loop separates three states:
