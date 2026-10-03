@@ -82,6 +82,7 @@ def publication_enter(
         action="github_publish",
         session_id=session_id,
         workspace_granted=workspace_granted,
+        local_root=str(root) if route["workspace_mode"] == "local" else None,
     )
     if not gate.get("allowed"):
         return {

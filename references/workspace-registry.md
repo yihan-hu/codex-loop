@@ -151,7 +151,7 @@ The primary root is the development root resolved for the selected Local compute
 
 Multiple effective roots do not merge source baselines. Each lifecycle still binds through the existing `workspace-binding` mechanism to exactly one canonical Git working tree. Access to PiWork and EpiAgent at the same time does not make one repository a substitute for the other.
 
-PiWork uses the same registry mechanism as every other persistent workspace. Register it as `kind=development_root`; do not keep a second PiWork-specific path table. `host.json` may name `piwork` as the preferred primary workspace alias, while older `default_local_root` configuration is treated only as a migration/compatibility input after explicit Local-mode intent.
+Default roots and saved project locations belong to `workspace.environments` in the Private Host Profile, keyed by execution environment. They are not stored in global default aliases or connection-specific fields. For a profile-defined project, materialize its exact canonical location in the selected environment's registry for grant bookkeeping; the profile remains its editable location source. If that location changes, update the derived entry and obtain a fresh grant. Never let a stale local entry override the current profile. Additional conversation-only roots may be registered for current grants, but are not automatically saved across chats.
 
 ## Required invariants
 

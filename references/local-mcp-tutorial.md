@@ -115,18 +115,19 @@ tunnel-client runtimes status my-mac --json
 ```bash
 python3 scripts/codex_loop.py host-config get execution.connections
 python3 scripts/codex_loop.py host-config set execution.connections '[
-  {"name":"my-mac","computer":"mac","connector":"My Mac","kind":"mcp","local_root":"/Users/alice/PiWork"}
+  {"name":"my-mac","computer":"mac","connector":"My Mac","kind":"mcp"}
 ]'
 python3 scripts/codex_loop.py host-config set execution.default_target web
+python3 scripts/codex_loop.py host-config set workspace.environments '{"mac":{"default_root":"/Users/alice/PiWork"}}'
 ```
 
-`connector` 必须匹配当前聊天可见的 app 名称或 ID；`name` 是 Codex Loop 的连接别名，`computer` 是你给物理电脑取的 ID。它们不必等于 Tunnel ID。这些命令先写入当前主机的私有 `~/.codex-loop/host.json`。要让新的 Web 会话恢复设置，还必须按文末流程保存到自己的 Drive；不能假定 Mac 上的文件会自动出现在新 Web 容器里。配置不随 Git push、Skill ZIP 或任务持久化携带。只保存非敏感连接标识和路径，凭证留在前面的私有 key 文件中。
+`connector` 必须匹配当前聊天可见的 app 名称或 ID；`name` 是 Codex Loop 的连接别名，`computer` 是执行环境的 ID；Mac、Windows 和每个 WSL 发行版分别登记，默认工作区放在对应的 `workspace.environments` 中。它们不必等于 Tunnel ID。这些命令先写入当前主机的私有 `~/.codex-loop/host.json`。要让新的 Web 会话恢复设置，还必须按文末流程保存到自己的 Drive；不能假定 Mac 上的文件会自动出现在新 Web 容器里。配置不随 Git push、Skill ZIP 或任务持久化携带。只保存非敏感连接标识和路径，凭证留在前面的私有 key 文件中。
 
 如果有两个 MCP 都连接同一台 Mac，并且 RDC 也确实连接这台 Mac，可以把列表设为：
 
 ```json
 [
-  {"name":"my-mac","computer":"mac","connector":"My Mac","kind":"mcp","local_root":"/Users/alice/PiWork"},
+  {"name":"my-mac","computer":"mac","connector":"My Mac","kind":"mcp"},
   {"name":"backup-mac","computer":"mac","connector":"My second Mac MCP","kind":"mcp"},
   {"name":"rdc-mac","computer":"mac","connector":"Remote Desktop Commander","kind":"rdc"}
 ]

@@ -71,7 +71,7 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("Remote Desktop Commander", readme)
         self.assertIn("workspace-download.yml", readme)
         self.assertIn("`LOCAL_ROOT`", local_setup)
-        self.assertIn("Otherwise ask once for the exact absolute root", local_setup)
+        self.assertIn("ask for a task directory or a saved environment default", local_setup)
         self.assertIn("local-mode-setup.md", (ROOT / "references" / "skill-deployment.md").read_text())
         self.assertIn("references/web-to-local-handoff.md", skill)
         self.assertIn("exact self-contained verified Git bundle", handoff)

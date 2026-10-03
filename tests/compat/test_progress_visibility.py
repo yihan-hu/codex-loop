@@ -30,12 +30,12 @@ def call(home: Path, *args: str, check: bool = True):
 
 
 class ProgressVisibilityTests(unittest.TestCase):
-    def test_missing_config_uses_enhanced_defaults_without_writing_file(self):
+    def test_missing_config_uses_standard_defaults_without_writing_file(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"
             shown, _ = call(home, "progress-config")
             data = shown["data"]
-            self.assertEqual(data["mode"], "enhanced")
+            self.assertEqual(data["mode"], "standard")
             self.assertEqual(data["interval_seconds"], 15)
             self.assertEqual(data["tool_call_interval"], 3)
             self.assertTrue(data["upfront_plan"])
@@ -45,10 +45,8 @@ class ProgressVisibilityTests(unittest.TestCase):
             self.assertFalse((home / "host.json").exists())
 
             substantive, _ = call(home, "progress-policy", "--work-shape", "substantive")
-            self.assertEqual(substantive["data"]["visibility_mode"], "enhanced")
-            self.assertTrue(substantive["data"]["periodic_updates"])
-            self.assertEqual(substantive["data"]["interval_seconds"], 15)
-            self.assertEqual(substantive["data"]["tool_call_interval"], 3)
+            self.assertEqual(substantive["data"]["visibility_mode"], "standard")
+            self.assertEqual(substantive["data"]["periodic_updates"], "host_default")
 
             lightweight, _ = call(home, "progress-policy", "--work-shape", "lightweight")
             self.assertEqual(lightweight["data"]["visibility_mode"], "low_noise")
@@ -62,7 +60,7 @@ class ProgressVisibilityTests(unittest.TestCase):
             home = Path(td) / "home"
             home.mkdir()
             path = home / "host.json"
-            path.write_text(json.dumps({"schema_version": 1, "default_local_workspace": "piwork"}))
+            path.write_text(json.dumps({"schema_version": 4, "workspace": {"environments": {"laptop": {"default_root": "/work"}}}}))
             os.chmod(path, 0o600)
             saved, _ = call(
                 home,
@@ -78,8 +76,8 @@ class ProgressVisibilityTests(unittest.TestCase):
             )
             self.assertTrue(saved["data"]["saved"])
             raw = json.loads(path.read_text())
-            self.assertEqual(raw["schema_version"], 3)
-            self.assertEqual(raw["workspace"]["default_local_workspace"], "piwork")
+            self.assertEqual(raw["schema_version"], 4)
+            self.assertEqual(raw["workspace"]["environments"]["laptop"]["default_root"], "/work")
             self.assertEqual(raw["progress_visibility"]["interval_seconds"], 22)
             self.assertEqual(raw["progress_visibility"]["tool_call_interval"], 5)
             self.assertFalse(raw["progress_visibility"]["upfront_plan"])
@@ -90,12 +88,12 @@ class ProgressVisibilityTests(unittest.TestCase):
             reset, _ = call(home, "progress-config", "--reset")
             self.assertTrue(reset["data"]["reset_to_defaults"])
             raw = json.loads(path.read_text())
-            self.assertEqual(raw["schema_version"], 3)
-            self.assertEqual(raw["workspace"]["default_local_workspace"], "piwork")
+            self.assertEqual(raw["schema_version"], 4)
+            self.assertEqual(raw["workspace"]["environments"]["laptop"]["default_root"], "/work")
             self.assertNotIn("progress_visibility", raw)
-            self.assertEqual(reset["data"]["mode"], "enhanced")
+            self.assertEqual(reset["data"]["mode"], "standard")
 
-    def test_invalid_read_falls_back_but_write_does_not_overwrite(self):
+    def test_invalid_read_and_write_fail_without_overwrite(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"
             home.mkdir()
@@ -104,16 +102,16 @@ class ProgressVisibilityTests(unittest.TestCase):
             path.write_text(original)
             os.chmod(path, 0o600)
 
-            policy, _ = call(home, "progress-policy", "--work-shape", "substantive")
-            self.assertEqual(policy["data"]["visibility_mode"], "enhanced")
-            self.assertIn("invalid_host_config_json_using_defaults", policy["data"]["config"]["warnings"])
+            policy, proc = call(home, "progress-policy", "--work-shape", "substantive", check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertFalse(policy["ok"])
 
             failed, proc = call(home, "progress-config", "--interval-seconds", "20", check=False)
             self.assertNotEqual(proc.returncode, 0)
             self.assertFalse(failed["ok"])
             self.assertEqual(path.read_text(), original)
 
-    def test_unsafe_host_config_path_does_not_block_read_policy(self):
+    def test_unsafe_host_config_path_blocks_read_policy(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             home = root / "home"
@@ -125,9 +123,9 @@ class ProgressVisibilityTests(unittest.TestCase):
                 path.symlink_to(target)
             except (OSError, NotImplementedError):
                 self.skipTest("symlinks unavailable")
-            policy, _ = call(home, "progress-policy", "--work-shape", "substantive")
-            self.assertEqual(policy["data"]["visibility_mode"], "enhanced")
-            self.assertTrue(any(x.startswith("unsafe_host_config_using_defaults:") for x in policy["data"]["config"]["warnings"]))
+            policy, proc = call(home, "progress-policy", "--work-shape", "substantive", check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertFalse(policy["ok"])
 
             failed, proc = call(home, "progress-config", "--mode", "quiet", check=False)
             self.assertNotEqual(proc.returncode, 0)
@@ -173,7 +171,7 @@ class ProgressVisibilityTests(unittest.TestCase):
         self.assertIn("15 seconds", ref)
         self.assertIn("3 substantive tool calls", ref)
         self.assertIn("progress-config --reset", ref)
-        self.assertIn("direct path: no periodic progress messages", ref)
+        self.assertIn("lightweight work: no periodic progress messages", ref)
 
 
 if __name__ == "__main__":

@@ -819,7 +819,9 @@ def _cmd_route_check(argv: list[str]) -> int:
     p.add_argument('--session-id')
     p.add_argument('--action', required=True, choices=sorted(ROUTE_ACTIONS))
     p.add_argument('--dispatch-connector', help='actual host-exposed app name or ID intended for this dispatch')
-    p.add_argument('--workspace-granted', action='store_true')
+    p.add_argument('--workspace-granted', action='store_true', help='host observed current path authorization and directory access through the pinned connector')
+    p.add_argument('--local-root', help='current-task explicitly authorized absolute directory; never persisted')
+    p.add_argument('--project', help='saved project alias on the pinned execution environment')
     p.add_argument('--current-user-local-source-mutation-authorized', action='store_true')
     p.add_argument('--current-user-local-computer-authorized', action='store_true')
     p.add_argument('--current-user-local-install-authorized', action='store_true')
@@ -829,6 +831,8 @@ def _cmd_route_check(argv: list[str]) -> int:
         dispatch_connector=args.dispatch_connector,
         session_id=args.session_id,
         workspace_granted=args.workspace_granted,
+        local_root=args.local_root,
+        project=args.project,
         local_source_mutation_authorized=args.current_user_local_source_mutation_authorized,
         local_computer_authorized=args.current_user_local_computer_authorized,
         local_install_authorized=args.current_user_local_install_authorized,

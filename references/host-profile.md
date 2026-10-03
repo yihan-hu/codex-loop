@@ -1,14 +1,14 @@
 # Private Host Profile
 
-`~/.codex-loop/host.json` (or a private session/test `CODEX_LOOP_HOME/host.json`) is the single private user-instance preference/locator profile. It is never repository state, authorization state, or observed capability truth.
+`~/.codex-loop/host.json` (or a private `CODEX_LOOP_HOME/host.json`) is the single private user-instance preference/locator profile. It is never task state, permission, or observed capability truth. Follow `host-profile-drive.md` to restore and save the current user's account-bound Drive copy.
 
-## Schema v3
+## Schema v4 and empty-profile defaults
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "progress_visibility": {
-    "mode": "enhanced",
+    "mode": "standard",
     "interval_seconds": 15,
     "tool_call_interval": 3,
     "upfront_plan": true,
@@ -18,58 +18,68 @@
     "preferred_target": "cloud_browser",
     "allow_local_chrome_fallback": false
   },
-  "web_publish": {
-    "provider": "google_drive",
-    "staging_folder_id": null
-  },
-  "workspace": {
-    "default_local_workspace": null
-  },
-  "execution": {
-    "default_target": "web",
-    "connections": []
-  },
+  "interaction": {"language": "follow_user"},
+  "web_publish": {"provider": "google_drive", "staging_folder_id": null},
+  "workspace": {"environments": {}},
+  "execution": {"default_target": "web", "connections": []},
   "drive": {"cache_folder_paths": []},
-  "persistence": {
-    "task_backend": "off",
-    "host_profile_backend": "auto"
+  "persistence": {"task_backend": "off", "host_profile_backend": "auto"}
+}
+```
+
+A verified missing file, an empty current-version profile, or omitted preference fields use these defaults in memory. Reading defaults does not create a file or upload to Drive. Unsafe files, corrupt JSON, unsupported schemas, wrong-account envelopes, ambiguous discovery, and transport errors fail with their actual error; never treat them as empty or overwrite them with defaults. This version directly replaces the older workspace/global-root model. Update an older private profile explicitly, retaining the user's unrelated preferences; the runtime has no legacy routing or schema adapters.
+
+`follow_user` uses the current user's language. An explicit language preference may override it, but never infer language from computer names, filesystem paths, or the author account. Standard progress uses the host's normal cadence and reports material progress, failure, or required user input; simple work has no upfront plan or periodic updates. Enhanced cadence remains an optional explicit preference.
+
+## Environment-owned locations
+
+Each key in `workspace.environments` matches a connection's `computer` identifier. Here computer means an **execution environment with one filesystem**, not just physical hardware. Mac, Windows, WSL distributions, and separate containers need different identifiers even if they run on the same physical computer.
+
+```json
+{
+  "workspace": {
+    "environments": {
+      "laptop": {
+        "default_root": "/absolute/path/to/work",
+        "projects": {"example": "/absolute/path/to/work/example"},
+        "runtime_directory": null,
+        "state_directory": null
+      }
+    }
   }
 }
 ```
 
-Missing config uses these built-in defaults. A preference never asserts capability or permission: `preferred_target=cloud_browser` does not prove Cloud Browser exists, and a workspace alias never means the path is granted or bound. `KNOWN != GRANTED != BOUND` remains authoritative.
+Every environment location field is optional: default root, runtime directory, and state directory default to null; projects default to an empty map. All configured paths are absolute locators interpreted on that environment. Never expand or resolve a remote locator on the Web host. `runtime_directory` points to the dedicated runtime checkout (containing `scripts/codex_loop.py`); `state_directory` is the private `CODEX_LOOP_HOME`, whose `runtime/` holds lifecycle state. Null uses the standard locations `~/.codex-loop/runtime-src` and `~/.codex-loop`, expanded and checked on the selected environment. These runtime defaults never substitute for a missing task workspace.
 
-The execution default and ordered connection locators are persistent preferences, described in `local-connections.md`. `route-init` consumes them for a new conversation, with the current user's target/connection override taking precedence. The selected `workspace_mode` and `local_connection`, interaction/deployment targets, and audit evidence live in the private conversation-scoped routing file. An existing session or lifecycle is not redirected by later preference changes. Path grants, current-task authorization, and observed capabilities never persist here.
+Projects map canonical aliases to absolute directories. Resolve a saved project through the pinned route using `route-check --project ALIAS`; when a local grant registry is needed, materialize and canonicalize that exact project location on the selected environment before granting. The profile is the editable source of saved project locations; the local registry entry for a saved alias is only its derived grant lookup. Reconcile a stale entry from this source, invalidating its old grant, rather than choosing one location arbitrarily. Conversation-only extra directories may use the registry independently and must not be saved as preferences without user intent.
 
-## Across new conversations
+## Selection and directory admission
 
-Follow [Drive-first recovery and saving](host-profile-drive.md) before selecting Web or Local. Fixed names are `codex-loop/settings/host-profile.json` inside the currently connected user's My Drive. The default `auto` backend restores when Drive is connected, uses defaults when absent, and reports recovery errors. `google_drive` requires a connected Drive; an explicit `local_only` choice disables uploads. Task persistence remains independent and off by default. Runtime import/export validates account-bound configuration; the host connector performs actual provider reads/writes.
+An explicit current Web/environment/connection selection wins over the saved execution default. Selecting a local environment with missing configuration or permissions never switches to Web.
 
-## CLI
+For local filesystem work, use the current-task authorized absolute directory first, otherwise an explicitly named saved project, otherwise that environment's default root. A continued lifecycle uses its already bound exact directory; pass it as the task directory, rather than relocating it to a later default. If no directory is available, block the directory-dependent operation and ask the user to specify this task's directory or save an environment default. Do not guess from home, shell cwd, a connector's allowed roots, the first known project, or a disk search. Ordinary discussion and workspace-independent lifecycle queries do not require a directory.
+
+A locator is not a grant. Before passing `--workspace-granted`, the host must observe current user/task path authority and verify the actual directory and realpath against the selected connector's authorized roots. A saved or task directory that is missing, not a directory, or denied by the connector blocks access; do not silently choose another directory or create the missing one without user intent. Registry grants and Git lifecycle bindings stay separate (`KNOWN != GRANTED != BOUND`).
+
+New routes snapshot their selected environment locations. Changing saved preferences does not redirect an existing route or lifecycle. Connection changes within the same environment retain this snapshot. A route transition to another environment loads that environment's locations for a new objective.
+
+## Editing and saving
 
 ```bash
 python3 scripts/codex_loop.py host-config show
-python3 scripts/codex_loop.py host-config get browser.preferred_target
-python3 scripts/codex_loop.py host-config set browser.preferred_target cloud_browser
-python3 scripts/codex_loop.py host-config set web_publish.staging_folder_id DRIVE_ID
-python3 scripts/codex_loop.py host-config set workspace.default_local_workspace piwork
+python3 scripts/codex_loop.py host-config set execution.connections '[
+  {"name":"primary","computer":"laptop","connector":"User MCP","kind":"mcp"}
+]'
+python3 scripts/codex_loop.py host-config set workspace.environments '{
+  "laptop":{"default_root":"/absolute/path/to/work"}
+}'
 python3 scripts/codex_loop.py host-config set execution.default_target web
-python3 scripts/codex_loop.py host-config unset web_publish.staging_folder_id
-python3 scripts/codex_loop.py host-config reset progress_visibility
+python3 scripts/codex_loop.py host-config set interaction.language follow_user
 ```
 
-`progress-config` remains a compatibility facade over `progress_visibility`; there is only one underlying Host Profile implementation.
+Object/list setters replace that field: read its current value and retain unrelated environments, connections, and projects when updating it. A request to remember settings authorizes a preference save; a one-task override does not. Local save results never claim cross-chat durability until Drive provider readback verifies the exact exported bytes.
 
-## Safety
+Never store passwords, tokens, keys, one-time approvals, grants, conversation nonces, active task/branch/worktree state, or claims that a connector is online or a path exists. Verify actual capabilities when needed. User configuration, account IDs, and paths never enter Git, source bundles, or Skill ZIPs. `drive.cache_folder_paths` is local cleanup bookkeeping and is excluded from Drive profile export; temporary Drive storage stays under `ChatGPT-Temporary`.
 
-Reads require a regular, owner-controlled, non-symlink file of bounded size with valid UTF-8 JSON, known schema, and known keys. Unsafe/malformed reads warn and fall back to safe defaults so ordinary work continues. Writes fail closed if an existing profile is unsafe or malformed. Writes use a private sibling temporary file, `0600`, `fsync`, and atomic replace.
-
-Schema v1 `default_local_workspace` migrates into `workspace.default_local_workspace` on write. `default_local_root` remains compatibility input only and is not a new configuration surface.
-
-The profile may be read for non-sensitive global preferences before admission; see `local-connections.md` when its owner is on another computer. Local path resolution requires resolved Local intent (explicit choice or saved default) plus the ordinary path/host checks. The execution resolver fails closed on unsafe/malformed profiles rather than selecting a different location. Other preference reads may still warn/use their safe defaults. This profile never supplies `deployment_target` or authority to reconstruct an existing lifecycle on another host.
-
-Host Profile files, Drive IDs, workspace aliases/paths, browser preferences, credentials, session grants, and task state must never enter Git, source transport artifacts, or Skill packages.
-
-## Drive deletion and cache policy
-
-Host Profile schema v3 keeps `drive.cache_folder_paths` as local-only registry state in `~/.codex-loop/host.json`; it must not be included in Git, task persistence manifests, Drive profile persistence, source bundles, or cross-conversation handoffs. All temporary Drive paths must live under the fixed `ChatGPT-Temporary` root described in `drive-storage.md`; top-level Skill-named folders are reserved for retained archive content. Exact Codex Loop-owned sentinels/staging objects are cleaned when their purpose is complete. Cleanup dispatch/reconciliation uses `drive-deletion.md`; that adapter does not change cache registration, retention, or cleanup eligibility.
+Temporary Drive cleanup uses `drive-storage.md` and the shared `drive-deletion.md` dispatch/reconciliation adapter. That adapter does not change cache registration, retention, or cleanup eligibility; retained host profiles are never temporary cache.

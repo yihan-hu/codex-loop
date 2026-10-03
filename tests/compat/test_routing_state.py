@@ -213,7 +213,8 @@ class RoutingStateTests(unittest.TestCase):
             needs_grant = route_check(action="local_repository", session_id=sid)
             self.assertFalse(needs_grant["allowed"])
             self.assertIn("current_conversation_workspace_grant", needs_grant["requirements"])
-            allowed = route_check(action="local_repository", session_id=sid, workspace_granted=True)
+            allowed = route_check(action="local_repository", session_id=sid, workspace_granted=True,
+                                  local_root="/explicit/work", dispatch_connector="Remote Desktop Commander")
             self.assertTrue(allowed["allowed"])
             self.assertEqual(allowed["effective_workspace"], "local")
         finally:

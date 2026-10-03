@@ -17,7 +17,12 @@ flowchart TD
   ROUTE --> DISPATCH[route-check verifies intended connector + task permissions]
   DISPATCH --> LR[Same connector: selected computer runtime cache]
   OBS -->|unavailable| Z[Fail closed]
-  OBS --> ROUTE[Private conversation route pins connection]
+  OBS --> LOC[Snapshot selected environment locations]
+  LOC --> ROUTE[Private conversation route pins connection + locations]
+  ROUTE -. directory-dependent work .-> ROOT[Task directory / named project / environment default]
+  ROOT -->|missing or denied| Z
+  ROOT --> ACCESS[Host verifies task authority + real directory + connector roots]
+  ACCESS --> DISPATCH
   HR --> L[bootstrap -> task_id]
   LR --> L
   A -->|known lifecycle| L
@@ -85,7 +90,7 @@ bound to stage + input + instruction + request + generation]
 
 ## Boundaries
 
-- **Execution preferences are private locators.** `host.json` stores an ordered connection list and default Web/computer target outside Git and packages. Explicit task choice wins; saved defaults initialize new conversation routes. Custom MCPs precede RDC, manual connection selection never silently falls back, and observed capabilities remain host-owned. Conversation routing pins the selected computer/connection; a running lifecycle cannot move because preferences changed. Profile reads and connection resolution are narrow pre-admission routing. See `references/local-connections.md`; first-time setup uses `references/local-mcp-tutorial.md`.
+- **Execution preferences are private locators.** `host.json` stores an ordered connection list, default Web/environment target, and per-environment workspace/project/runtime/state locations outside Git and packages. Explicit task choice wins; saved defaults initialize new conversation routes. Custom MCPs precede RDC, manual connection selection never silently falls back, and observed capabilities remain host-owned. Conversation routing pins the selected computer/connection; a running lifecycle cannot move because preferences changed. Profile reads and connection resolution are narrow pre-admission routing. See `references/local-connections.md`; first-time setup uses `references/local-mcp-tutorial.md`.
 - **Lifecycle admission remains mandatory.** Once selected, Codex Loop must create or resume its lifecycle before any substantive task action. This invariant is not optimized away.
 - **Exact user authority is canonical.** The initial request plus later steers define what the agent is authorized to do. A model-written task objective or acceptance restatement is not created for the same task.
 - **Lifecycle status is explicit but thin.** `active | paused | blocked | complete | cancelled` controls whether work may proceed; it is separate from plan state. `paused` is user-driven, `blocked` requires a concrete impasse, and terminal states never silently resume.
@@ -112,3 +117,5 @@ bound to stage + input + instruction + request + generation]
 Host Profile recovery is independent of task resume. The host Drive connector owns authenticated transport; `host-profile` validates/imports/exports account-bound preference envelopes. Saved changes require provider read-back before claiming cross-chat durability. Fixed folder/file names are constants; private IDs never enter the Skill.
 
 Local lifecycle dispatch has its own `local_lifecycle` route check, including bootstrap and resume. The host supplies the actual owning connector before dispatch; mismatches fail. This validates caller-provided identity, not interception of arbitrary host tool calls. Initialization recovery stays on the selected connector; only explicit user transition can change a pinned transport.
+
+Environment identifiers represent distinct filesystems: Mac and WSL never share a default root merely because they share hardware. Empty current profiles use Web, no connections/locations, follow-user language, standard material progress, cloud browser preference without local fallback, and task persistence off. Missing files use defaults without writes; malformed/unsafe/unreadable/unsupported profiles fail. `route-check` resolves local directory locators from a route snapshot and blocks missing directory or path authority; the host observes remote existence, realpath, and connector roots before supplying the grant flag. Runtime validation cannot intercept arbitrary host tools or verify a remote filesystem from Web. Saved project paths are authoritative in the profile; native registry entries for them are derived grant lookup, never a second editable source.
