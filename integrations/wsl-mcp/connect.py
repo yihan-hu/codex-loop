@@ -48,12 +48,12 @@ def main():
         roots = env["CODEX_LOOP_WSL_ROOTS"].replace('\\', '\\\\').replace('"', '\\"')
         handle.write('CODEX_LOOP_WSL_ROOTS="' + roots + '"\n')
     connection.chmod(0o600)
-    # Quote systemd paths and escape specifier expansion independently of shell quoting.
+    # Quote ExecStart arguments; EnvironmentFile uses an unquoted home specifier.
     quote = lambda value: '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
     unit = home / ".config/systemd/user/codex-loop-wsl-tunnel.service"
     unit.write_text("[Unit]\nDescription=Codex Loop private WSL MCP tunnel\nAfter=network-online.target\n\n"
                     "[Service]\nType=simple\n"
-                    f"EnvironmentFile={quote(connection)}\n"
+                    "EnvironmentFile=%h/.config/codex-loop-wsl/connection.env\n"
                     f"ExecStart={quote(binary)} run --profile codex-loop-wsl --mcp.connection-max-ttl 24h "
                     f"--mcp.stdio-send-initialized-notification --health.url-file {quote(config / 'health.url')}\n"
                     "Restart=on-failure\nRestartSec=5\nKillMode=control-group\nUMask=0077\n\n"

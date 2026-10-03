@@ -37,7 +37,13 @@ journalctl --user -u codex-loop-wsl-tunnel.service -n 40 --no-pager
 
 The loopback operator URL is saved to `~/.config/codex-loop-wsl/health.url`; its `/readyz` should return success before testing ChatGPT. A running service alone does not prove the workspace association or a successful ChatGPT tool call. Keep raw HTTP logging disabled.
 
-systemd supervision works while WSL runs. Installation adds no Windows startup task, sleep override or inbound firewall port. The computer must be awake and online for web/phone calls.
+systemd supervision works while WSL runs. [Systemd services do not keep WSL alive](https://learn.microsoft.com/en-us/windows/wsl/systemd#how-does-enabling-systemd-affect-wsl-architecture). Keep a Windows-owned WSL session open, or start a hidden keepalive from Windows PowerShell:
+
+```powershell
+Start-Process -FilePath 'wsl.exe' -ArgumentList @('-d','Ubuntu','--','sleep','infinity') -WindowStyle Hidden
+```
+
+After restarting Windows or stopping WSL, start the keepalive again and run the service start command above. Installation adds no Windows startup task, sleep override or inbound firewall port. The computer must be awake and online for web/phone calls.
 
 Bubblewrap exposes writable project roots and the secret-free lifecycle runtime; other user files, tunnel credentials and Windows mounts are absent. A private persistent `/tmp` preserves routing state across tool calls. Network access is enabled. Native Git authentication is separately configured; never authorize a credential directory as a project root. Configured roots limit filesystem access; the Host Profile records preferences, not access grants or online status.
 
