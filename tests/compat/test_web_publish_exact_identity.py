@@ -23,7 +23,7 @@ def configure(cwd: Path) -> None:
 class WebPublishExactIdentityTests(unittest.TestCase):
     def fixture(self, base: Path):
         remote = base / "remote.git"
-        run(base, "init", "--bare", "-q", str(remote))
+        run(base, "init", "--bare", "-q", "--initial-branch=main", str(remote))
 
         dev = base / "dev"
         dev.mkdir()
@@ -52,7 +52,7 @@ class WebPublishExactIdentityTests(unittest.TestCase):
         trigger = base / "trigger"
         run(base, "clone", "-q", str(remote), str(trigger))
         configure(trigger)
-        run(trigger, "checkout", "-q", "-b", "main", base_commit)
+        run(trigger, "checkout", "-q", "-B", "main", base_commit)
         req = trigger / ".github" / "import-requests" / "request.json"
         req.parent.mkdir(parents=True)
         req.write_text("{}\n")
@@ -100,7 +100,7 @@ class WebPublishExactIdentityTests(unittest.TestCase):
             concurrent = base / "concurrent"
             run(base, "clone", "-q", str(remote), str(concurrent))
             configure(concurrent)
-            run(concurrent, "checkout", "-q", "-b", "main", trigger_commit)
+            run(concurrent, "checkout", "-q", "-B", "main", trigger_commit)
             (concurrent / "concurrent.txt").write_text("do not overwrite\n")
             run(concurrent, "add", ".")
             run(concurrent, "commit", "-qm", "concurrent move")

@@ -1,6 +1,6 @@
 # Local mode setup, workspace registry, and effective local roots
 
-Use this reference when the user explicitly selects local repository development or when a registered local workspace must be resolved. Remote Desktop Commander (RDC) is an execution/interaction transport, not a development-mode selector: using RDC for local Chrome or macOS computer use does not by itself enter Local mode.
+Use this reference after Local selection from the current request or saved execution default or when a registered local workspace must be resolved. The selected local connection is an execution/interaction transport, not a development-mode selector: using local connector for local Chrome or macOS computer use does not by itself enter Local mode.
 
 Codex Loop separates three states:
 
@@ -14,21 +14,21 @@ A registered path is KNOWN, not GRANTED. See `workspace-registry.md` for the reg
 
 ## Host platform contract
 
-Local repository routing is platform-neutral once the user explicitly selects Local mode. An RDC-backed **macOS or Windows** repository host is valid; do not reject Local mode solely because RDC reports Windows. macOS remains the end-to-end verified reference host. Windows is a best-effort/beta host until equivalent smoke coverage is completed.
+Local repository routing is platform-neutral once Local mode is resolved. A local-connector-backed **macOS or Windows** repository host is valid; do not reject Local mode solely because local connector reports Windows. macOS remains the end-to-end verified reference host. Windows is a best-effort/beta host until equivalent smoke coverage is completed.
 
 On Windows:
 
 - prefer host-visible PowerShell (or `cmd.exe` only when necessary) for shell execution and native Git for repository transport;
 - keep managed interactive/background sessions host-visible because the bundled process-group/interrupt service is intentionally not enabled on Windows;
-- when the guarded writer reports that atomic compare-exchange is unavailable for an existing file, use the host-visible RDC edit/write path for that mutation, then re-observe the exact file hash and refresh Codex Loop change state; do not weaken or emulate the atomic CAS primitive inside the runtime;
+- when the guarded writer reports that atomic compare-exchange is unavailable for an existing file, use the host-visible local connector edit/write path for that mutation, then re-observe the exact file hash and refresh Codex Loop change state; do not weaken or emulate the atomic CAS primitive inside the runtime;
 - skip POSIX-only shell/permission semantics when they are not meaningful on Windows, and report a precise per-operation degradation instead of disabling the whole Local workspace;
-- require native Git to be installed and usable on the RDC host before Git-dependent Local work. If a runtime-owned Git probe cannot resolve Git but host-visible native Git works, keep the Git command host-visible and record the observation rather than rewriting source or switching publication transports.
+- require native Git to be installed and usable on the local connector host before Git-dependent Local work. If a runtime-owned Git probe cannot resolve Git but host-visible native Git works, keep the Git command host-visible and record the observation rather than rewriting source or switching publication transports.
 
 Windows support here is deliberately permissive at the routing layer and conservative at individual primitives: a small platform bug may block one operation, but it is not evidence that the user must abandon Local mode or move source through model text.
 
 ## Local lifecycle authority
 
-An explicitly Local objective must create and resume its Codex Loop lifecycle on the local host, not in the transient ChatGPT host filesystem. The authoritative state root is the local host's `CODEX_LOOP_HOME/runtime`, normally `~/.codex-loop/runtime`.
+A resolved Local objective must create and resume its Codex Loop lifecycle on the local host, not in the transient ChatGPT host filesystem. The authoritative state root is the local host's `CODEX_LOOP_HOME/runtime`, normally `~/.codex-loop/runtime`.
 
 Use a runtime-owned source cache at `~/.codex-loop/runtime-src`. It is infrastructure, not the user's project checkout. The consumer Skill intentionally carries no maintainer-repository identity, so the host must resolve the canonical public Codex Loop source URL from the current distribution/public repository metadata (or obtain it from the user) before first Local bootstrap. Pass that externally resolved URL as `CODEX_LOOP_SOURCE_URL`; do not persist it as lifecycle authority. If the cache already exists, require it to be clean and update it only by fast-forward. On the verified macOS path:
 
@@ -47,7 +47,7 @@ python3 "$RUNTIME/scripts/codex_loop.py" ...
 
 The runtime cache is replaceable code; the sibling `~/.codex-loop/runtime` directory is durable lifecycle state and must never be deleted or reset as part of runtime-cache refresh.
 
-Do not use an arbitrary project checkout of Codex Loop as the lifecycle runtime, even when one happens to be available. Do not create a second host-side lifecycle for the same Local objective if RDC or the local runtime is temporarily unavailable; fail closed and resume when the local authority is reachable again.
+Do not use an arbitrary project checkout of Codex Loop as the lifecycle runtime, even when one happens to be available. Do not create a second host-side lifecycle for the same Local objective if local connector or the local runtime is temporarily unavailable; fail closed and resume when the local authority is reachable again.
 
 A bound repository may contain task-owned ephemeral scratch such as `<worktree>/.codex-loop-tmp/<task-id>/` when a local operation genuinely needs staging inside an already-authorized root. That directory is disposable and never contains lifecycle authority. Durable task state remains in `~/.codex-loop/runtime`.
 
@@ -61,7 +61,7 @@ V1 expands the access model to:
 Primary Local Root + Session Granted Roots = Effective Local Roots
 ```
 
-The primary root is the workspace root chosen when the user explicitly enters Local mode. Additional registered workspaces may join the effective root set only after the user explicitly grants each one in the current conversation and RDC/host authorization is independently confirmed.
+The primary root is the workspace root chosen when Local mode is resolved. Additional registered workspaces may join the effective root set only after the user explicitly grants each one in the current conversation and local connector/host authorization is independently confirmed.
 
 Multiple effective roots do not merge repositories. Each lifecycle still binds to exactly one canonical Git working tree. A grant for one repository never grants its parent or sibling repositories.
 
@@ -86,14 +86,14 @@ Registering PiWork through the same registry removes the need for PiWork-specifi
 
 ## Resolving the primary root
 
-Resolve the primary Local root in this order, but only after the user has explicitly selected Local repository development:
+Resolve the primary Local root in this order, but only after Local repository development is resolved:
 
-1. Reuse the exact primary root already established earlier in the current conversation.
-2. If the user names a registered workspace alias and explicitly grants it for this conversation, resolve that alias through the workspace registry and confirm RDC access.
+1. Reuse the exact primary root already established on the same computer earlier in the current conversation. A computer change requires fresh root resolution and grants.
+2. If the user names a registered workspace alias and explicitly grants it for this conversation, resolve that alias through the workspace registry and confirm local connector access.
 3. Otherwise, use an absolute root explicitly named by the user when they select Local mode, optionally registering it when they ask to remember it.
-4. Otherwise, read the private Host Profile `~/.codex-loop/host.json`. Prefer `workspace.default_local_workspace`; schema-v1 `default_local_workspace` and `default_local_root` are migration inputs only. Reading the alias is allowed as a global preference, but resolving it to a local filesystem path still begins only after explicit Local-mode intent.
-5. If the host exposes a single explicit RDC-authorized workspace root as tool metadata, that root may be used after confirming it is the intended development root.
-6. Otherwise ask once for the exact absolute root and require the user to authorize that root in RDC.
+4. Otherwise, read the selected computer’s private Host Profile `~/.codex-loop/host.json`. Do not reuse a workspace alias/registry from the profile-owner computer when execution is on a different computer. Prefer `workspace.default_local_workspace`; schema-v1 `default_local_workspace` and `default_local_root` are migration inputs only. Reading the alias is allowed as a global preference, but resolving it to a local filesystem path still begins only after Local-mode resolution.
+5. Otherwise use the selected connection’s `local_root` locator, after the usual path grant and host check. If absent, use a single connector-authorized root from tool metadata only after confirming it is the intended development root.
+6. Otherwise ask once for the exact absolute root and require the user to authorize that root in local connector.
 
 Do not infer a root from a repository author's home directory, a stale prior conversation, a downloaded archive path, or arbitrary filesystem visibility outside the authorized boundary.
 
@@ -101,11 +101,11 @@ Do not infer a root from a repository author's home directory, a stale prior con
 
 The optional config path is `~/.codex-loop/host.json`. It belongs to the user's computer, not to any repository and not to the packaged Skill.
 
-The current schema is the unified v2 Private Host Profile described in `host-profile.md`; the workspace preference is nested:
+The current schema is the unified v3 Private Host Profile described in `host-profile.md`; the workspace preference is nested:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "workspace": {
     "default_local_workspace": "piwork"
   }
@@ -118,7 +118,7 @@ Store only non-sensitive preferences/locators. `host.json` may also contain prog
 
 Because host-local files live outside the repository, normal Git commits, Web-mode source transport artifacts, Local-mode `git push`, and Skill packaging must not include them. Do not copy them into a repository merely to make them easier to discover.
 
-A new conversation still starts in Web mode even when the registry or `host.json` exists. Persistent knowledge of a path never becomes implicit consent to use the local checkout.
+A new conversation uses the saved `execution.default_target`, otherwise Web. A saved computer choice selects location, while path grants and current-task scope remain separate. Read `local-connections.md` before Local admission.
 
 ## Conversation grants
 
@@ -138,23 +138,23 @@ Changing a registered path also does not preserve its old grant. Grants bind to 
 
 ## Conversation and task scope
 
-A new conversation starts in Web mode. Selecting Local mode activates the resolved primary root as the repository baseline for later repository tasks in that same conversation until the user explicitly switches back to Web mode. This routing choice does **not** persist permission to mutate local source: every task that would edit/create/delete/overwrite source files needs explicit current-task local-source-mutation authorization.
+A new conversation resolves its explicit or saved execution location. Selecting Local mode activates the resolved primary root as the repository baseline for later repository tasks in that same conversation until the user explicitly switches back to Web mode. This routing choice does **not** persist permission to mutate local source: every task that would edit/create/delete/overwrite source files needs explicit current-task local-source-mutation authorization.
 
-Development-location resolution must happen before any **repository-affecting** RDC/local-filesystem discovery or repository operation. Interaction-only RDC use is routed separately by `references/interaction-routing.md` and may occur while `workspace_mode=web`; it must not inspect a local checkout or influence the Web source baseline.
+Development-location resolution must happen before any **repository-affecting** local connector/local-filesystem discovery or repository operation. Interaction-only local connector use is routed separately by `references/interaction-routing.md` and may occur while `workspace_mode=web`; it must not inspect a local checkout or influence the Web source baseline.
 
 If the current ChatGPT/Web workspace lacks an obvious write or publication bridge, that absence does not authorize Local mode. Stay in Web mode and surface the missing capability instead of probing the local host.
 
 The development-location choice is conversation-scoped, but each durable runtime task still binds independently to one canonical Git working tree within one Effective Local Root. Sibling repositories and worktrees do not become interchangeable source baselines.
 
-## RDC authorization boundary
+## local connector authorization boundary
 
-Semantic workspace grants and RDC authorization are cumulative. Access requires:
+Semantic workspace grants and local connector authorization are cumulative. Access requires:
 
 ```text
-REGISTERED + GRANTED THIS CONVERSATION + HOST/RDC AUTHORIZED = ACCESSIBLE
+REGISTERED + GRANTED THIS CONVERSATION + HOST/local connector AUTHORIZED = ACCESSIBLE
 ```
 
-Before using a registered workspace, resolve its real path, pass only host-observed authorized roots to the runtime, and require access. The runtime cannot modify RDC `allowedDirectories` and cannot turn a semantic grant into host permission.
+Before using a registered workspace, resolve its real path, pass only host-observed authorized roots to the runtime, and require access. The runtime cannot modify local connector `allowedDirectories` and cannot turn a semantic grant into host permission.
 
 Keep repository discovery, clones, worktrees, source edits, tests, builds, packaging, scratch data, release staging, receipts, and terminal/Git operations inside the Effective Local Roots. A task still uses only its bound canonical working tree as source baseline.
 
@@ -188,7 +188,7 @@ python3 scripts/codex_loop.py workspace-grant epiagent \
   --authorization-evidence "user explicitly granted EpiAgent path access in this conversation"
 ```
 
-Before a repository-affecting RDC action:
+Before a repository-affecting local connector action:
 
 ```bash
 python3 scripts/codex_loop.py workspace-resolve epiagent \

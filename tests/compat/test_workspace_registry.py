@@ -378,7 +378,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
         self.assertIn("KNOWN != GRANTED", registry)
         self.assertIn("GRANTED != BOUND", registry)
         self.assertIn("Primary Local Root + Session Granted Roots = Effective Local Roots", setup)
-        self.assertIn("REGISTERED + GRANTED THIS CONVERSATION + HOST/RDC AUTHORIZED = ACCESSIBLE", boundary)
+        self.assertIn("REGISTERED + GRANTED THIS CONVERSATION + HOST/CONNECTOR AUTHORIZED = ACCESSIBLE", boundary)
         self.assertIn("never stores authorization", registry)
         self.assertIn("never search the whole home directory or disk", boundary)
 

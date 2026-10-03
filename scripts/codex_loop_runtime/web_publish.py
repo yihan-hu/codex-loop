@@ -473,7 +473,7 @@ def web_publish_plan(
                 "keeps_workspace_mode": "local_after_explicit_transition",
                 "requires_explicit_user_selection": True,
                 "ready_now": False,
-                "requirements": ["explicit Local selection", "RDC-authorized LOCAL_ROOT", "verified binary Git-bundle handoff"],
+                "requirements": ["explicit or saved Local selection", "connector-authorized LOCAL_ROOT", "verified binary Git-bundle handoff"],
                 "next": "follow references/web-to-local-handoff.md, then publish with native Git",
                 "transport": "verified_binary_git_bundle; never model source regeneration",
             },
@@ -639,7 +639,7 @@ def web_local_sync_plan(
         reasons.append("validation_not_fresh")
 
     transfer_gate = route_check(
-        action="rdc_transfer",
+        action="local_transfer",
         session_id=session_id,
         workspace_granted=workspace_granted,
         local_computer_authorized=local_computer_authorized,
@@ -664,19 +664,19 @@ def web_local_sync_plan(
         "bundle_action": ("reuse" if bundle else "build_self_contained") if ready else None,
         "bundle_build_prerequisite_commit": None,
         "transport": {
-            "id": "google_drive_then_rdc_download",
+            "id": "google_drive_then_local_download",
             "ordered_steps": [
                 "build_or_reuse_exact_self_contained_git_bundle",
                 "upload_binary_bundle_to_dedicated_google_drive_staging_via_file_uri",
                 "verify_drive_object_id_size_and_sha256",
                 "expose_only_the_minimum_temporary_download_access_needed_by_the_authorized_host",
-                "rdc_download_exact_binary_to_authorized_destination_path",
+                "local_download_exact_binary_to_authorized_destination_path",
                 "verify_local_size_sha256_and_git_bundle_verify",
                 "delete_exact_drive_staging_object_after_verified_local_consumption",
             ],
             "fixed": True,
         },
-        "rdc_route": transfer_gate,
+        "local_route": transfer_gate,
         "forbidden_fallbacks": [
             "github_actions_artifact",
             "github_repository_archive",
@@ -686,7 +686,7 @@ def web_local_sync_plan(
             "source_regeneration_or_retyping",
         ],
         "next": (
-            "execute the fixed Drive -> RDC binary transfer exactly as planned; keep workspace_mode=web after the copy. "
+            "execute the fixed Drive -> selected local connection binary transfer exactly as planned; keep workspace_mode=web after the copy. "
             "Only a separate explicit user request to continue development from the local repository may trigger a later route-transition to Local mode."
             if ready
             else "satisfy only the listed transfer/audit requirements, then rerun web-local-sync-plan; do not choose another transfer path"

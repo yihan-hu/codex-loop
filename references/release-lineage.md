@@ -34,11 +34,11 @@ persistent Git repository
 
 Do not create `final`, `publish`, `package-src`, or similar full-source copies and then continue development from them.
 
-When the canonical workspace is accessed through Remote Desktop Commander, apply `remote-desktop-boundary.md` first. Keep the canonical repository and every Git worktree inside the task-scoped allowed roots. Do not search outside those roots for another checkout, credential file, release artifact, or package cache. Place disposable release staging, exported receipts, and artifacts only in an explicitly authorized scratch/artifact root.
+When the canonical workspace is accessed through the selected local file/shell connector, apply `remote-desktop-boundary.md` first. Keep the canonical repository and every Git worktree inside the task-scoped allowed roots. Do not search outside those roots for another checkout, credential file, release artifact, or package cache. Place disposable release staging, exported receipts, and artifacts only in an explicitly authorized scratch/artifact root.
 
 ## Source-only push fast path
 
-In explicit Local mode, when the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then route publication through the bundled Codex Loop controller. The target repository does not need to contain Codex Loop runtime files:
+In resolved Local mode, when the user asks only to commit/push source, keep artifact release work out of the critical path. Validate and review the intended content once, commit it, fetch/observe the remote branch, then route publication through the bundled Codex Loop controller. The target repository does not need to contain Codex Loop runtime files:
 
 ```bash
 python3 scripts/codex_loop.py publish-enter --task-id TASK --cwd REPO \
@@ -73,7 +73,7 @@ The receipt is bound to task generation, source commit, source tree, artifact na
 
 ## Integrated publish flow
 
-For Local mode, Codex Loop uses one verified publish transport only: native Git executed through Remote Desktop Commander on the persistent canonical repository under `LOCAL_ROOT`. GitHub connector/object-API source upload is not a supported fallback. Read `verified-native-git.md` for the end-to-end verified host authentication, native push, and commit/tree readback sequence.
+For Local mode, Codex Loop uses one verified publish transport only: native Git executed through the selected local file/shell connector on the persistent canonical repository under `LOCAL_ROOT`. GitHub connector/object-API source upload is not a supported fallback. Read `verified-native-git.md` for the end-to-end verified host authentication, native push, and commit/tree readback sequence.
 
 First use native Git in the canonical worktree to fetch/observe the destination branch, then call `publish-enter --controller-abi 1 --workspace-granted`. The stable router selects the Local native-Git planner from routing state. That planner reuses the existing audit gates: current-generation validation must pass when required and the final change generation must be reviewed. The observed remote head must be an ancestor of the audited target commit. If not, integrate the remote change in the same canonical worktree and re-run the gates. Never force-push around this condition.
 
@@ -84,7 +84,7 @@ python scripts/codex_loop.py publish-dispatch --cwd REPO \
   --action-id ACTION --transport git
 ```
 
-Run the returned `git push --porcelain ...` through Remote Desktop Commander from the canonical worktree. Do not reconstruct or relay file payloads through the model. Do not use GitHub object APIs, contents APIs, connector-created blobs/trees/commits, copied directories, release ZIP contents, or model-generated base64 as a publish data plane.
+Run the returned `git push --porcelain ...` through the selected local file/shell connector from the canonical worktree. Do not reconstruct or relay file payloads through the model. Do not use GitHub object APIs, contents APIs, connector-created blobs/trees/commits, copied directories, release ZIP contents, or model-generated base64 as a publish data plane.
 
 If native Git cannot push because of network, authentication, permissions, branch protection, divergence, or any other error, stop and surface that exact blocker. Do not automatically switch transport. Keep the canonical repo intact so the next session can resume with normal Git.
 
@@ -112,7 +112,7 @@ If an artifact exists only on one side of a ChatGPT/local-host boundary and no v
 Codex Loop        -> canonical workspace, Git lineage, audit/release receipts, publish plan/state
 Git               -> files, modes, commits, trees, ancestry, diffs
 Packager          -> audited HEAD export -> skill.zip release artifact
-RDC host          -> persistent LOCAL_ROOT filesystem, native Git/network execution, and host-managed credentials
+Local host        -> persistent LOCAL_ROOT filesystem, native Git/network execution, and host-managed credentials
 ChatGPT deployment -> explicit install/update of the packaged Skill; never the source baseline
 ```
 

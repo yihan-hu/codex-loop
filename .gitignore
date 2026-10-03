@@ -1,3 +1,9 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+# User-instance preferences and local runtime state never belong in source.
+.codex-loop/
+host.json
+workspace-registry.json
+
+host-profile.json

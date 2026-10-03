@@ -2,7 +2,7 @@
 
 Use this low-level controller-selected Web contract after the bundled Codex Loop controller selects Web publication. This path preserves the audited Git commit object itself: successful publication requires **remote commit == audited source commit** and **remote tree == audited source tree**. Normal model control must enter through `references/publication-router.md`; call `web-publish-*` directly only when debugging the router/protocol implementation.
 
-This path is Web mode only. Do not switch to RDC + native Git merely to gain transport; Local mode has its own native-Git contract behind the same stable publication router.
+This path is Web mode only. Do not switch to a local connector + native Git merely to gain transport; Local mode has its own native-Git contract behind the same stable publication router.
 
 ## Publication intent translation
 

@@ -55,7 +55,7 @@ class SkillPackageTests(unittest.TestCase):
             self.source,
             path,
             distribution_profile="maintainer",
-            repository="yihan-hu/codex-loop",
+            repository="example-owner/codex-loop",
             commit=self.source_commit,
             tree=self.source_tree,
         )
@@ -69,12 +69,19 @@ class SkillPackageTests(unittest.TestCase):
             self.assertEqual(first.read_bytes(), second.read_bytes())
 
     def test_runtime_package_excludes_development_only_files(self):
+        # Consumer packaging reads filesystem files, so Git ignore rules alone are insufficient.
+        (self.source / "references" / "host.json").write_text('{"private":"USER-PREFERENCE-SENTINEL"}')
+        (self.source / "references" / "host-profile.json").write_text('{"private":"USER-PREFERENCE-SENTINEL"}')
+        private = self.source / "scripts" / ".codex-loop"
+        private.mkdir()
+        (private / "host.json").write_text('{"private":"USER-PREFERENCE-SENTINEL"}')
         with tempfile.TemporaryDirectory() as td:
             package = Path(td) / "skill.zip"
             result = self._build(package)
             with zipfile.ZipFile(package) as archive:
                 names = [name for name in archive.namelist() if not name.endswith("/")]
                 modes = {((info.external_attr >> 16) & 0xFFFF) for info in archive.infolist() if not info.is_dir()}
+                self.assertFalse(any(b"USER-PREFERENCE-SENTINEL" in archive.read(name) for name in names))
             self.assertEqual({name.split("/", 1)[0] for name in names}, {"codex-loop"})
             self.assertEqual(names.count("codex-loop/SKILL.md"), 1)
             self.assertIn(f"codex-loop/{DEPLOYMENT_MANIFEST_REL.as_posix()}", names)
@@ -116,10 +123,10 @@ class SkillPackageTests(unittest.TestCase):
             manifest = json.loads(payload)
             self.assertEqual(manifest["distribution"], {"profile": "consumer", "repository_binding": "none"})
             self.assertNotIn("source", manifest)
-            self.assertNotIn("yihan-hu/codex-loop", payload.decode("utf-8"))
+            self.assertNotIn("example-owner/codex-loop", payload.decode("utf-8"))
             with zipfile.ZipFile(package) as archive:
                 self.assertFalse(
-                    any(b"yihan-hu/codex-loop" in archive.read(name) for name in archive.namelist() if not name.endswith("/")),
+                    any(b"example-owner/codex-loop" in archive.read(name) for name in archive.namelist() if not name.endswith("/")),
                     "consumer archive must not contain the maintainer repository literal",
                 )
             self.assertIsNone(result["source"])
@@ -133,7 +140,7 @@ class SkillPackageTests(unittest.TestCase):
             with zipfile.ZipFile(package) as archive:
                 manifest = json.loads(archive.read(f"codex-loop/{DEPLOYMENT_MANIFEST_REL.as_posix()}"))
             self.assertEqual(manifest["distribution"]["repository_binding"], "provenance_only")
-            self.assertEqual(manifest["source"]["repository"], "yihan-hu/codex-loop")
+            self.assertEqual(manifest["source"]["repository"], "example-owner/codex-loop")
             self.assertEqual(manifest["source"]["commit"], self.source_commit)
             self.assertEqual(manifest["source"]["tree"], self.source_tree)
             self.assertEqual(result["source"]["tree"], self.source_tree)

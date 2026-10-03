@@ -48,13 +48,15 @@ Before the first publish, a useful request is: `Check my Codex Loop Web publishi
 
 ### Level 3 — Control a local Mac / use a persistent local repository
 
-RDC is optional. Set it up only when the user explicitly wants local files, native Git, local Chrome, or macOS GUI control.
+Local connections are optional. For local files/native Git, prefer a custom file/shell MCP, then Remote Desktop Commander (RDC). Browser/GUI control needs its own supported capability. Read `local-connections.md` for connection priorities and private execution defaults.
 
-1. Install/connect Remote Desktop Commander to the Mac or other supported machine.
-2. Choose a persistent development root (`LOCAL_ROOT`) and authorize that directory in RDC. Keep repositories used by Codex Loop under that root unless a narrower extra path is explicitly granted.
+For guided macOS setup, use [the local MCP tutorial](local-mcp-tutorial.md), including the restricted runtime key, ChatGPT workspace association, actual file/shell verification, payment-stop rule, and private preference registration. Do not require this setup for ordinary Web objectives.
+
+1. Connect the selected custom MCP (or RDC) to the intended computer; observe its actual file/shell capabilities.
+2. Choose a persistent development root (`LOCAL_ROOT`) and confirm the selected connector permits that directory. Keep repositories used by Codex Loop under that root unless a narrower extra path is explicitly granted.
 3. If helpful, register the root as a private alias such as `piwork`; registration remembers identity, not access permission.
 4. Ensure native Git authentication on that host works for the repositories the user intends to publish.
-5. Explicitly select Local workspace mode when the local checkout should become the development baseline. RDC availability by itself never selects Local mode.
+5. Select Local for this task, or save that computer as `execution.default_target`. A one-task override does not overwrite the saved default; connectivity alone does not select Local.
 6. Local source edits still require current-task authorization. Local Chrome or macOS GUI interaction also requires explicit computer-use authorization for that task.
 
 RDC can also be used only as an interaction adapter while repository development remains in Web mode. Do not equate “use my Mac/Chrome” with “make my Mac checkout the source of truth.”
@@ -66,6 +68,8 @@ When setup is missing, disclose dependencies progressively:
 - Base ChatGPT objective: ask for nothing extra.
 - GitHub repository task: ask only for the relevant GitHub connection/access.
 - Web publication: additionally explain the Drive staging folder and Actions write-policy prerequisites.
-- Local filesystem/native Git/browser/GUI task: additionally explain RDC and the relevant path/computer authorization.
+- Local filesystem/native Git/browser/GUI task: additionally explain the selected local connector and the relevant path/computer authorization.
 
 Never present all four integrations as a mandatory installation checklist. Prefer a bounded preflight that tests the exact capabilities needed by the current task and tells the user what remains to configure.
+
+For preferences across new chats, follow [Drive-first Host Profile recovery](host-profile-drive.md). It uses only the current connected user's fixed `codex-loop/settings/host-profile.json`, before selecting Web or a computer. Disconnected Drive uses defaults; recovery errors are reported. This does not resume tasks.

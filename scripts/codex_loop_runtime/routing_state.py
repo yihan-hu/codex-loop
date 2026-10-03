@@ -10,7 +10,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-ROUTING_SCHEMA_VERSION = 1
+from .local_connection import resolve_execution
+
+ROUTING_SCHEMA_VERSION = 2
 HOST_SURFACES = frozenset({"unknown", "chatgpt_web", "codex_local"})
 WORKSPACE_MODES = frozenset({"web", "local"})
 INTERACTION_TARGETS = frozenset({"none", "cloud_browser", "local_chrome", "local_mac_gui"})
@@ -19,9 +21,10 @@ CHATGPT_WEB_MANUAL_SKILL_INSTALL_PATH = ("Plugins", "Plugin Directory", "Skills"
 ROUTE_ACTIONS = frozenset({
     "repository_observe",
     "repository_mutate",
-    "rdc_repository",
-    "rdc_transfer",
-    "rdc_host_config",
+    "local_repository",
+    "local_lifecycle",
+    "local_transfer",
+    "local_host_config",
     "browser_interaction",
     "skill_install",
     "chatgpt_skill_install",
@@ -135,15 +138,16 @@ def _native_deployment_target(host_surface: str) -> str | None:
     return None
 
 
-def _default_state(host_surface: str) -> dict[str, Any]:
+def _default_state(host_surface: str, execution: dict[str, Any]) -> dict[str, Any]:
     if host_surface not in HOST_SURFACES:
         raise ValueError(f"host surface must be one of {sorted(HOST_SURFACES)}")
     return {
         "schema_version": ROUTING_SCHEMA_VERSION,
         "scope": "conversation",
         "host_surface": host_surface,
-        "workspace_mode": "web",
-        "workspace_basis": "new_conversation_default",
+        "workspace_mode": execution["workspace_mode"],
+        "workspace_basis": execution["basis"],
+        "local_connection": execution["local_connection"],
         "interaction_target": "none",
         "interaction_basis": "new_conversation_default",
         "deployment_target": None,
@@ -164,6 +168,7 @@ def _validate_state(payload: Any) -> dict[str, Any]:
         "host_surface",
         "workspace_mode",
         "workspace_basis",
+        "local_connection",
         "interaction_target",
         "interaction_basis",
         "deployment_target",
@@ -179,6 +184,14 @@ def _validate_state(payload: Any) -> dict[str, Any]:
         raise ValueError("routing session state has an invalid host surface")
     if payload.get("workspace_mode") not in WORKSPACE_MODES:
         raise ValueError("routing session state has an invalid workspace mode")
+    connection = payload["local_connection"]
+    if payload["workspace_mode"] == "web" and connection is not None:
+        raise ValueError("Web routing cannot bind a local connection")
+    if payload["workspace_mode"] == "local" and (
+        not isinstance(connection, dict) or connection.get("kind") not in {"mcp", "rdc"}
+        or not all(isinstance(connection.get(key), str) and connection[key] for key in ("name", "connector"))
+    ):
+        raise ValueError("Local routing requires a selected connection")
     if payload.get("interaction_target") not in INTERACTION_TARGETS:
         raise ValueError("routing session state has an invalid interaction target")
     deployment_target = payload.get("deployment_target")
@@ -199,7 +212,9 @@ def _validate_state(payload: Any) -> dict[str, Any]:
     return payload
 
 
-def route_init(*, session_id: str | None = None, host_surface: str = "unknown") -> dict[str, Any]:
+def route_init(*, session_id: str | None = None, host_surface: str = "unknown",
+               workspace_target: str | None = None, connection: str | None = None,
+               available_connections: list[str] | None = None) -> dict[str, Any]:
     sid = _session_id(session_id, generate=True)
     assert sid is not None
     path = _routing_path(sid)
@@ -208,7 +223,11 @@ def route_init(*, session_id: str | None = None, host_surface: str = "unknown") 
         if host_surface != "unknown" and state["host_surface"] != host_surface:
             raise ValueError("routing session is already bound to a different host surface; start a new routing session")
         return {**state, "session_id": sid, "created": False}
-    state = _default_state(host_surface)
+    execution = resolve_execution(target=workspace_target, connection=connection,
+                                  available_connections=available_connections)
+    if execution["status"] != "resolved":
+        raise RuntimeError("observe usable local connections before route-init")
+    state = _default_state(host_surface, execution)
     _atomic_json_write(path, state)
     return {**state, "session_id": sid, "state_path": str(path), "created": True}
 
@@ -234,6 +253,9 @@ def route_transition(
     *,
     session_id: str | None = None,
     workspace_mode: str | None = None,
+    workspace_target: str | None = None,
+    connection: str | None = None,
+    available_connections: list[str] | None = None,
     interaction_target: str | None = None,
     deployment_target: str | None = None,
     selection_evidence: str | None = None,
@@ -245,6 +267,14 @@ def route_transition(
     changed: list[str] = []
     digest = _evidence_digest(selection_evidence)
 
+    if workspace_target is not None:
+        mode = "web" if workspace_target == "web" else "local"
+        if workspace_mode is not None and workspace_mode != mode:
+            raise ValueError("workspace_mode conflicts with workspace_target")
+        workspace_mode = mode
+    if connection is not None and workspace_mode is None:
+        workspace_mode = "local"
+
     if workspace_mode is not None:
         if workspace_mode not in WORKSPACE_MODES:
             raise ValueError(f"workspace mode must be one of {sorted(WORKSPACE_MODES)}")
@@ -253,11 +283,18 @@ def route_transition(
                 "entering local workspace mode requires host-observed explicit current-conversation user selection; "
                 "selection evidence is audit data and cannot authorize the transition by itself"
             )
-        if workspace_mode != state["workspace_mode"]:
+        route_changed = workspace_mode != state["workspace_mode"] or workspace_target is not None or connection is not None
+        if route_changed:
+            execution = resolve_execution(target=workspace_target or workspace_mode, connection=connection,
+                                          available_connections=available_connections)
+            if execution["status"] != "resolved":
+                raise RuntimeError("observe usable local connections before route-transition")
             state["workspace_mode"] = workspace_mode
+            state["local_connection"] = execution["local_connection"]
             state["workspace_basis"] = "explicit_user_local_workspace" if workspace_mode == "local" else "explicit_web_selection"
             state["selection_evidence_sha256"]["workspace_mode"] = digest
             changed.append("workspace_mode")
+            changed.append("local_connection")
 
     if interaction_target is not None:
         if interaction_target not in INTERACTION_TARGETS:
@@ -317,6 +354,7 @@ def _deployment_resolution(state: dict[str, Any]) -> tuple[str | None, str]:
 def route_check(
     *,
     action: str,
+    dispatch_connector: str | None = None,
     session_id: str | None = None,
     workspace_granted: bool = False,
     local_source_mutation_authorized: bool = False,
@@ -330,6 +368,7 @@ def route_check(
         "action": action,
         "allowed": False,
         "workspace_mode": state["workspace_mode"],
+        "local_connection": state["local_connection"],
         "interaction_target": state["interaction_target"],
         "deployment_target": state["deployment_target"],
         "host_surface": state["host_surface"],
@@ -337,17 +376,35 @@ def route_check(
         "requirements": [],
     }
 
-    if action == "rdc_host_config":
+    result["dispatch_connector_verified"] = False
+    if dispatch_connector is not None:
+        if not isinstance(dispatch_connector, str) or not dispatch_connector.strip():
+            raise ValueError("dispatch_connector must be the actual host-exposed app name or ID")
+        pinned = state["local_connection"]
+        if pinned is None or dispatch_connector != pinned["connector"]:
+            result["requirements"] = ["dispatch_through_pinned_local_connection"]
+            result["rule"] = "a reachable second connector cannot replace the pinned connector without explicit route transition"
+            return result
+        result["dispatch_connector_verified"] = True
+
+    if action == "local_lifecycle":
+        result["allowed"] = state["workspace_mode"] == "local" and result["dispatch_connector_verified"]
+        if not result["allowed"]:
+            result["requirements"] = ["local_route_and_verified_dispatch_connector"]
+        result["rule"] = "bootstrap/resume and all lifecycle commands use the same pinned connector and computer"
+        return result
+
+    if action == "local_host_config":
         result.update({
             "allowed": True,
             "config_role": "codex_loop_bootstrap_read_only",
             "allowed_config_paths": ["~/.codex-loop/host.json", "~/.codex-loop/workspace-registry.json"],
             "config_mutation_allowed": False,
-            "rule": "RDC host-config reads are routed Codex Loop bootstrap actions, not an authorization bypass; mutation requires a separate explicit host-administration task",
+            "rule": "Local connector host-config reads are routed Codex Loop bootstrap actions, not an authorization bypass; mutation requires a separate explicit host-administration task",
         })
         return result
 
-    if action == "rdc_transfer":
+    if action == "local_transfer":
         missing: list[str] = []
         if not workspace_granted:
             missing.append("current_conversation_workspace_grant")
@@ -364,10 +421,10 @@ def route_check(
         result["allowed"] = True
         return result
 
-    if action in {"repository_observe", "repository_mutate", "rdc_repository", "github_publish"}:
-        if action == "rdc_repository" and state["workspace_mode"] != "local":
+    if action in {"repository_observe", "repository_mutate", "local_repository", "github_publish"}:
+        if action == "local_repository" and state["workspace_mode"] != "local":
             result.update({
-                "rule": "RDC availability cannot select Local mode; repository access remains Web-routed until explicit local workspace selection is recorded",
+                "rule": "Local connector availability cannot select Local mode; repository access requires the resolved workspace target",
                 "effective_workspace": "web",
             })
             return result

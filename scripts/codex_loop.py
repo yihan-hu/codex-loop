@@ -56,6 +56,8 @@ from codex_loop_runtime.host_config import (
     progress_policy,
     set_progress_config,
 )
+from codex_loop_runtime.host_profile_sync import export_profile, import_profile
+from codex_loop_runtime.local_connection import resolve_execution
 from codex_loop_runtime.persistence import (
     build_resume_plan,
     build_state_manifest,
@@ -119,7 +121,9 @@ HOST_ADAPTER_COMMANDS = (
     ('authority', 'return the complete retained user request and ordered steers'),
     ('next', 'inspect the same lifecycle when its task_id is already known'),
     ('resume', 'resolve an existing active lifecycle, then return the normal continuation capsule'),
+    ('host-profile', 'import/export private preferences for the current connected Drive account'),
     ('host-config', 'show or update the unified private Host Profile'),
+    ('execution-resolve', 'resolve saved Web/computer defaults and ordered local connections'),
     ('progress-config', 'compatibility facade for private progress-visibility preferences'),
     ('progress-policy', 'resolve progress behavior for lightweight or substantive work'),
     ('route-init', 'initialize deterministic conversation-scoped routing state'),
@@ -136,7 +140,7 @@ HOST_ADAPTER_COMMANDS = (
     ('web-publish-archive', 'compatibility alias for exact-identity Web Git bundle creation'),
     ('publish-enter', 'stable route-aware publication ABI; the only model-facing publication entrypoint'),
     ('web-publish-plan', 'low-level Web publication planner used by publish-enter'),
-    ('web-local-sync-plan', 'plan the fixed Web -> local Drive staging + RDC download path'),
+    ('web-local-sync-plan', 'plan the fixed Web -> local Drive staging + selected connector download path'),
     ('interaction-route', 'resolve Cloud Browser vs local browser target without granting access'),
     ('persistence-export', 'export private cross-conversation recovery state'),
     ('persistence-validate', 'validate a recovery manifest'),
@@ -497,6 +501,21 @@ def _cmd_host_config(argv: list[str]) -> int:
         raise ValueError(f'unsupported host-config action: {action}')
     return 0
 
+def _cmd_host_profile(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py host-profile')
+    sub = p.add_subparsers(dest='action', required=True)
+    for action in ('export', 'import'):
+        command = sub.add_parser(action)
+        command.add_argument('--drive-root-id', required=True)
+        command.add_argument('--output' if action == 'export' else '--input', required=True)
+    args = p.parse_args(argv[1:])
+    if args.action == 'export':
+        emit_ok(export_profile(drive_root_id=args.drive_root_id, output=args.output))
+    else:
+        emit_ok(import_profile(drive_root_id=args.drive_root_id, input_path=args.input))
+    return 0
+
+
 def _cmd_progress_config(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py progress-config')
     p.add_argument('--mode', choices=sorted(PROGRESS_MODES))
@@ -729,12 +748,34 @@ def _cmd_deployment_provenance_verify(argv: list[str]) -> int:
 
 
 
+def _execution_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument('--workspace-target', help='web, local (automatic computer), or configured computer ID')
+    parser.add_argument('--connection', help='exact local connection name; overrides automatic priority')
+    parser.add_argument('--available-connections-json', help='JSON array of current host-observed usable connection names; [] means none')
+
+
+def _available_connections(args: argparse.Namespace) -> list[str] | None:
+    return json.loads(args.available_connections_json) if args.available_connections_json is not None else None
+
+
+def _cmd_execution_resolve(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py execution-resolve')
+    _execution_arguments(p)
+    args = p.parse_args(argv[1:])
+    emit_ok(resolve_execution(target=args.workspace_target, connection=args.connection,
+                              available_connections=_available_connections(args)))
+    return 0
+
+
 def _cmd_route_init(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py route-init')
     p.add_argument('--session-id')
     p.add_argument('--host-surface', choices=sorted(HOST_SURFACES), default='unknown')
+    _execution_arguments(p)
     args = p.parse_args(argv[1:])
-    emit_ok(route_init(session_id=args.session_id, host_surface=args.host_surface))
+    emit_ok(route_init(session_id=args.session_id, host_surface=args.host_surface,
+                       workspace_target=args.workspace_target, connection=args.connection,
+                       available_connections=_available_connections(args)))
     return 0
 
 
@@ -750,16 +791,21 @@ def _cmd_route_transition(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py route-transition')
     p.add_argument('--session-id')
     p.add_argument('--workspace-mode', choices=sorted(WORKSPACE_MODES))
+    _execution_arguments(p)
     p.add_argument('--interaction-target', choices=sorted(ROUTING_INTERACTION_TARGETS))
     p.add_argument('--deployment-target', choices=sorted(DEPLOYMENT_TARGETS | {'none'}))
     p.add_argument('--selection-evidence')
     p.add_argument('--current-user-selection-observed', action='store_true')
     args = p.parse_args(argv[1:])
-    if args.workspace_mode is None and args.interaction_target is None and args.deployment_target is None:
+    if all(value is None for value in (args.workspace_mode, args.workspace_target, args.connection,
+                                      args.interaction_target, args.deployment_target)):
         raise ValueError('route-transition requires at least one routing field')
     emit_ok(route_transition(
         session_id=args.session_id,
         workspace_mode=args.workspace_mode,
+        workspace_target=args.workspace_target,
+        connection=args.connection,
+        available_connections=_available_connections(args),
         interaction_target=args.interaction_target,
         deployment_target=args.deployment_target,
         selection_evidence=args.selection_evidence,
@@ -772,6 +818,7 @@ def _cmd_route_check(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py route-check')
     p.add_argument('--session-id')
     p.add_argument('--action', required=True, choices=sorted(ROUTE_ACTIONS))
+    p.add_argument('--dispatch-connector', help='actual host-exposed app name or ID intended for this dispatch')
     p.add_argument('--workspace-granted', action='store_true')
     p.add_argument('--current-user-local-source-mutation-authorized', action='store_true')
     p.add_argument('--current-user-local-computer-authorized', action='store_true')
@@ -779,6 +826,7 @@ def _cmd_route_check(argv: list[str]) -> int:
     args = p.parse_args(argv[1:])
     emit_ok(route_check(
         action=args.action,
+        dispatch_connector=args.dispatch_connector,
         session_id=args.session_id,
         workspace_granted=args.workspace_granted,
         local_source_mutation_authorized=args.current_user_local_source_mutation_authorized,
@@ -1364,8 +1412,12 @@ def main() -> int:
             return _cmd_next(argv)
         if argv[0] == 'resume':
             return _cmd_resume(argv)
+        if argv[0] == 'host-profile':
+            return _cmd_host_profile(argv)
         if argv[0] == 'host-config':
             return _cmd_host_config(argv)
+        if argv[0] == 'execution-resolve':
+            return _cmd_execution_resolve(argv)
         if argv[0] == 'progress-config':
             return _cmd_progress_config(argv)
         if argv[0] == 'progress-policy':

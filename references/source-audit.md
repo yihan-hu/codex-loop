@@ -23,7 +23,7 @@ Use the order `EXACT_VENDOR -> EXACT_EXTRACT -> THIN_WRAPPER -> MINIMAL_DERIVATI
 Delegation / Logical Isolation is a Codex Loop / Chatbox local extension, not an upstream Codex multi-agent port. It manages only local delegation lifecycle, bounded context projection metadata, warnings, checkpoint linkage, structured result persistence, and reconciliation. Actual model invocation and native multi-agent authority remain host-owned. The pinned source-map classifications for `spawn` and `multi_agents` remain `HOST_DELEGATE`; this extension does not reclassify them.
 ## Local canonical workspace / release extension
 
-Canonical workspace binding, commit/tree-bound release receipts, and native-Git publish orchestration are Codex Loop local extensions. They do not claim to port Codex network, credential, or GitHub authority. Publishing is intentionally restricted to native Git executed by the host through Remote Desktop Commander on the persistent PiWork workspace; GitHub connector/object-API source upload is not a supported transport.
+Canonical workspace binding, commit/tree-bound release receipts, and native-Git publish orchestration are Codex Loop local extensions. They do not claim to port Codex network, credential, or GitHub authority. Publishing is intentionally restricted to native Git executed by the host through the selected local file/shell connector on the persistent authorized workspace; GitHub connector/object-API source upload is not a supported transport.
 
 ## Local guarded model-relay extension
 

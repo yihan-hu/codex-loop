@@ -1,12 +1,12 @@
 # Private Host Profile
 
-`~/.codex-loop/host.json` (or the test-only `CODEX_LOOP_HOME/host.json`) is the single private user-instance preference/locator profile. It is never repository state, authorization state, or observed capability truth.
+`~/.codex-loop/host.json` (or a private session/test `CODEX_LOOP_HOME/host.json`) is the single private user-instance preference/locator profile. It is never repository state, authorization state, or observed capability truth.
 
-## Schema v2
+## Schema v3
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "progress_visibility": {
     "mode": "enhanced",
     "interval_seconds": 15,
@@ -25,16 +25,25 @@
   "workspace": {
     "default_local_workspace": null
   },
+  "execution": {
+    "default_target": "web",
+    "connections": []
+  },
+  "drive": {"cache_folder_paths": []},
   "persistence": {
     "task_backend": "off",
-    "host_profile_backend": "local_only"
+    "host_profile_backend": "auto"
   }
 }
 ```
 
 Missing config uses these built-in defaults. A preference never asserts capability or permission: `preferred_target=cloud_browser` does not prove Cloud Browser exists, and a workspace alias never means the path is granted or bound. `KNOWN != GRANTED != BOUND` remains authoritative.
 
-Conversation routing is deliberately **not** stored here. `workspace_mode`, `interaction_target`, `deployment_target`, and their selection evidence belong to the private conversation-scoped routing file created by `route-init` under the system temp directory. New conversations therefore cannot inherit yesterday's Local/Web/deployment routing merely because Host Profile persists. Host Profile may provide a browser preference or workspace locator, but `route-check` remains authoritative for the current conversation and current action.
+The execution default and ordered connection locators are persistent preferences, described in `local-connections.md`. `route-init` consumes them for a new conversation, with the current user's target/connection override taking precedence. The selected `workspace_mode` and `local_connection`, interaction/deployment targets, and audit evidence live in the private conversation-scoped routing file. An existing session or lifecycle is not redirected by later preference changes. Path grants, current-task authorization, and observed capabilities never persist here.
+
+## Across new conversations
+
+Follow [Drive-first recovery and saving](host-profile-drive.md) before selecting Web or Local. Fixed names are `codex-loop/settings/host-profile.json` inside the currently connected user's My Drive. The default `auto` backend restores when Drive is connected, uses defaults when absent, and reports recovery errors. `google_drive` requires a connected Drive; an explicit `local_only` choice disables uploads. Task persistence remains independent and off by default. Runtime import/export validates account-bound configuration; the host connector performs actual provider reads/writes.
 
 ## CLI
 
@@ -44,6 +53,7 @@ python3 scripts/codex_loop.py host-config get browser.preferred_target
 python3 scripts/codex_loop.py host-config set browser.preferred_target cloud_browser
 python3 scripts/codex_loop.py host-config set web_publish.staging_folder_id DRIVE_ID
 python3 scripts/codex_loop.py host-config set workspace.default_local_workspace piwork
+python3 scripts/codex_loop.py host-config set execution.default_target web
 python3 scripts/codex_loop.py host-config unset web_publish.staging_folder_id
 python3 scripts/codex_loop.py host-config reset progress_visibility
 ```
@@ -56,7 +66,7 @@ Reads require a regular, owner-controlled, non-symlink file of bounded size with
 
 Schema v1 `default_local_workspace` migrates into `workspace.default_local_workspace` on write. `default_local_root` remains compatibility input only and is not a new configuration surface.
 
-The profile may be read for non-sensitive global preferences at any time, but local path resolution still requires explicit Local-development intent and the ordinary current-conversation grant/host authorization checks. It must never be used as a fallback source for `deployment_target` or to reconstruct a missing routing-session file.
+The profile may be read for non-sensitive global preferences before admission; see `local-connections.md` when its owner is on another computer. Local path resolution requires resolved Local intent (explicit choice or saved default) plus the ordinary path/host checks. The execution resolver fails closed on unsafe/malformed profiles rather than selecting a different location. Other preference reads may still warn/use their safe defaults. This profile never supplies `deployment_target` or authority to reconstruct an existing lifecycle on another host.
 
 Host Profile files, Drive IDs, workspace aliases/paths, browser preferences, credentials, session grants, and task state must never enter Git, source transport artifacts, or Skill packages.
 

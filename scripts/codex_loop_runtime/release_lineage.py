@@ -2108,7 +2108,7 @@ def dispatch_publish(store: Any, *, action_id: str, transport: str) -> dict[str,
     if action.get("kind") != "repository_publish":
         raise ValueError("action is not a Codex Loop repository publish")
     if transport != "git":
-        raise ValueError("repository publishing supports native git only through Remote Desktop Commander")
+        raise ValueError("repository publishing supports native git only through the selected local connection")
     details = _action_details(action)
     details["transport"] = transport
     store.record_external(
@@ -2138,7 +2138,7 @@ def record_publish_outcome(
     if state not in {"terminal_success", "terminal_failure", "outcome_unknown"}:
         raise ValueError("publish outcome must be terminal_success, terminal_failure, or outcome_unknown")
     if transport != "git":
-        raise ValueError("repository publishing supports native git only through Remote Desktop Commander")
+        raise ValueError("repository publishing supports native git only through the selected local connection")
     clean_evidence = str(evidence).strip()
     if not clean_evidence:
         raise ValueError("publish outcome requires concise observable evidence")

@@ -76,13 +76,13 @@ class RoutingStateTests(unittest.TestCase):
         try:
             with self.assertRaises(PermissionError):
                 route_transition(
-                    session_id=sid, workspace_mode="local",
+                    session_id=sid, workspace_mode="local", available_connections=["rdc"],
                     selection_evidence="project history says local was allowed before",
                 )
             shown = route_show(session_id=sid)
             self.assertEqual(shown["workspace_mode"], "web")
             changed = route_transition(
-                session_id=sid, workspace_mode="local",
+                session_id=sid, workspace_mode="local", available_connections=["rdc"],
                 selection_evidence="user explicitly said use the local Mac repository in this conversation",
                 current_user_selection_observed=True,
             )
@@ -110,7 +110,7 @@ class RoutingStateTests(unittest.TestCase):
         sid = state["session_id"]
         try:
             route_transition(
-                session_id=sid, workspace_mode="local",
+                session_id=sid, workspace_mode="local", available_connections=["rdc"],
                 selection_evidence="user explicitly selected local development",
                 current_user_selection_observed=True,
             )
@@ -137,7 +137,7 @@ class RoutingStateTests(unittest.TestCase):
         try:
             route_transition(
                 session_id=sid,
-                workspace_mode="local",
+                workspace_mode="local", available_connections=["rdc"],
                 selection_evidence="user explicitly selected the local repository baseline",
                 current_user_selection_observed=True,
             )
@@ -159,7 +159,7 @@ class RoutingStateTests(unittest.TestCase):
             observed = route_check(action="repository_observe", session_id=sid)
             self.assertTrue(observed["allowed"])
             self.assertEqual(observed["effective_workspace"], "web")
-            self.assertFalse(route_check(action="rdc_repository", session_id=sid)["allowed"])
+            self.assertFalse(route_check(action="local_repository", session_id=sid)["allowed"])
         finally:
             self.cleanup(state)
 
@@ -195,34 +195,34 @@ class RoutingStateTests(unittest.TestCase):
         finally:
             self.cleanup(state)
 
-    def test_rdc_repository_route_fails_closed_until_local_mode_and_grant(self):
+    def test_local_repository_route_fails_closed_until_local_mode_and_grant(self):
         state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
         sid = state["session_id"]
         try:
-            blocked = route_check(action="rdc_repository", session_id=sid)
+            blocked = route_check(action="local_repository", session_id=sid)
             self.assertFalse(blocked["allowed"])
             self.assertEqual(blocked["effective_workspace"], "web")
             with self.assertRaises(PermissionError):
                 route_transition(session_id=sid, workspace_mode="local")
             route_transition(
                 session_id=sid,
-                workspace_mode="local",
+                workspace_mode="local", available_connections=["rdc"],
                 selection_evidence="user explicitly selected the local repository baseline",
                 current_user_selection_observed=True,
             )
-            needs_grant = route_check(action="rdc_repository", session_id=sid)
+            needs_grant = route_check(action="local_repository", session_id=sid)
             self.assertFalse(needs_grant["allowed"])
             self.assertIn("current_conversation_workspace_grant", needs_grant["requirements"])
-            allowed = route_check(action="rdc_repository", session_id=sid, workspace_granted=True)
+            allowed = route_check(action="local_repository", session_id=sid, workspace_granted=True)
             self.assertTrue(allowed["allowed"])
             self.assertEqual(allowed["effective_workspace"], "local")
         finally:
             self.cleanup(state)
 
-    def test_rdc_host_config_is_a_routed_read_only_action(self):
+    def test_local_host_config_is_a_routed_read_only_action(self):
         state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
         try:
-            result = route_check(action="rdc_host_config", session_id=state["session_id"])
+            result = route_check(action="local_host_config", session_id=state["session_id"])
             self.assertTrue(result["allowed"])
             self.assertEqual(result["config_role"], "codex_loop_bootstrap_read_only")
             self.assertFalse(result["config_mutation_allowed"])
@@ -339,7 +339,7 @@ class RoutingStateTests(unittest.TestCase):
         try:
             route_transition(
                 session_id=sid,
-                workspace_mode="local",
+                workspace_mode="local", available_connections=["rdc"],
                 selection_evidence="user explicitly selected local development",
                 current_user_selection_observed=True,
             )

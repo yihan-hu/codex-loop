@@ -41,7 +41,7 @@ class CrossChatAdmissionTests(unittest.TestCase):
         try:
             route_transition(
                 session_id=previous["session_id"],
-                workspace_mode="local",
+                workspace_mode="local", available_connections=["rdc"],
                 selection_evidence="user explicitly selected local in the previous conversation",
                 current_user_selection_observed=True,
             )
@@ -49,7 +49,7 @@ class CrossChatAdmissionTests(unittest.TestCase):
 
             current = route_init(session_id=self.sid(), host_surface="chatgpt_web")
             self.assertEqual(current["workspace_mode"], "web")
-            blocked = route_check(action="rdc_repository", session_id=current["session_id"])
+            blocked = route_check(action="local_repository", session_id=current["session_id"])
             self.assertFalse(blocked["allowed"])
             self.assertEqual(blocked["effective_workspace"], "web")
         finally:

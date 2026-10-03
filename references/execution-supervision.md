@@ -61,14 +61,14 @@ Host capability remains authoritative. Where the host cannot expose process grou
 
 When `next`/`resume` observes a task-owned process in `running` or `draining`, expose it as `live_work.mode = verified_wait` with its existing handle. Re-poll or otherwise inspect that same owned work. A prior observation timeout, transient polling failure, conversation summary, or state-file hint is not terminal evidence and never justifies starting a duplicate process. Treat work as stopped only when authoritative process state is terminal or ownership/handle reconciliation shows it is missing. Orphaned ownership remains a machine blocker that must be reconciled; it is not a verified wait.
 
-## Host/RDC execution safety
+## Host/local-connector execution safety
 
-This is the single safety policy for host-visible and RDC-launched commands. Do not create a parallel state machine for these rules.
+This is the single safety policy for host-visible and local-connector-launched commands. Do not create a parallel state machine for these rules.
 
 - Interactive work stays foreground/task-owned; do not detach it from the controlling session.
 - Every external command has an explicit finite workload timeout. On detected unexpected input prompt, repeated output without progress, or no-progress/stall, terminate the task-owned process or process group immediately on detection.
 - Bound task-owned output growth directly; do not gate execution on remaining free disk. Logs, temporary files, and otherwise unbounded generated files default to 1,000,000,000 bytes (1 GB). Stop the writer when the cap is reached.
-- A user-requested artifact may exceed the default only when the task actually requires it and a finite task-specific cap is established before the writer starts. Prefer native size/rotation/retention limits. Otherwise identify the exact task-owned output path(s) before launch, keep the producing process in an observable/terminable host or RDC session, poll growth while it runs, and terminate the writer at the cap. Do not start an unbounded file writer through an opaque execution mode that cannot be stopped at the bound.
+- A user-requested artifact may exceed the default only when the task actually requires it and a finite task-specific cap is established before the writer starts. Prefer native size/rotation/retention limits. Otherwise identify the exact task-owned output path(s) before launch, keep the producing process in an observable/terminable host or selected-connector session, poll growth while it runs, and terminate the writer at the cap. Do not start an unbounded file writer through an opaque execution mode that cannot be stopped at the bound.
 - DOCX ZIP-level work begins with `unzip -t`. Automatic `zip -FF` repair of a DOCX is forbidden; failed integrity requires a separately reviewed recovery on a copy.
 - Before completion, stop task-owned processes and remove task-owned temporary files. Unresolved process ownership/termination prevents PASS.
 - `nohup`, `disown`, `setsid`, shell backgrounding, daemonization, or any child intended to outlive task completion is forbidden unless the user explicitly authorizes persistent background execution for the current task.

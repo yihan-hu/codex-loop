@@ -29,7 +29,7 @@ python3 CODEX_LOOP_ROOT/scripts/codex_loop.py publish-enter --cwd REPO \
 The controller must:
 
 1. intercept publication intent before literal transport execution;
-2. treat the current routing state as the deterministic projection of the user's explicit Web/Local selection;
+2. treat the current routing state as the deterministic projection of the user's explicit or saved Web/Local selection;
 3. return `mode_protocol_reference` for the selected mode;
 4. execute only the selected mode's modeled actions;
 5. require exact remote identity verification after publication;
@@ -39,13 +39,13 @@ The controller ABI is an internal controller/runtime compatibility check. It is 
 
 ## Web mode
 
-Web mode uses `references/web-mode-publish.md`. Native local Git is not substituted merely because it is available through RDC. The verified Web path preserves audited Git identity and its existing staging/import integrity rules.
+Web mode uses `references/web-mode-publish.md`. Native local Git is not substituted merely because it is available through a local connector. The verified Web path preserves audited Git identity and its existing staging/import integrity rules.
 
 A Web-path failure is reported as a Web publication blocker or a modeled recovery choice. It never silently selects Local mode.
 
 ## Local mode
 
-Local mode uses `references/verified-native-git.md`. Once the user explicitly selects Local and repository access is granted, native Git is first-class canonical execution, not a fallback.
+Local mode uses `references/verified-native-git.md`. Once Local is resolved from an explicit choice or saved default and repository access is granted, native Git is first-class canonical execution, not a fallback.
 
 The minimal Local sequence is:
 

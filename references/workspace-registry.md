@@ -116,15 +116,15 @@ This conversation may use EpiAgent.
 
 Requests such as `modify EpiAgent`, `look at EpiAgent`, `you know where EpiAgent is`, or `EpiAgent has a local copy` do not grant the path by themselves. If the alias is KNOWN but not GRANTED, ask for the grant without asking the user to repeat the absolute path.
 
-## Host/RDC authorization and realpath enforcement
+## Host/local connector authorization and realpath enforcement
 
 A semantic grant is necessary but insufficient. Actual access requires all three conditions:
 
 ```text
-REGISTERED + EXPLICITLY GRANTED THIS CONVERSATION + HOST/RDC AUTHORIZED = ACCESSIBLE
+REGISTERED + EXPLICITLY GRANTED THIS CONVERSATION + HOST/local connector AUTHORIZED = ACCESSIBLE
 ```
 
-Before a repository-affecting RDC operation, pass only host-observed authorized roots to resolution and require access:
+Before a repository-affecting local connector operation, pass only host-observed authorized roots to resolution and require access:
 
 ```bash
 python3 scripts/codex_loop.py workspace-resolve epiagent \
@@ -133,7 +133,7 @@ python3 scripts/codex_loop.py workspace-resolve epiagent \
   --require-access
 ```
 
-`--host-authorized-root` is evidence supplied after the host has actually confirmed its filesystem boundary. It is not a way for the runtime to alter RDC `allowedDirectories` or self-authorize a path.
+`--host-authorized-root` is evidence supplied after the host has actually confirmed its filesystem boundary. It is not a way for the runtime to alter local connector `allowedDirectories` or self-authorize a path.
 
 The runtime resolves both the registered workspace and host roots to real paths. A registered path that disappeared, became non-directory, or now resolves through a symlink to a different target is unusable. Do not search the home directory, parent directories, or whole disk to guess a replacement. Ask for explicit re-registration.
 
@@ -147,7 +147,7 @@ For Local mode, the agent reasons about:
 Primary Local Root + Session Granted Roots = Effective Local Roots
 ```
 
-The primary root is the development root explicitly selected for Local mode. Session-granted roots can add other registered repositories or development roots for this conversation after host/RDC authorization is confirmed.
+The primary root is the development root resolved for the selected Local computer, subject to current path grants. Session-granted roots can add other registered repositories or development roots for this conversation after host/local connector authorization is confirmed.
 
 Multiple effective roots do not merge source baselines. Each lifecycle still binds through the existing `workspace-binding` mechanism to exactly one canonical Git working tree. Access to PiWork and EpiAgent at the same time does not make one repository a substitute for the other.
 
@@ -160,7 +160,7 @@ PiWork uses the same registry mechanism as every other persistent workspace. Reg
 3. Conversation grants require a conversation nonce that is not persisted across conversations.
 4. Knowing an alias never selects Local mode or filesystem access by itself.
 5. A grant applies only to the exact current registry fingerprint for that alias.
-6. Host/RDC enforcement always wins.
+6. Host/local connector enforcement always wins.
 7. One lifecycle binds to one canonical Git working tree.
 8. Registry discovery never triggers whole-home or whole-disk search.
 9. Registry mutation invalidates old grants for the changed entry.
