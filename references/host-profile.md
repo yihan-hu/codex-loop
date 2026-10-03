@@ -62,7 +62,7 @@ For local filesystem work, use the current-task authorized absolute directory fi
 
 A locator is not a grant. Before passing `--workspace-granted`, the host must observe current user/task path authority and verify the actual directory and realpath against the selected connector's authorized roots. A saved or task directory that is missing, not a directory, or denied by the connector blocks access; do not silently choose another directory or create the missing one without user intent. Registry grants and Git lifecycle bindings stay separate (`KNOWN != GRANTED != BOUND`).
 
-New routes snapshot their selected environment locations. Changing saved preferences does not redirect an existing route or lifecycle. Connection changes within the same environment retain this snapshot. A route transition to another environment loads that environment's locations for a new objective.
+New routes snapshot their selected environment default/runtime/state locations. Named project lookups read the current controller profile, so saving or changing an alias is immediately visible. Existing lifecycle bindings always pass their bound directory as `--local-root`; preference edits never move that binding. Connection changes within the same environment retain the default/runtime/state snapshot. A route transition to another environment loads that environment's locations for a new objective.
 
 ## Editing and saving
 
@@ -83,3 +83,10 @@ Object/list setters replace that field: read its current value and retain unrela
 Never store passwords, tokens, keys, one-time approvals, grants, conversation nonces, active task/branch/worktree state, or claims that a connector is online or a path exists. Verify actual capabilities when needed. User configuration, account IDs, and paths never enter Git, source bundles, or Skill ZIPs. `drive.cache_folder_paths` is local cleanup bookkeeping and is excluded from Drive profile export; temporary Drive storage stays under `ChatGPT-Temporary`.
 
 Temporary Drive cleanup uses `drive-storage.md` and the shared `drive-deletion.md` dispatch/reconciliation adapter. That adapter does not change cache registration, retention, or cleanup eligibility; retained host profiles are never temporary cache.
+
+For a remembered project, prefer `host-project set --computer ENV --name ALIAS --path ABSOLUTE`
+or `host-project remove --computer ENV --name ALIAS` using the controller's restored
+preference home. These edit one source entry and preserve other raw settings;
+then update and verify the same Drive file ID. Registry materialization is temporary
+conversation access bookkeeping and never saves a project. Native runtime/profile
+alignment is not a prerequisite for saving a remote locator.

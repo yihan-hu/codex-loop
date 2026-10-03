@@ -401,6 +401,39 @@ def host_config_set(path: str, value: Any) -> dict[str, Any]:
     return result
 
 
+def _host_project_edit(computer: str, name: str, path: str | None) -> dict[str, Any]:
+    """Edit one locator in the restored controller profile, preserving other raw fields."""
+    raw, _, _ = _load_raw_host_config()
+    workspace = raw.get("workspace") or {}
+    raw["workspace"] = workspace
+    environments = workspace.setdefault("environments", {})
+    if path is None:
+        projects = environments.get(computer, {}).get("projects", {})
+        if name not in projects:
+            raise KeyError(f"unknown project {name!r} on environment {computer!r}")
+        del projects[name]
+    else:
+        # Validate the identifiers and locator before changing the original profile.
+        _validate_section("workspace", {"environments": {computer: {"projects": {name: path}}}})
+        projects = environments.setdefault(computer, {}).setdefault("projects", {})
+        projects[name] = path
+    _write_raw_profile(raw)
+    return {
+        **_profile_save_status(), "computer": computer, "name": name,
+        "path": path, "removed": path is None,
+        "config_path": str(host_config_path()),
+        "authorization_persisted": False,
+    }
+
+
+def host_project_set(computer: str, name: str, path: str) -> dict[str, Any]:
+    return _host_project_edit(computer, name, path)
+
+
+def host_project_remove(computer: str, name: str) -> dict[str, Any]:
+    return _host_project_edit(computer, name, None)
+
+
 def host_config_unset(path: str) -> dict[str, Any]:
     section, key = _leaf_parts(path)
     raw, _warnings, _exists = _load_raw_host_config()

@@ -228,7 +228,7 @@ class RoutingStateTests(unittest.TestCase):
             self.assertEqual(result["config_role"], "codex_loop_bootstrap_read_only")
             self.assertFalse(result["config_mutation_allowed"])
             self.assertEqual(result["allowed_config_paths"], [
-                "~/.codex-loop/host.json", "~/.codex-loop/workspace-registry.json",
+                "~/.codex-loop/host.json",
             ])
             self.assertIn("not an authorization bypass", result["rule"])
         finally:

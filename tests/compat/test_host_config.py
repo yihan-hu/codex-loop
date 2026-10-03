@@ -72,6 +72,49 @@ class HostConfigTests(unittest.TestCase):
                 self.assertNotEqual(proc.returncode, 0)
                 self.assertEqual(path.read_text(), "{}")
 
+    def test_project_edit_preserves_original_profile_and_handles_remote_locator(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "controller"; home.mkdir()
+            path = home / "host.json"
+            original = {
+                "schema_version": 4,
+                "execution": {"default_target": "web"},
+                "interaction": {"language": "Chinese"},
+                "workspace": {"environments": {
+                    "mac": {"default_root": "/default/work", "projects": {"existing": "/existing"}},
+                    "wsl": {"default_root": "/mnt/work", "runtime_directory": "/runtime"},
+                }},
+            }
+            path.write_text(json.dumps(original)); os.chmod(path, 0o600)
+            # This remote locator deliberately does not exist on the controller.
+            locator = "/mnt/c/Users/Test/Project With Spaces"
+            saved, _ = call(home, "host-project", "set", "--computer", "wsl", "--name", "demo", "--path", locator)
+            self.assertTrue(saved["data"]["saved"])
+            self.assertFalse(saved["data"]["cross_chat_saved"])
+            expected = json.loads(json.dumps(original))
+            expected["workspace"]["environments"]["wsl"]["projects"] = {"demo": locator}
+            self.assertEqual(json.loads(path.read_text()), expected)
+            before = path.read_bytes()
+            for computer, name, value in [("web", "demo", "/root"), ("wsl", "Invalid", "/root"), ("wsl", "demo", "relative")]:
+                _, proc = call(home, "host-project", "set", "--computer", computer, "--name", name, "--path", value, check=False)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertEqual(path.read_bytes(), before)
+            call(home, "host-project", "remove", "--computer", "wsl", "--name", "demo")
+            expected["workspace"]["environments"]["wsl"]["projects"] = {}
+            self.assertEqual(json.loads(path.read_text()), expected)
+            self.assertFalse((home / "workspace-registry.json").exists())
+
+    def test_project_edit_handles_empty_workspace_and_rejects_old_profile_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td); path = home / "host.json"
+            path.write_text('{"schema_version": 4, "workspace": null}'); os.chmod(path, 0o600)
+            call(home, "host-project", "set", "--computer", "mac", "--name", "demo", "--path", "/remote/demo")
+            self.assertEqual(json.loads(path.read_text())["workspace"]["environments"]["mac"]["projects"], {"demo": "/remote/demo"})
+            path.write_text('{"schema_version": 3}'); before = path.read_bytes()
+            _, proc = call(home, "host-project", "set", "--computer", "mac", "--name", "demo", "--path", "/remote/demo", check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertEqual(path.read_bytes(), before)
+
     def test_get_set_unset_reset(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"

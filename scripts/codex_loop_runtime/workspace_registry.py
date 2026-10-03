@@ -36,8 +36,12 @@ def codex_loop_home() -> Path:
     return Path(override).expanduser() if override else Path.home() / ".codex-loop"
 
 
-def registry_path() -> Path:
-    return codex_loop_home() / "workspace-registry.json"
+def registry_path(session_id: str | None = None) -> Path:
+    session = _session_id(session_id)
+    if session is None:
+        raise ValueError("workspace cache requires a current conversation session id")
+    digest = hashlib.sha256(session.encode("utf-8")).hexdigest()
+    return _session_root() / f"{digest}.registry.json"
 
 
 def host_config_path() -> Path:
@@ -143,8 +147,10 @@ def _validate_registry(payload: Any) -> dict[str, Any]:
     return {"version": REGISTRY_VERSION, "workspaces": workspaces}
 
 
-def load_registry() -> dict[str, Any]:
-    path = registry_path()
+def load_registry(session_id: str | None = None) -> dict[str, Any]:
+    if _session_id(session_id) is None:
+        return _empty_registry()
+    path = registry_path(session_id)
     try:
         _check_private_regular_file(path)
     except FileNotFoundError:
@@ -179,41 +185,45 @@ def workspace_fingerprint(name: str, entry: dict[str, str]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def register_workspace(name: str, path: str | os.PathLike[str], kind: str, *, update: bool = False) -> dict[str, Any]:
+def materialize_workspace(name: str, path: str | os.PathLike[str], kind: str, *, session_id: str | None = None, update: bool = False) -> dict[str, Any]:
     alias = normalize_alias(name)
     if kind not in WORKSPACE_KINDS:
         raise ValueError(f"workspace kind must be one of {sorted(WORKSPACE_KINDS)}")
     resolved = _canonical_existing_directory(path)
-    registry = load_registry()
+    session_id = _session_id(session_id, generate=True)
+    registry = load_registry(session_id)
     existing = registry["workspaces"].get(alias)
     if existing is not None and not update:
         raise ValueError(f"workspace alias is already registered: {alias}; use explicit update")
     entry = {"path": str(resolved), "kind": kind}
     registry["workspaces"][alias] = entry
-    _atomic_json_write(registry_path(), _validate_registry(registry))
+    _atomic_json_write(registry_path(session_id), _validate_registry(registry))
     return {
         "name": alias,
         "path": entry["path"],
         "kind": kind,
         "registered": True,
+        "scope": "conversation",
+        "session_id": session_id,
+        "locations_persisted": False,
         "updated": existing is not None,
         "granted": False,
     }
 
 
-def remove_workspace(name: str) -> dict[str, Any]:
+def forget_workspace(name: str, *, session_id: str | None = None) -> dict[str, Any]:
     alias = normalize_alias(name)
-    registry = load_registry()
+    registry = load_registry(session_id)
     existing = registry["workspaces"].get(alias)
     if existing is None:
         raise KeyError(f"workspace is not registered: {alias}")
     del registry["workspaces"][alias]
-    _atomic_json_write(registry_path(), registry)
+    _atomic_json_write(registry_path(session_id), registry)
     return {"name": alias, "removed": True, "granted": False}
 
 
-def list_workspaces() -> list[dict[str, str]]:
-    registry = load_registry()
+def list_workspaces(*, session_id: str | None = None) -> list[dict[str, str]]:
+    registry = load_registry(session_id)
     return [
         {"name": name, "kind": entry["kind"], "path": entry["path"]}
         for name, entry in sorted(registry["workspaces"].items())
@@ -302,14 +312,14 @@ def grant_workspace(
         )
     if not evidence:
         raise ValueError("workspace-grant requires explicit authorization evidence after the host observation")
-    registry = load_registry()
+    registry = load_registry(session_id)
     entry = registry["workspaces"].get(alias)
     if entry is None:
         raise KeyError(f"workspace is not registered: {alias}")
     path_state = inspect_registered_path(entry)
     if not path_state["valid"]:
         raise RuntimeError(f"registered workspace path is not usable: {path_state['reason']}")
-    resolved_session = _session_id(session_id, generate=True)
+    resolved_session = _session_id(session_id)
     assert resolved_session is not None
     session = _load_session(resolved_session)
     session["grants"][alias] = {
@@ -332,7 +342,7 @@ def grant_workspace(
 def session_grants(*, session_id: str | None = None) -> dict[str, Any]:
     resolved_session = _session_id(session_id, generate=False)
     session = _load_session(resolved_session)
-    registry = load_registry()
+    registry = load_registry(session_id)
     active: list[str] = []
     stale: list[str] = []
     for name, grant in sorted(session["grants"].items()):
@@ -380,7 +390,7 @@ def resolve_workspace(
     host_authorized_roots: Iterable[str | os.PathLike[str]] = (),
 ) -> dict[str, Any]:
     alias = normalize_alias(name)
-    registry = load_registry()
+    registry = load_registry(session_id)
     entry = registry["workspaces"].get(alias)
     if entry is None:
         return {

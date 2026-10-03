@@ -6,6 +6,15 @@ flowchart TD
   A --> DRIVE[First invocation: current connected user My Drive]
   DRIVE --> PROFILE[Fixed codex-loop/settings/host-profile.json]
   PROFILE --> PREFER[Validate account and restore private preferences]
+  SAVE[User asks to remember a project] --> EDIT[host-project edits one source locator on controller]
+  PREFER --> EDIT
+  EDIT -->|Drive-backed| UPDATE[Export and update original Drive file ID + readback]
+  EDIT -->|local_only| PRIVATE[Private profile on its own host]
+  UPDATE --> PROFILE
+  PREFER --> LOOKUP[Current project locator for pinned environment]
+  LOOKUP --> CACHE[Selected connector verifies and materializes conversation cache]
+  CACHE --> GRANT[Exact path authority + connector boundary]
+  GRANT --> ACCESS
   DRIVE -->|Absent or unconnected| DEFAULT[Fresh Web defaults / own native profile]
   DEFAULT --> PREFER
   PROFILE -->|Error or duplicate| PROFILEFAIL[Report recovery failure]
@@ -17,7 +26,7 @@ flowchart TD
   ROUTE --> DISPATCH[route-check verifies intended connector + task permissions]
   DISPATCH --> LR[Same connector: selected computer runtime cache]
   OBS -->|unavailable| Z[Fail closed]
-  OBS --> LOC[Snapshot selected environment locations]
+  OBS --> LOC[Snapshot selected environment default/runtime/state locations]
   LOC --> ROUTE[Private conversation route pins connection + locations]
   ROUTE -. directory-dependent work .-> ROOT[Task directory / named project / environment default]
   ROOT -->|missing or denied| Z
@@ -118,4 +127,4 @@ Host Profile recovery is independent of task resume. The host Drive connector ow
 
 Local lifecycle dispatch has its own `local_lifecycle` route check, including bootstrap and resume. The host supplies the actual owning connector before dispatch; mismatches fail. This validates caller-provided identity, not interception of arbitrary host tool calls. Initialization recovery stays on the selected connector; only explicit user transition can change a pinned transport.
 
-Environment identifiers represent distinct filesystems: Mac and WSL never share a default root merely because they share hardware. Empty current profiles use Web, no connections/locations, follow-user language, standard material progress, cloud browser preference without local fallback, and task persistence off. Missing files use defaults without writes; malformed/unsafe/unreadable/unsupported profiles fail. `route-check` resolves local directory locators from a route snapshot and blocks missing directory or path authority; the host observes remote existence, realpath, and connector roots before supplying the grant flag. Runtime validation cannot intercept arbitrary host tools or verify a remote filesystem from Web. Saved project paths are authoritative in the profile; native registry entries for them are derived grant lookup, never a second editable source.
+Environment identifiers represent distinct filesystems: Mac and WSL never share a default root merely because they share hardware. Empty current profiles use Web, no connections/locations, follow-user language, standard material progress, cloud browser preference without local fallback, and task persistence off. Missing files use defaults without writes; malformed/unsafe/unreadable/unsupported profiles fail. `route-check` resolves task/default roots from a route snapshot and named projects from the current controller profile and blocks missing directory or path authority; the host observes remote existence, realpath, and connector roots before supplying the grant flag. Runtime validation cannot intercept arbitrary host tools or verify a remote filesystem from Web. Saved project paths are authoritative in the profile; native registry entries are temporary conversation grant lookup under the platform temp directory, never a second editable source. Old persistent registry files are neither read nor deleted. `host-project` edits one project source entry, preserving unrelated preferences; saving a remote locator does not require a native runtime upgrade or replacing its profile. Drive discovery enumerates actual parent children before proving absence, and saves update the existing verified file ID in place.

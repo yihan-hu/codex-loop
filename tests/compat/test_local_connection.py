@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.codex_loop_runtime.host_config import host_config_set
-from scripts.codex_loop_runtime.local_connection import resolve_execution
+from scripts.codex_loop_runtime.host_config import host_config_set, host_project_set, host_project_remove
+from scripts.codex_loop_runtime.local_connection import resolve_execution, resolve_local_root
 from scripts.codex_loop_runtime.routing_state import route_check, route_init, route_transition
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -179,6 +179,21 @@ class LocalConnectionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unknown project"):
                     route_check(**args, workspace_granted=True, project="repo")
                 self.assertEqual(route["local_connection"]["locations"]["runtime_directory"], "/runtime/code")
+
+    def test_saved_project_is_current_without_moving_existing_route_defaults(self):
+        host_config_set("workspace.environments", {"mac": {"default_root": "/first"}})
+        route = route_init(workspace_target="mac", available_connections=["mac-first"])
+        selected = route["local_connection"]
+        host_project_set("mac", "demo", "/new/project")
+        resolved = resolve_local_root(selected, project="demo", workspace_granted=True)
+        self.assertEqual(resolved["local_root"], "/new/project")
+        host_project_set("mac", "demo", "/changed/project")
+        self.assertEqual(resolve_local_root(selected, project="demo")["local_root"], "/changed/project")
+        self.assertEqual(resolve_local_root(selected)["local_root"], "/first")
+        self.assertEqual(resolve_local_root(selected, local_root="/already/bound")["local_root"], "/already/bound")
+        host_project_remove("mac", "demo")
+        with self.assertRaisesRegex(ValueError, "unknown project"):
+            resolve_local_root(selected, project="demo")
 
     def test_directory_snapshot_survives_preference_save_and_same_environment_transport_change(self):
         host_config_set("workspace.environments", {"mac": {"default_root": "/first"}})

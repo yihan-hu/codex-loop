@@ -411,7 +411,7 @@ def route_check(
         result.update({
             "allowed": True,
             "config_role": "codex_loop_bootstrap_read_only",
-            "allowed_config_paths": ["~/.codex-loop/host.json", "~/.codex-loop/workspace-registry.json"],
+            "allowed_config_paths": ["~/.codex-loop/host.json"],
             "config_mutation_allowed": False,
             "rule": "Local connector host-config reads are routed Codex Loop bootstrap actions, not an authorization bypass; mutation requires a separate explicit host-administration task",
         })

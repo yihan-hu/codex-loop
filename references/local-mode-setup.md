@@ -5,7 +5,7 @@ Use this reference after Local selection from the current request or saved execu
 Codex Loop separates three states:
 
 ```text
-KNOWN    persistent registry identity/location
+KNOWN    current Host Profile identity/location
 GRANTED  explicit authorization for the current conversation
 BOUND    one lifecycle's canonical Git working tree
 ```
@@ -55,7 +55,7 @@ A bound repository may contain task-owned ephemeral scratch such as `<worktree>/
 
 `LOCAL_ROOT` remains the logical name for the **primary** local development root selected for Local mode. It is not a hard-coded author path and not necessarily a persistent operating-system environment variable.
 
-V1 expands the access model to:
+The access model is:
 
 ```text
 Primary Local Root + Session Granted Roots = Effective Local Roots
@@ -65,12 +65,12 @@ The primary root is the workspace root chosen when Local mode is resolved. Addit
 
 Multiple effective roots do not merge repositories. Each lifecycle still binds to exactly one canonical Git working tree. A grant for one repository never grants its parent or sibling repositories.
 
-## Persistent workspace registry
+## Temporary conversation workspace lookup
 
 Saved project locations and default roots belong to the per-environment Host Profile. The host-local registry materializes saved aliases for grant lookup and can hold additional conversation-only roots:
 
 ```text
-~/.codex-loop/workspace-registry.json
+platform temporary codex-loop/workspace-sessions/<conversation>.registry.json
 ```
 
 Example logical entries:
@@ -80,9 +80,9 @@ piwork   -> /absolute/path/to/PiWork     kind=development_root
 epiagent -> /absolute/path/to/EpiAgent   kind=repository
 ```
 
-The registry stores identity/location only. It never stores authorization, trust, or cross-conversation grants. Knowing a registry alias never selects Local mode by itself.
+The registry stores derived identity/location for this conversation only. It is never a long-term source and never reads the old home-directory registry. It never stores authorization, trust, or cross-conversation grants. Knowing a registry alias never selects Local mode by itself.
 
-Register the selected saved location on its own environment before using registry grants. Do not edit a profile-defined alias independently in this registry; reconcile it from the profile and invalidate a stale grant. No PiWork-specific path logic is needed.
+Materialize the selected saved location on its own environment before using registry grants. Do not edit a profile-defined alias independently in this registry; reconcile it from the profile and invalidate a stale grant. No PiWork-specific path logic is needed.
 
 ## Resolving the primary root
 
@@ -104,9 +104,9 @@ When an alias is KNOWN but not GRANTED, do not ask the user to repeat the absolu
 Give EpiAgent path permission.
 ```
 
-After observing explicit authorization, record it with `workspace-grant`. The first grant returns an opaque session nonce; keep that nonce only in the current conversation context and pass it to later `workspace-resolve` or `workspace-grants` operations. Do not write the nonce into repository files, `host.json`, the registry, or user memory.
+After observing explicit authorization, record it with `workspace-grant`. The first materialization returns an opaque session nonce; keep that nonce only in the current conversation context and pass it to later `workspace-resolve` or `workspace-grants` operations. Do not write the nonce into repository files, `host.json`, the registry, or user memory.
 
-A new conversation has no old nonce, so its effective grant set begins empty even though the registry persists.
+A new conversation has no old nonce, so its effective grant set begins empty while saved project locations remain in Host Profile.
 
 Requests such as `modify EpiAgent`, `look at EpiAgent`, or `you know the EpiAgent path` do not themselves grant filesystem access. Registration and a task request are not authorization evidence.
 
@@ -134,32 +134,35 @@ Before using a registered workspace, resolve its real path, pass only host-obser
 
 Keep repository discovery, clones, worktrees, source edits, tests, builds, packaging, scratch data, release staging, receipts, and terminal/Git operations inside the Effective Local Roots. A task still uses only its bound canonical working tree as source baseline.
 
-If a registered path no longer exists or its realpath changed through a symlink, fail closed. Do not search the user's home directory or whole disk to guess a replacement. Re-register the exact new path.
+If a registered path no longer exists or its realpath changed through a symlink, fail closed. Do not search the user's home directory or whole disk to guess a replacement. Update the source project locator, inspect that exact directory, and refresh the cache.
 
 ## Command examples
 
-Register a primary development root:
+Remembered projects use `host-project set` on the controller followed by updating the same Drive file ID. These examples only create temporary local lookups. The first materialization without `--session-id` returns a nonce; use that nonce throughout this chat.
+
+Materialize a primary development root:
 
 ```bash
-python3 scripts/codex_loop.py workspace-register \
+python3 scripts/codex_loop.py workspace-materialize \
   --name piwork \
   --path "/absolute/path/to/PiWork" \
-  --kind development_root
+  --kind development_root --session-id SESSION_NONCE
 ```
 
-Register a fixed repository:
+Materialize a fixed repository:
 
 ```bash
-python3 scripts/codex_loop.py workspace-register \
+python3 scripts/codex_loop.py workspace-materialize \
   --name epiagent \
   --path "/absolute/path/to/EpiAgent" \
-  --kind repository
+  --kind repository --session-id SESSION_NONCE
 ```
 
 After explicit user authorization:
 
 ```bash
 python3 scripts/codex_loop.py workspace-grant epiagent \
+  --session-id SESSION_NONCE \
   --current-user-authorization-observed \
   --authorization-evidence "user explicitly granted EpiAgent path access in this conversation"
 ```

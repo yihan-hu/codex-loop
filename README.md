@@ -195,36 +195,22 @@ Save each environment's default root in `workspace.environments` in the private 
 
 Current-task authorized directories and explicitly named saved projects override this default. Profiles contain locators, never grants or observed capability claims. Keep all personal configuration outside repositories and Skill packages; an older profile requires an explicit private-profile update.
 
-### Remembering local workspaces without permanent access
+### Remembering local projects
 
-You can register a frequently used repository once:
+Save a frequently used project in the current private Host Profile, then synchronize
+that same Drive file through `references/host-profile-drive.md`:
 
 ```bash
-python3 scripts/codex_loop.py workspace-register \
-  --name epiagent \
-  --path "/absolute/path/to/EpiAgent" \
-  --kind repository
+CODEX_LOOP_HOME=SESSION_PRIVATE_HOME python3 scripts/codex_loop.py host-project set \
+  --computer laptop --name epiagent --path "/absolute/path/to/EpiAgent"
 ```
 
-That makes the workspace **KNOWN**, not authorized. In a later conversation you can simply say:
-
-```text
-Give EpiAgent path permission.
-```
-
-Codex Loop records that explicit grant only for the current conversation. You do not need to paste the absolute path again. A new conversation keeps the alias/path knowledge but starts with no usable grants.
-
-The three states stay separate:
-
-```text
-KNOWN    I know where the workspace is.
-GRANTED  This conversation may use that exact registered workspace.
-BOUND    The current lifecycle uses one canonical Git working tree.
-```
-
-A request such as `modify EpiAgent` does not by itself grant the path. If the alias is registered but not granted, Codex Loop asks for current-conversation path permission instead of asking for the path again. Host/selected-connector authorization is still required after the semantic grant, and host denial always wins.
-
-For Local mode, the access model is `Primary Local Root + Session Granted Roots = Effective Local Roots`. Multiple roots can be accessible in one conversation, but each task still binds to one canonical Git working tree. See `references/workspace-registry.md`.
+This changes only `workspace.environments.laptop.projects.epiagent` and preserves
+other settings, including the Web default. A later chat can resolve this alias
+without asking for its path again. Saved locations do not grant access or move a
+running lifecycle. The local workspace registry is only a temporary conversation
+lookup derived from the current profile, never a long-term location source. See
+`references/workspace-registry.md`.
 
 ## Workspace mode versus interaction target
 
