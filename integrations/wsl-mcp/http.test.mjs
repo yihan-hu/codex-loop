@@ -41,6 +41,14 @@ test('HTTP sessions isolate handles, stay lazy, expire safely and support statel
       const r = await client.callTool({ name, arguments: args });
       assert.equal(r.structuredContent, undefined); return { r, value: JSON.parse(r.content[0].text) };
     };
+    const heavy = [];
+    for (let i = 0; i < 4; i++) heavy.push({ client: clients[i % 2], job: (await call(clients[i % 2], 'wsl_exec', { command: 'sleep 30', cwd: root, wait_ms: 0 })).value });
+    assert.equal(app.metrics().running_jobs, 4);
+    assert.equal((await call(clients[0], 'wsl_exec', { command: 'true', cwd: root, wait_ms: 0 })).r.isError, true);
+    await call(heavy[0].client, 'wsl_stop', { job_id: heavy[0].job.job_id });
+    assert.equal((await call(clients[1], 'wsl_exec', { command: 'printf SLOT_RELEASED', cwd: root, wait_ms: 1000 })).value.output, 'SLOT_RELEASED');
+    for (const h of heavy.slice(1)) await call(h.client, 'wsl_stop', { job_id: h.job.job_id });
+    assert.equal(app.metrics().running_jobs, 0);
     const job = (await call(clients[0], 'wsl_exec', { command: 'sleep 0.4; printf HTTP_OK', cwd: root, wait_ms: 0 })).value;
     assert.equal((await call(clients[1], 'wsl_poll', { job_id: job.job_id, wait_ms: 0 })).r.isError, true);
     await delay(50); await app.sweep(); assert.equal(app.metrics().sessions, 1); assert.equal(app.metrics().running_jobs, 1);
