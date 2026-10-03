@@ -151,7 +151,7 @@ class PublicationRouterTests(unittest.TestCase):
             try:
                 route_transition(
                     session_id=route["session_id"],
-                    workspace_mode="local",
+                    workspace_mode="local", available_connections=["rdc"],
                     selection_evidence="user explicitly selected local repository development",
                     current_user_selection_observed=True,
                 )
@@ -181,15 +181,15 @@ class PublicationRouterTests(unittest.TestCase):
             finally:
                 self.cleanup_route(route)
 
-    def test_rdc_transfer_is_downstream_only_and_does_not_switch_web_mode(self):
+    def test_local_transfer_is_downstream_only_and_does_not_switch_web_mode(self):
         route = self.route()
         try:
             sid = route["session_id"]
-            blocked = route_check(action="rdc_transfer", session_id=sid)
+            blocked = route_check(action="local_transfer", session_id=sid)
             self.assertFalse(blocked["allowed"])
             self.assertIn("current_conversation_workspace_grant", blocked["requirements"])
             allowed = route_check(
-                action="rdc_transfer",
+                action="local_transfer",
                 session_id=sid,
                 workspace_granted=True,
                 local_computer_authorized=True,
@@ -198,7 +198,7 @@ class PublicationRouterTests(unittest.TestCase):
             self.assertEqual(allowed["transfer_role"], "downstream_binary_destination_only")
             self.assertTrue(allowed["workspace_authority_unchanged"])
             self.assertEqual(route_show(session_id=sid)["workspace_mode"], "web")
-            self.assertFalse(route_check(action="rdc_repository", session_id=sid)["allowed"])
+            self.assertFalse(route_check(action="local_repository", session_id=sid)["allowed"])
         finally:
             self.cleanup_route(route)
 
@@ -220,7 +220,7 @@ class PublicationRouterTests(unittest.TestCase):
                 self.assertEqual(result["mode"], "WEB_LOCAL_SYNC_READY")
                 self.assertEqual(result["source_commit"], head)
                 self.assertEqual(result["source_tree"], tree)
-                self.assertEqual(result["transport"]["id"], "google_drive_then_rdc_download")
+                self.assertEqual(result["transport"]["id"], "google_drive_then_local_download")
                 self.assertTrue(result["transport"]["fixed"])
                 self.assertEqual(result["bundle_action"], "build_self_contained")
                 self.assertIn("github_actions_artifact", result["forbidden_fallbacks"])

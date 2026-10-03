@@ -34,7 +34,7 @@ class HostConfigTests(unittest.TestCase):
             self.assertEqual(data["progress_visibility"]["mode"], "enhanced")
             self.assertEqual(data["browser"]["preferred_target"], "cloud_browser")
             self.assertEqual(data["persistence"]["task_backend"], "off")
-            self.assertEqual(data["persistence"]["host_profile_backend"], "local_only")
+            self.assertEqual(data["persistence"]["host_profile_backend"], "auto")
             self.assertFalse((home / "host.json").exists())
 
     def test_v1_migrates_to_v3_on_write_and_moves_workspace_alias(self):

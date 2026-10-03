@@ -26,3 +26,7 @@ Prefer moving temporary objects to Drive trash when the active host/connector ex
 The current ChatGPT Google Drive connector exposes `delete_file` as permanent deletion and its `update_file` surface does not expose the `trashed` field. Do not claim trash occurred when only permanent delete is available. Permanent deletion is allowed only for an exact task-owned temporary object that the calling workflow already classified as disposable and cleanup-authorized. Archive/retained content never enters this temporary cleanup path.
 
 A terminal provider success is sufficient cleanup evidence. Re-read external state only when dispatch failed ambiguously, timed out after dispatch, or otherwise produced `outcome_unknown`.
+
+## Retained user preferences
+
+The fixed private `codex-loop/settings/host-profile.json` path under the current connected user's My Drive is intentionally retained configuration, not temporary task/cache content. Never delete it during `ChatGPT-Temporary` cleanup or derive it from a maintainer Drive link. Recovery and saving follow `host-profile-drive.md`.

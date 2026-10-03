@@ -37,8 +37,8 @@ class WebPublishContractTests(unittest.TestCase):
         self.assertIn("native Git", release)
         self.assertIn("GitHub connector/object-API source upload is not a supported fallback", release)
         self.assertIn("This path is Web mode only", web_publish)
-        self.assertIn("RDC + native Git", web_publish)
-        self.assertIn("explicitly Local objective", skill)
+        self.assertIn("a local connector + native Git", web_publish)
+        self.assertIn("resolved Local objective", skill)
 
     def test_import_workflow_binds_and_verifies_git_bundle(self):
         workflow = (ROOT / ".github" / "workflows" / "workspace-import.yml").read_text()

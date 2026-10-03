@@ -8,22 +8,22 @@ Interpret common operation words as **user intent**, not as a demand for one lit
 
 Canonical intent translations include:
 
-- `git clone`, `git pull`, `git fetch`, “open this repo”, “refresh from GitHub”, or “sync from GitHub” -> **intercept before literal Git**. In Web mode run HOT -> WARM -> COLD `repository-enter` and use verified Web acquisition/sync semantics. In Local mode, after explicit Local selection and scope checks, native Git clone/fetch/pull is the canonical execution path inside the authorized local scope;
+- `git clone`, `git pull`, `git fetch`, “open this repo”, “refresh from GitHub”, or “sync from GitHub” -> **intercept before literal Git**. In Web mode run HOT -> WARM -> COLD `repository-enter` and use verified Web acquisition/sync semantics. In Local mode, after explicit or saved Local selection and scope checks, native Git clone/fetch/pull is the canonical execution path inside the authorized local scope;
 - `git push`, “push this branch”, “publish this commit”, or “send these changes to GitHub” -> **intercept before literal Git**. Web mode uses verified Web publication; Local mode uses native Git from the bound canonical worktree; a clean terminal push succeeds directly, with targeted remote readback only for an ambiguous outcome. Ordinary target repositories never need to contain Codex Loop runtime files;
 - `pytest`, `npm test`, build, lint, typecheck, or another ordinary validation command -> Codex Loop plans/binds the exact command, the host executes it visibly, and the runtime records the observed result; a local-runtime `requires_host_visible_execution` response is routing, not a capability failure;
 - “use a subagent/reviewer” -> a native host subagent when available, otherwise the declared logical-isolation/serialized delegation path in `delegation.md`;
 - “save this workspace”, “continue this in another chat”, or equivalent explicit recoverability intent -> the Workspace Cache path in `persistence.md`;
 - generic Skill `install`/`update` on a ChatGPT Web host -> the native `chatgpt_web_skill` target unless the user explicitly selected a different deployment target; Codex Loop maintenance itself ends at a validated `skill.zip`, which the user installs manually;
-- “save/copy/send/move this file to my Mac/local host” -> the verified Drive staging -> RDC binary transfer contract in `web-to-local-handoff.md`; the transfer request itself authorizes only the narrow downstream `rdc_transfer`;
+- “save/copy/send/move this file to my Mac/local host” -> the verified Drive staging -> selected local connection binary transfer contract in `web-to-local-handoff.md`; the transfer request itself authorizes only the narrow downstream `local_transfer`;
 - “open/click/use Chrome” or native GUI wording -> resolve `interaction_target` independently; do not infer Local workspace mode or current-task local computer authorization.
 
 Only **pre-registered semantic equivalents** qualify. Do not substitute a path that changes the user's required identity, authorization boundary, security property, or state semantics. In particular, a task that specifically requires the user's local Chrome profile/session, a local filesystem checkout, or another unique host capability remains blocked when that exact capability is unavailable unless the user explicitly selects a different target.
 
-### RDC intent interception
+### Local connection intent interception
 
-RDC capability never authorizes an action by itself. Before the first RDC call, classify the intent and enter the matching Codex Loop route: repository/filesystem/search/process work -> `rdc_repository`; downstream Web-to-local binary delivery -> `rdc_transfer`; local browser/GUI interaction -> `browser_interaction`; narrow reads of Codex Loop host bootstrap/config files -> `rdc_host_config` before reading either exact config file. Establish the exact task root/action class once, then reuse that result only while workspace mode, root, action class, and current-task authorization remain unchanged.
+Select the local connection using `local-connections.md`: explicit selection wins; otherwise custom MCPs in configured order precede RDC. Capability never authorizes an action by itself. Before local calls classify the intent: repository/filesystem/search/process work -> `local_repository`; downstream Web-to-local delivery -> `local_transfer`; browser/GUI interaction -> `browser_interaction`; exact private profile/registry reads -> `local_host_config`. Pre-admission profile reads are the narrow exception needed to select the lifecycle surface and cannot touch the task repository. Once admitted, establish the exact task root/action class and reuse it only while target, connection, scope, and authorization stay unchanged.
 
-Do not call RDC first and decide scope from what it can see. A permissive host configuration, including `allowedDirectories=[]`, means only that the transport is technically capable of broad access; it is never a semantic grant. Once a durable repository task is bound, the canonical worktree is the default RDC filesystem/search/process scope. Sibling repositories or other directories under the same host root remain out of scope unless separately named or granted for this task.
+Do not call a local connector first and decide scope from what it can see. A permissive host configuration, including `allowedDirectories=[]`, means only that the transport is technically capable of broad access; it is never a semantic grant. Once a durable repository task is bound, the canonical worktree is the default local filesystem/search/process scope. Sibling repositories or other directories under the same host root remain out of scope unless separately named or granted for this task.
 
 A negative transport rule such as “do not execute literal `git clone` before routing” means “resolve the mode first, then use that mode's canonical path,” not “stop the objective.” In Local mode the canonical path may be native Git itself. `requires_host_visible_execution` likewise means execute through the host with the declared safety policy, not that the objective is blocked.
 
@@ -34,7 +34,7 @@ Before the first routing-sensitive host action, initialize the deterministic rou
 In ChatGPT Web, initialize with `--host-surface chatgpt_web`. The initial state is:
 
 ```text
-workspace_mode     = web
+workspace_mode     = explicit target, otherwise saved execution default, otherwise web
 interaction_target = none
 deployment_target  = unresolved
 ```
@@ -48,7 +48,7 @@ Use `route-transition` to change an axis and `route-check` before repository, br
 - `web`: the current ChatGPT/Web workspace is authoritative.
 - `local`: one canonical Git worktree under the resolved `LOCAL_ROOT` is authoritative.
 
-Every new conversation starts with `workspace_mode=web` in its routing file. Enter `local` only after explicit local repository-development intent. That explicit request in the current user message may select the Local lifecycle execution surface before bootstrap. Examples include "develop this from my PiWork checkout", "modify the local repository", or another unambiguous request to make the local checkout the source workspace. Bootstrap that lifecycle on the local host first, then record the same explicit selection in routing state before any repository-affecting action. The routing file is a deterministic projection of the user's selection, not a competing source of intent.
+Every new conversation resolves its current explicit Web/computer/connection choice, otherwise `execution.default_target`, otherwise Web. `route-init` records the selected `local_connection` as well as workspace mode. A saved Local default is a location preference; it does not grant unrelated paths or actions. Resolve and observe the connection before bootstrap, then bootstrap the lifecycle on that computer before repository work. A continuation always returns to its original lifecycle surface, even if the saved default changed. Explicit route changes use `route-transition`; defaults do not rewrite an existing session.
 
 Remote Desktop Commander availability, a request to control Chrome, a request to use the Mac GUI, or a generic request to use RDC is **not** local-development intent. Those requests change only the interaction target.
 
@@ -128,7 +128,7 @@ Treat generic GUI automation as visible local computer use, not as Browser Contr
 
 ## Repository isolation
 
-An interaction-only RDC call must not inspect or mutate a local repository merely because the local host is reachable. Repository operations continue to route exclusively by `workspace_mode`, and `route-check --action rdc_repository` fails closed while that state remains `web`.
-The separate `rdc_transfer` action is the narrow exception for a user-requested downstream binary download (for example an ordinary Web -> Mac file copy or repository synchronization through Drive). It may be allowed while `workspace_mode=web`, but it preserves Web authority and grants no repository observation/mutation rights. A direct request to move/save/copy/deliver the named file to the local host itself satisfies the current-task local-computer-use intent for this narrow transfer action; do not ask for a second computer-use or data-plane authorization. Destination-path/workspace grants and host-enforced permissions remain separate.
+An interaction-only local call must not inspect or mutate a local repository merely because the local host is reachable. Repository operations continue to route exclusively by `workspace_mode`, and `route-check --action local_repository` fails closed while that state remains `web`.
+The separate `local_transfer` action is the narrow exception for a user-requested downstream binary download (for example an ordinary Web -> Mac file copy or repository synchronization through Drive). It may be allowed while `workspace_mode=web`, but it preserves Web authority and grants no repository observation/mutation rights. A direct request to move/save/copy/deliver the named file to the local host itself satisfies the current-task local-computer-use intent for this narrow transfer action; do not ask for a second computer-use or data-plane authorization. Destination-path/workspace grants and host-enforced permissions remain separate.
 
 Conversely, Local-mode repository development does not force `interaction_target=local_chrome`; the task may still use no browser or a cloud browser. Neither repository mode nor interaction target implies a Skill deployment destination; `deployment_target` remains an independent axis.

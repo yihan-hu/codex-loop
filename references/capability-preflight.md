@@ -127,7 +127,7 @@ For `local_chrome`, keep `browser_host_health` separate from `browser_session_he
 - ChatGPT Web Skill install/update without source publication: native Skill surface capability only; do not probe Drive/GitHub merely because they are connected.
 - Local native-Git publication: `github_push`; use native `git push --dry-run` from the canonical authorized worktree before substantial work when publication is already part of the reviewed objective.
 - Optional cross-conversation persistence: `google_drive_read` and/or `google_drive_write` only when persistence is enabled or recoverability is an acceptance requirement. Persistence is off by default.
-- Local repository read/inspection: RDC access plus resolved/authorized `LOCAL_ROOT`; this does not authorize source mutation.
+- Local repository read/inspection: selected local file/shell connector access plus resolved/authorized `LOCAL_ROOT`; this does not authorize source mutation.
 - Local repository edit: the Local read capabilities plus explicit current-task local-source-mutation authorization.
 - `local_chrome`: explicit current-task computer-use authorization plus local Chrome host health and a supported Browser/Chrome executor attached to the conversation.
 - `local_mac_gui`: explicit current-task computer-use authorization, RDC, Accessibility, and any Screen Recording permission genuinely needed by the chosen observation transport.

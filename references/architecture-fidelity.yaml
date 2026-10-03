@@ -57,7 +57,7 @@
         "on_skill_invocation"
       ],
       "status": "HOST_GAP",
-      "divergence": "Upstream Codex exposes host-owned Skill-invocation and thread lifecycle callbacks inside its runtime. The ChatGPT Skill surface does not expose a mandatory callback or tool-dispatch interceptor that can automatically create a Codex Loop task when the Skill is selected. Codex Loop therefore requires bootstrap as the first task action for a new objective, reuses the exact task_id on continuation, and fails closed if the runtime cannot be entered instead of silently executing outside the lifecycle.",
+      "divergence": "Upstream Codex exposes host-owned Skill-invocation and thread lifecycle callbacks inside its runtime. The ChatGPT Skill surface does not expose a mandatory callback or tool-dispatch interceptor that can automatically create a Codex Loop task when the Skill is selected. Codex Loop therefore requires bootstrap as the first task action for a new objective after narrow private-preference resolution and connection observation, reuses the exact task_id on continuation, and fails closed if the runtime cannot be entered instead of silently executing outside the lifecycle.",
       "upgrade_path": "Bind Codex Loop selection to a native host Skill-invocation/lifecycle hook that creates or restores the task_id before model task execution, then remove prompt-only admission enforcement while keeping the same mandatory-admission semantics."
     },
     {
@@ -267,7 +267,7 @@
       "paths": [],
       "required_patterns": [],
       "status": "LOCAL_DIVERGENCE",
-      "divergence": "The ChatGPT Skill host does not expose a native conversation-scoped workspace/interaction/deployment routing register or a tool-dispatch interceptor. Codex Loop therefore materializes routing in a private temp JSON file and requires deterministic route-check preflights before host actions.",
+      "divergence": "The ChatGPT Skill host does not expose a native conversation-scoped workspace/interaction/deployment routing register or a tool-dispatch interceptor. Codex Loop therefore materializes routing in a private temp JSON file and requires deterministic route-check preflights before host actions. Private execution preferences choose Web or a computer, ordered custom MCPs precede RDC, and the conversation pins the observed connection.",
       "upgrade_path": "Replace the local routing file/adapter with native host routing metadata or tool-dispatch policy when exposed, while preserving the independent workspace_mode, interaction_target, and deployment_target semantics and fail-closed local transitions."
     },
     {

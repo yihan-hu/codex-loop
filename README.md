@@ -12,15 +12,17 @@ Key references: `references/execution-supervision.md`, `references/host-profile.
 
 ## Consumer quick start
 
-For normal use in ChatGPT, install Codex Loop and start using it. **You do not need GitHub, Google Drive, RDC, a local checkout, or access to `yihan-hu/codex-loop`.** The maintainer repository is not a consumer repository binding.
+For normal use in ChatGPT, install Codex Loop and start using it. **You do not need GitHub, Google Drive, RDC, a local checkout, or access to the maintainer repository.** The maintainer repository is not a consumer repository binding.
 
 Add integrations only when the task needs them:
 
 - GitHub: repository reads/source acquisition/Actions/publication.
 - Google Drive: verified binary staging for Web -> GitHub publication and Web -> local/Mac synchronization. All temporary Drive material lives under the fixed `ChatGPT-Temporary` root; only retained archives belong under top-level Skill-named folders.
-- Remote Desktop Commander: only for local files, native Git, local Chrome, or macOS GUI interaction.
+- Custom local file/shell MCP: for local files and native Git; RDC is the fallback. Browser/GUI interaction needs its own supported capability.
 
 See `references/consumer-onboarding.md` for the staged setup checklist and exact permission boundaries. Codex Loop should disclose only the dependencies required by the current task and can preflight those capabilities before substantive work.
+
+**Want ChatGPT to work on your own computer?** Follow the [local MCP setup tutorial / 本地 MCP 配置教程](references/local-mcp-tutorial.md). It walks through the macOS setup we verified: Desktop Commander → Secure MCP Tunnel → a ChatGPT custom app → Codex Loop. It covers restricted API keys, stopping at payment requirements, real file/terminal verification, private connection priorities, saved Web/computer defaults, a local HTTP backend with a double-click launcher, automatic idle-session cleanup, plain-text tools without optional widgets, and troubleshooting empty MCP environment variables. Existing local MCP users can skip to step 5; ordinary Web use needs none of this setup.
 
 ## What it can do
 
@@ -60,9 +62,9 @@ Codex Loop is designed for **implicit invocation**. In normal use, you should no
 
 Short follow-ups such as `continue`, `继续`, `revise`, `verify`, `export`, `push`, `sync`, or `open this in Chrome` continue the existing lifecycle when the active objective is clear. A continuation first inspects the retained lifecycle state and current external reality; it does not create a replacement lifecycle or redo completed work. Automatic invocation does **not** bypass permissions: side-effect permissions are resolved when the task actually reaches that boundary.
 
-For repository or Skill-development requests, **Web mode** is the default development location in every new conversation. Pure research, writing, analysis, artifact, or operations objectives do not need Web/Local repository routing unless a later step actually becomes development-location-sensitive.
+For repository or Skill-development requests, a new conversation uses its explicit target or saved execution default, otherwise **Web mode**. Pure research, writing, analysis, artifact, or operations objectives do not need Web/Local repository routing unless a later step actually becomes development-location-sensitive.
 
-**Recommended path:** keep ordinary repository development in the ChatGPT/chatbox workspace and connect that Web workspace to GitHub when publication is needed. This is usually faster and simpler than Local mode because it avoids the extra RDC hop, host-filesystem authorization, native-Git host state, and local-host-to-workspace synchronization steps.
+**Built-in default:** keep ordinary repository development in the ChatGPT/chatbox workspace and connect that Web workspace to GitHub when publication is needed. Users can instead save a specific computer as their default; see the private settings below. This is usually faster and simpler than Local mode because it avoids the extra RDC hop, host-filesystem authorization, native-Git host state, and local-host-to-workspace synchronization steps.
 
 Repository work now enters through `repository-enter`: **HOT -> WARM -> COLD**. If the existing real Git workspace is still valid, Codex Loop reuses it directly and ordinary edit/commit/push remains incremental. If the temporary workspace disappeared, Codex Loop restores a verified Workspace Cache (when unpublished state was explicitly preserved) or the `published-source-<run_id>` Git bundle emitted by the last successful Web publish. Only when neither HOT nor WARM Git state exists does it enter the cold Workspace Download/source-acquisition path. Remote HEAD movement means incremental fetch/fast-forward/rebase/merge, not “download the repository again.”
 
@@ -83,9 +85,9 @@ You do not need Remote Desktop Commander for ordinary Web-mode repository work. 
 
 If you ask to push, Codex Loop intercepts the publication intent before literal Git, resolves Web versus Local, then uses the selected mode's canonical path. Web mode uses the verified Google Drive -> GitHub Actions exact-identity path. Local mode uses native Git from the bound worktree; clean terminal push success is accepted directly, with targeted remote readback only when the outcome is ambiguous. Ordinary target repositories do not need to contain Codex Loop runtime files. If Codex Loop itself was edited, a successful requested source push is followed by packaging the updated workspace into the official validated `skill.zip` and byte-identical `codex-loop.zip`.
 
-**Local mode is a first-class mode after explicit user selection.** Use it when a task genuinely needs persistent files or tools on an RDC-backed computer, or when you deliberately want that local checkout to be the repository source of truth. macOS is the verified reference host. Windows repository Local mode is also allowed on a best-effort/beta basis: unsupported Windows-specific primitives degrade to host-visible execution or fail only the affected operation. For ordinary development Local mode is usually slower than the Web workspace + GitHub path because each task can add RDC and permission checks, native-host coordination, and extra push/synchronization round trips.
+**Local mode is a first-class mode after explicit user selection or a saved Local default.** Use it when a task genuinely needs persistent files or tools on a connected local computer, or when you deliberately want that local checkout to be the repository source of truth. macOS is the verified reference host. Windows repository Local mode is also allowed on a best-effort/beta basis: unsupported Windows-specific primitives degrade to host-visible execution or fail only the affected operation. For ordinary development Local mode is usually slower than the Web workspace + GitHub path because each task can add RDC and permission checks, native-host coordination, and extra push/synchronization round trips.
 
-To enter **Local mode**, explicitly select it:
+To override the default with **Local mode**, explicitly select it:
 
 ```text
 Use local development for this repository.
@@ -93,7 +95,7 @@ Use Codex Loop locally under /Users/alice/PiWork and fix this bug.
 Use Codex Loop locally under C:\Users\Alice\PiWork and fix this bug.
 ```
 
-Once Local mode is selected, later repository tasks in the same conversation keep using that local repository as the baseline unless you explicitly switch back to Web mode. **That does not carry forward permission to modify local source.** Each task that would edit/create/delete/overwrite local source files must explicitly authorize local mutation again, for example: `Fix this locally and push.` A generic `push`, read-only inspection, RDC availability, or earlier local edits do not authorize new source changes. A new conversation starts in Web mode again.
+Once Local mode is selected, later repository tasks in the same conversation keep using that local repository as the baseline unless you explicitly switch back to Web mode. **That does not carry forward permission to modify local source.** Each task that would edit/create/delete/overwrite local source files must explicitly authorize local mutation again, for example: `Fix this locally and push.` A generic `push`, read-only inspection, RDC availability, or earlier local edits do not authorize new source changes. A new conversation resolves the saved execution default, otherwise Web.
 
 ## Adaptive progress visibility
 
@@ -103,7 +105,7 @@ The preference is user-specific and is never committed. `python3 scripts/codex_l
 
 The host config is private runtime state outside the repository and outside `skill.zip`. It may coexist with non-sensitive workspace locators/preferences, but it does not store current `workspace_mode`, `interaction_target`, or `deployment_target`; those live in the conversation routing file. Host config must never contain credentials, approval/session tokens, or other secrets.
 
-Lifecycle task databases and the workspace-to-task pointer live on the lifecycle's execution surface at `~/.codex-loop/runtime` (or `CODEX_LOOP_HOME/runtime`). Web/default objectives use the ChatGPT host runtime. An explicitly Local objective bootstraps and resumes through RDC on the local Codex Loop runtime, so the authoritative state is the Mac's `~/.codex-loop/runtime`, not the transient ChatGPT host filesystem. The local runtime code itself is cached separately under `~/.codex-loop/runtime-src`; project checkouts are never lifecycle authority. If the local runtime/state is temporarily unavailable, Codex Loop fails closed rather than creating a host-side replacement lifecycle. Conversation routing state remains separate and temporary.
+Lifecycle task databases and the workspace-to-task pointer live on the lifecycle's execution surface at `~/.codex-loop/runtime` (or `CODEX_LOOP_HOME/runtime`). Web/default objectives use the ChatGPT host runtime. A resolved Local objective bootstraps and resumes through the selected connection on the local Codex Loop runtime, so the authoritative state is the Mac's `~/.codex-loop/runtime`, not the transient ChatGPT host filesystem. The local runtime code itself is cached separately under `~/.codex-loop/runtime-src`; project checkouts are never lifecycle authority. If the local runtime/state is temporarily unavailable, Codex Loop fails closed rather than creating a host-side replacement lifecycle. Conversation routing state remains separate and temporary.
 
 ## Optional cross-conversation persistence
 
@@ -121,7 +123,7 @@ Codex Loop tracks not only source lineage but also behavioral/control-plane alig
 
 ## Local mode requirements
 
-Local mode requires a connected **Remote Desktop Commander (RDC)** integration because ChatGPT needs a host-authorized bridge to the persistent filesystem and native Git installation on your computer. The end-to-end verified reference path is macOS + RDC + native Git. Windows + RDC + native Git is explicitly allowed as a best-effort/beta repository host even before full parity testing; Windows-only gaps must be surfaced per operation instead of rejecting Local mode globally.
+Local mode requires a connected file/shell MCP app. Codex Loop prefers registered custom MCPs in configured order, then uses Remote Desktop Commander (RDC) when no custom connection is usable. A manually selected connection is exact and never silently falls back. The end-to-end verified reference path is macOS + RDC + native Git. Windows + RDC + native Git is explicitly allowed as a best-effort/beta repository host even before full parity testing; Windows-only gaps must be surfaced per operation instead of rejecting Local mode globally.
 
 Choose one absolute directory to be your persistent local workspace root. Codex Loop calls this `LOCAL_ROOT`. For example:
 
@@ -130,9 +132,9 @@ Choose one absolute directory to be your persistent local workspace root. Codex 
 C:\Users\Alice\PiWork
 ```
 
-`LOCAL_ROOT` is a runtime placeholder, not a path baked into the distributed Skill and not necessarily an operating-system environment variable. Configure that directory as an allowed directory in RDC. You may provide it when selecting Local mode, or persist a non-sensitive default in `~/.codex-loop/host.json` so later conversations can reuse it after you explicitly choose Local development.
+`LOCAL_ROOT` is a runtime placeholder, not a path baked into the distributed Skill and not necessarily an operating-system environment variable. Confirm that the selected local connection permits that directory. You may provide it when selecting Local mode, or persist a non-sensitive default in `~/.codex-loop/host.json` so later conversations can reuse it after explicit or saved Local selection.
 
-A persisted root does **not** make new conversations start in Local mode. New conversations still start in Web mode; the host-local default is consulted only after explicit Local repository-development intent.
+A root locator alone does not select Local mode. Save `execution.default_target` as `web`, `local` (automatic computer selection), or a configured computer ID to initialize new conversation routes. Current-task Web/computer/connection wording overrides that preference; an existing lifecycle keeps its original computer.
 
 You should not edit the Skill to replace another user's home directory. Different users can choose different roots.
 
@@ -140,13 +142,32 @@ Keep repositories, worktrees, scratch data, and release staging that Codex Loop 
 
 See `references/local-mode-setup.md` for the exact agent-side resolution and safety contract.
 
+## Private execution settings
+
+Start with the [local MCP setup tutorial](references/local-mcp-tutorial.md) to connect and verify your computer. Then register the connection and choose a default below. The tutorial distinguishes the observed no-top-up setup from any guarantee about other accounts or future pricing.
+
+`~/.codex-loop/host.json` is outside the repository and is never pushed or included in the Skill ZIP. It stores connector locators, their priority, and an optional default computer; it contains no API keys or permission grants. Existing `host-config` commands edit it, and ordinary language such as “remember this Mac as my default”, “use Web this time”, or “use my second MCP this time” maps to saving or overriding those settings.
+
+```bash
+python3 scripts/codex_loop.py host-config set execution.connections '[
+  {"name":"my-mac","computer":"mac","connector":"My Mac","kind":"mcp","local_root":"/absolute/path/to/work"},
+  {"name":"backup-mac","computer":"mac","connector":"My other MCP","kind":"mcp"},
+  {"name":"rdc-mac","computer":"mac","connector":"Remote Desktop Commander","kind":"rdc"}
+]'
+python3 scripts/codex_loop.py host-config set execution.default_target mac
+python3 scripts/codex_loop.py execution-resolve --connection backup-mac \
+  --available-connections-json '["backup-mac"]'
+```
+
+Custom MCPs precede RDC even if an RDC entry is earlier in the array; array order breaks ties within each kind. Named-computer defaults never choose another machine, and unavailable manual selections report an error. Missing defaults mean Web. Live capabilities must be observed separately; after an operation is dispatched, reconcile its outcome before changing transport. See `references/local-connections.md` for profile discovery from ChatGPT, exact CLI flags, and the single-machine RDC path without registration. File/shell MCPs do not automatically provide browser/GUI control.
+
 ## Setting up Local mode
 
-1. Connect Remote Desktop Commander to ChatGPT and authorize your chosen `LOCAL_ROOT` directory.
+1. Connect your custom local file/shell MCP app (or RDC) to ChatGPT and authorize your chosen `LOCAL_ROOT` directory. Register its locator in the private profile as described in `references/local-connections.md`.
 2. Put or clone the repositories you want Codex Loop to edit under that root.
 3. In a new ChatGPT conversation, explicitly select Local mode and provide the root if it has not already been established, for example: `Use local development under /Users/alice/PiWork.` or `Use local development under C:\Users\Alice\PiWork.`
 4. Codex Loop binds each repository task to one canonical Git working tree under that root. It does not treat copied archives, installed Skills, or release staging folders as later development baselines.
-5. If you want to push to GitHub, make sure native Git on the RDC host is authenticated. The verified path uses native Git; credentials remain host-owned, and remote readback is reserved for ambiguous push outcomes.
+5. If you want to push to GitHub, make sure native Git on the selected local host is authenticated. The verified path uses native Git; credentials remain host-owned, and remote readback is reserved for ambiguous push outcomes.
 
 For GitHub CLI authentication, an interactive setup can use:
 
@@ -156,7 +177,7 @@ gh auth login --web --git-protocol https
 
 Do not paste tokens or credentials into ChatGPT. Let Git, `gh`, the OS credential helper, or the host integration consume them normally.
 
-If `LOCAL_ROOT` is missing or RDC has not authorized it, Local mode fails closed instead of guessing another directory. On Windows, prefer host-visible PowerShell/native Git for shell and Git actions. Managed interactive/background sessions remain host-visible, and guarded replacement of an existing file may use RDC's host-visible file/edit path when the bundled atomic compare-exchange primitive is unavailable; re-observe the resulting file hash/change set afterward rather than weakening the guarded-write guarantee.
+If `LOCAL_ROOT` is missing or the selected connector has not authorized it, Local mode fails closed instead of guessing another directory. On Windows, prefer host-visible PowerShell/native Git for shell and Git actions. Managed interactive/background sessions remain host-visible, and guarded replacement of an existing file may use the selected connector's host-visible file/edit path when the bundled atomic compare-exchange primitive is unavailable; re-observe the resulting file hash/change set afterward rather than weakening the guarded-write guarantee.
 
 ### Remembering `LOCAL_ROOT` across conversations
 
@@ -209,7 +230,7 @@ GRANTED  This conversation may use that exact registered workspace.
 BOUND    The current lifecycle uses one canonical Git working tree.
 ```
 
-A request such as `modify EpiAgent` does not by itself grant the path. If the alias is registered but not granted, Codex Loop asks for current-conversation path permission instead of asking for the path again. Host/RDC authorization is still required after the semantic grant, and host denial always wins.
+A request such as `modify EpiAgent` does not by itself grant the path. If the alias is registered but not granted, Codex Loop asks for current-conversation path permission instead of asking for the path again. Host/selected-connector authorization is still required after the semantic grant, and host denial always wins.
 
 For Local mode, the access model is `Primary Local Root + Session Granted Roots = Effective Local Roots`. Multiple roots can be accessible in one conversation, but each task still binds to one canonical Git working tree. See `references/workspace-registry.md`.
 
@@ -223,7 +244,7 @@ interaction_target:  none | cloud_browser | local_chrome | local_mac_gui
 deployment_target:   unresolved | artifact_only | chatgpt_web_skill | local_codex_skill
 ```
 
-A new routing session starts with `workspace_mode=web`, `interaction_target=none`, and unresolved deployment target. In ChatGPT Web, initialize with `python3 scripts/codex_loop.py route-init --host-surface chatgpt_web`. Before a repository, browser/computer, installation, or publication host action, use `route-check`; local/cross-surface changes go through `route-transition` only after host-observed current-user selection, recorded with `--current-user-selection-observed` plus audit evidence. Evidence text alone cannot switch the file-backed route. Current-task permissions are not persisted by the routing file.
+A new routing session resolves explicit choice, then `execution.default_target`, then Web for workspace mode, with its selected `local_connection`; `interaction_target=none`, and unresolved deployment target. In ChatGPT Web, initialize with `python3 scripts/codex_loop.py route-init --host-surface chatgpt_web`. Before a repository, browser/computer, installation, or publication host action, use `route-check`; local/cross-surface changes go through `route-transition` only after host-observed current-user selection, recorded with `--current-user-selection-observed` plus audit evidence. Evidence text alone cannot switch the file-backed route. Current-task permissions are not persisted by the routing file.
 
 For example, `workspace_mode=web` plus `interaction_target=local_chrome` means the repository remains in the current ChatGPT workspace while ChatGPT uses your Mac only to interact with your signed-in local Chrome. Using RDC for that interaction does not make the Mac checkout authoritative.
 
@@ -269,7 +290,7 @@ Preflight is early permission discovery, not a security bypass. A later sensitiv
 
 ## Web mode versus Local mode
 
-Web and Local are distinct first-class execution modes. A new conversation starts in Web mode, but an explicit Local selection immediately makes the local checkout authoritative for that conversation. RDC availability or an existing checkout never selects Local by itself, and neither mode may silently replace the other to escape a blocker.
+Web and Local are distinct first-class execution modes. A new conversation uses its explicit or saved execution location, otherwise Web; a resolved Local choice makes the selected local checkout authoritative. RDC availability or an existing checkout never selects Local by itself, and neither mode may silently replace the other to escape a blocker.
 
 ```text
 new conversation
@@ -288,15 +309,15 @@ new conversation
 
 A generic `push` request does not silently move a Web-mode task onto your computer. Local mode must have been explicitly selected in the current conversation first.
 
-Codex Loop treats repository development-mode selection as a **pre-tool routing gate**. Before it searches a repository, mutates files, packages a release, runs Git, or transfers/synchronizes source, it resolves whether the conversation is still in Web mode or has explicitly entered Local mode. A connected local host, a visible local checkout, an RDC request, or the absence of an obvious Web write bridge is never enough to switch modes. Interaction-only RDC/Chrome/macOS work is routed independently and may run while the repository remains in Web mode; it must not inspect the local checkout unless Local development was separately selected.
+Codex Loop treats repository development-mode selection as a **pre-tool routing gate**. Before it searches a repository, mutates files, packages a release, runs Git, or transfers/synchronizes source, it resolves whether the conversation is in Web mode or in resolved Local mode (explicit choice or saved default). A connected local host, a visible local checkout, an RDC request, or the absence of an obvious Web write bridge is never enough to switch modes. Interaction-only RDC/Chrome/macOS work is routed independently and may run while the repository remains in Web mode; it must not inspect the local checkout unless Local development was separately selected.
 
-If you explicitly ask to fix something in the current ChatGPT workspace, push it, **then** save/sync it to your local host, the ordering is fixed: Web edit/validate/review -> verified Web publish -> `web-local-sync-plan` -> exact self-contained Git bundle -> Google Drive staging -> RDC download to the authorized local path -> local hash/bundle verification. The local copy is downstream synchronization state, not the source baseline for that already-audited Web change.
+If you explicitly ask to fix something in the current ChatGPT workspace, push it, **then** save/sync it to your local host, the ordering is fixed: Web edit/validate/review -> verified Web publish -> `web-local-sync-plan` -> exact self-contained Git bundle -> Google Drive staging -> selected local connector download to the authorized local path -> local hash/bundle verification. The local copy is downstream synchronization state, not the source baseline for that already-audited Web change.
 
 For every push, the bundled Codex Loop controller resolves the routing state before transport; `publish-enter --controller-abi 1` is its deterministic helper, not a file required from the target repository. Web mode may reuse fresh publish-only evidence and invoke FAST_PUBLISH; Local mode uses native Git. Low-level `web-publish-*` commands remain implementation/debugging primitives. A missing `scripts/codex_loop.py` in an ordinary target repo is never a blocker; only a failure of the bundled controller/runtime itself can block this entry step.
 
 If FAST_PUBLISH fails closed, Codex Loop still exposes only the router's modeled recovery choices; it never silently jumps modes or invents a transport. GitHub not already containing the audited source commit object is **not** a failure condition: the verified Git bundle carries that exact object to the importer. See `references/publication-router.md` and `references/web-mode-publish.md`.
 
-When you ask to save/synchronize the current Web repository to a Mac/local host, the transfer path is fixed: exact self-contained Git bundle -> Google Drive binary staging -> RDC download to the explicitly authorized local path -> local size/SHA-256 + `git bundle verify` -> staging cleanup. This uses the separate `rdc_transfer` route and keeps `workspace_mode=web`; it does not make the local checkout authoritative. GitHub artifacts, direct unmodeled bridges, model relay, and source regeneration are not automatic alternatives. See `references/web-to-local-handoff.md`.
+When you ask to save/synchronize the current Web repository to a Mac/local host, the transfer path is fixed: exact self-contained Git bundle -> Google Drive binary staging -> selected local connector download to the explicitly authorized local path -> local size/SHA-256 + `git bundle verify` -> staging cleanup. This uses the separate `local_transfer` route and keeps `workspace_mode=web`; it does not make the local checkout authoritative. GitHub artifacts, direct unmodeled bridges, model relay, and source regeneration are not automatic alternatives. See `references/web-to-local-handoff.md`.
 
 Each durable runtime task still has its own repository/worktree binding even though the development-location choice persists for the conversation.
 
@@ -348,7 +369,7 @@ Repository setup therefore needs Actions enabled, `contents: write` for the audi
 
 ## Publishing from Local mode
 
-This section documents Local publication after explicit Local selection. Native Git is the canonical Local transport, not a fallback.
+This section documents Local publication after explicit or saved Local selection. Native Git is the canonical Local transport, not a fallback.
 
 For a local repository, the bundled controller selects Codex Loop's verified native-Git publication path; the target repository itself does not need Codex Loop runtime files:
 
@@ -356,7 +377,7 @@ For a local repository, the bundled controller selects Codex Loop's verified nat
 LOCAL_ROOT repository
   -> validate / review
   -> git commit
-  -> native git push through RDC
+  -> native git push through the selected local connection
   -> clean terminal push success is authoritative; targeted remote reconciliation only if outcome is ambiguous
 ```
 
@@ -413,7 +434,7 @@ When packaging Codex Loop as a ChatGPT Skill, build the runtime-only archive rat
 python3 tools/build_skill_zip.py --source . --output /tmp/skill.zip
 ```
 
-The default build is a **consumer** package: its build-generated manifest uses `repository_binding=none` and contains no `source.repository`, commit, or tree fields. `yihan-hu/codex-loop` therefore remains maintainer/release context, not an installation-time repository requirement. Use `--distribution-profile maintainer --source-repository ... --source-commit ... --source-tree ...` only for an explicit provenance artifact.
+The default build is a **consumer** package: its build-generated manifest uses `repository_binding=none` and contains no `source.repository`, commit, or tree fields. The maintainer repository therefore remains maintainer/release context, not an installation-time repository requirement. Use `--distribution-profile maintainer --source-repository ... --source-commit ... --source-tree ...` only for an explicit provenance artifact.
 
 The builder emits exactly one top-level `codex-loop/` directory and includes only runtime Skill files (`SKILL.md`, `agents/`, `assets/`, `references/`, `scripts/`, plus license/attribution files). It excludes `.github/`, `tests/`, `README.md`, repository tooling, `__pycache__`, and compiled Python caches. This separation matters because a repository-valid ZIP is not necessarily a ChatGPT-installable Skill package.
 
@@ -451,7 +472,7 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 ## Safety boundaries
 
 - Preserve pre-existing user changes and untracked files.
-- Treat RDC host roots as capability ceilings. Once a repository task is bound, keep filesystem/search/process access inside that canonical worktree or an explicitly named task-owned path; sibling repositories remain out of scope unless separately granted.
+- Treat selected local host roots as capability ceilings. Once a repository task is bound, keep filesystem/search/process access inside that canonical worktree or an explicitly named task-owned path; sibling repositories remain out of scope unless separately granted.
 - Never read credential files directly.
 - Accept one authoritative publication proof at the owning boundary: clean native Git push success in Local mode, or the importer-owned exact-identity terminal receipt in Web mode. Re-read remote state only for ambiguity, reconciliation, concurrency, or an explicit current-state request.
 - Treat the public-read Google Drive staging folder as a temporary publication trust boundary and clean up staged Git bundles after verified success.
@@ -463,13 +484,13 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 
 **Chrome extension is installed but Browser Control is unavailable.** First distinguish host health from session health. If the native messaging host is missing/invalid, use `ChatGPT / Codex -> Settings -> Computer use -> Google Chrome -> Manage / Reconnect`, then recheck. Do not hand-create the manifest or use AppleScript/internal sockets as a substitute. If host health is good but the current conversation still has no Browser executor, classify `SESSION_BROWSER_CAPABILITY_MISSING` and retry from a Browser-capable conversation rather than repairing Chrome again.
 
-**Codex Loop is trying to use the wrong local path.** Explicitly state your absolute RDC-authorized workspace root when entering Local mode. The distributed Skill should contain no author-specific home-directory path.
+**Codex Loop is trying to use the wrong local path.** Explicitly state your absolute connector-authorized workspace root when entering Local mode. The distributed Skill should contain no author-specific home-directory path.
 
 **RDC cannot access the repository.** Confirm that the repository is under the directory you authorized in Remote Desktop Commander and that the integration is connected.
 
 **A Web-mode push does not start.** Confirm Google Drive is connected, `ChatGPT-Temporary/codex-loop/github-staging` is anyone-with-link readable, the target repository has Actions enabled, and workflow permissions allow read/write.
 
-**`git push` fails.** Fix the reported native Git authentication/network/permission/divergence problem on the RDC host. Codex Loop intentionally does not switch to a different source-upload transport.
+**`git push` fails.** Fix the reported native Git authentication/network/permission/divergence problem on the selected local host. Codex Loop intentionally does not switch to a different source-upload transport.
 
 **A pushed commit is not visible in ChatGPT.** Git push updates GitHub, not the current ChatGPT workspace. Ask to sync the pushed commit and make sure the repository has the audited workspace-download workflow.
 
@@ -477,10 +498,14 @@ For implementation details, start with `SKILL.md`. Deeper contracts live under `
 
 **Installing a returned Codex Loop package.** Download the fresh `codex-loop.zip` artifact from the current conversation, then use `Plugins -> Plugin Directory -> Skills -> Create -> Upload from your computer`. `codex-loop.zip` is byte-identical to the official Skill Creator `skill.zip`; package generation and artifact delivery are not installation. Do not route the generated package through a presumed Library deep link.
 
-**Local mode disappeared in a new chat.** This is expected. Development mode is conversation-scoped; each new conversation starts in Web mode.
+**Local mode disappeared in a new chat.** Check `execution.default_target` in the canonical private profile. Web is the built-in default; remembered computer preferences must be read from their actual owner. Path grants and live capabilities are still checked anew.
 
 ## Development
 
 Run repository-native tests from the repository root. The compatibility suite lives under `tests/compat/`. Source-fidelity checks are required only when upstream-derived resources or their audited mappings change; README and local configuration documentation are local extensions.
 
 See `ATTRIBUTION.md`, `LICENSE`, and `NOTICE` for provenance and licensing information.
+
+### Preferences across new chats
+
+At the first Codex Loop invocation in each new chat, connected Google Drive restores preferences from the fixed private path **My Drive → `codex-loop/settings/host-profile.json`**, then selects Web or the saved computer. Names are fixed; only the connected user's Drive and settings differ. With no Drive or no saved profile, Web uses defaults. Recovery failures and duplicate files are reported. Tasks are never automatically resumed by preference recovery. See [setup, recovery, and save verification](references/host-profile-drive.md). Local user settings and credentials are excluded from Git and Skill packages.

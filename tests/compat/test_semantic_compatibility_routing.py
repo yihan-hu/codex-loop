@@ -44,7 +44,7 @@ class SemanticCompatibilityRoutingTests(unittest.TestCase):
         self.assertIn("`git push`", routing)
         self.assertIn("intercept before literal Git", routing)
         self.assertIn("Ordinary target repositories never need to contain Codex Loop runtime files", routing)
-        self.assertIn("Drive staging -> RDC", routing)
+        self.assertIn("Drive staging -> selected local connection", routing)
         self.assertIn("validated `skill.zip`", routing)
 
 

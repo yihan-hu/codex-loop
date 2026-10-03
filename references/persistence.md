@@ -1,6 +1,6 @@
 # Optional cross-conversation persistence
 
-Persistence exists only to recover a long task after conversation loss. It is not a second workflow engine and is off by default.
+Task persistence exists only to recover a long task after conversation loss. It is not a second workflow engine and is off by default.
 
 ## State-only resume manifest
 
@@ -20,7 +20,7 @@ python3 scripts/codex_loop.py persistence-export --task-id TASK --cwd REPO \
   --backend google_drive
 ```
 
-The current schema is v5. Older schemas are intentionally not accepted by this direct-upgrade runtime; recover the original request from an authoritative source and start a fresh task instead of maintaining migration logic.
+The current schema is v6. Older schemas are intentionally not accepted by this direct-upgrade runtime; recover the original request from an authoritative source and start a fresh task instead of maintaining migration logic.
 
 ## Resume
 
@@ -40,3 +40,5 @@ Current reality wins. Previous validation is historical, not proof about a chang
 Use Workspace Cache only when the user explicitly needs uncommitted Web workspace state to survive conversation loss. It remains a separate immutable Git/worktree capsule with bounded cleanup. See `persistence-resume.md` for restore ordering and `repository-continuity.md` for HOT/WARM/COLD source recovery.
 
 A disconnected Drive connector is not a correctness failure unless cross-conversation recovery is itself an explicit requirement.
+
+Host Profile recovery is a separate preference layer: see `host-profile-drive.md`. It runs before new-conversation execution selection and never implicitly invokes task resume.

@@ -30,7 +30,7 @@ class InstructionTests(unittest.TestCase):
             (root / "AGENTS.md").write_text("x" * 128)
             result = discover(root, max_bytes=32)
             self.assertFalse(result.complete)
-            self.assertEqual(result.truncated_paths, (str(root / "AGENTS.md"),))
+            self.assertEqual(result.truncated_paths, (str(root.resolve() / "AGENTS.md"),))
             self.assertFalse(result.entries[0].complete)
             self.assertEqual(len(result.entries[0].contents), 32)
 

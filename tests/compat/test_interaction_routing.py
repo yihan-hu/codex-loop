@@ -8,7 +8,7 @@ class InteractionRoutingContractTests(unittest.TestCase):
     def test_skill_keeps_routing_lazy_and_at_side_effect_boundary(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("## Repository and host routing", skill)
-        self.assertIn("ordinary/Web objectives bootstrap with the installed ChatGPT Skill runtime", skill)
+        self.assertIn("Web bootstraps with the installed ChatGPT Skill runtime", skill)
         self.assertIn("Before repository mutation, Git publication, local computer use, Skill deployment, or Web/Local transfer", skill)
         self.assertIn("do not force ordinary reasoning/edit/test steps through routing state", skill)
         self.assertIn("GitHub, Google Drive, Remote Desktop Commander", skill)
@@ -16,7 +16,7 @@ class InteractionRoutingContractTests(unittest.TestCase):
 
     def test_workspace_and_interaction_axes_remain_independent(self):
         routing = (ROOT / "references" / "interaction-routing.md").read_text(encoding="utf-8")
-        self.assertIn("Every new conversation starts with `workspace_mode=web`", routing)
+        self.assertIn("Every new conversation resolves its current explicit Web/computer/connection choice, otherwise `execution.default_target`, otherwise Web", routing)
         self.assertIn("interaction_target=local_chrome", routing)
         self.assertIn("workspace_mode=web` plus `interaction_target=local_chrome", routing)
         self.assertIn("do not infer Local workspace mode", routing)

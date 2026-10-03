@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import secrets
 import stat
 from pathlib import Path
@@ -15,7 +16,7 @@ HOST_CONFIG_MAX_BYTES = 64 * 1024
 PROGRESS_MODES = frozenset({"quiet", "standard", "enhanced"})
 BROWSER_TARGETS = frozenset({"cloud_browser", "local_chrome"})
 TASK_PERSISTENCE_BACKENDS = frozenset({"off", "google_drive"})
-PROFILE_PERSISTENCE_BACKENDS = frozenset({"local_only", "google_drive"})
+PROFILE_PERSISTENCE_BACKENDS = frozenset({"auto", "local_only", "google_drive"})
 DRIVE_CACHE_MAX_FOLDERS = 64
 
 DEFAULT_PROGRESS_CONFIG: dict[str, Any] = {
@@ -39,12 +40,16 @@ DEFAULT_HOST_PROFILE: dict[str, Any] = {
     "workspace": {
         "default_local_workspace": None,
     },
+    "execution": {
+        "default_target": "web",
+        "connections": [],
+    },
     "drive": {
         "cache_folder_paths": [],
     },
     "persistence": {
         "task_backend": "off",
-        "host_profile_backend": "local_only",
+        "host_profile_backend": "auto",
     },
 }
 _TOP_LEVEL_KEYS = frozenset(DEFAULT_HOST_PROFILE) | {"default_local_root"}
@@ -53,6 +58,7 @@ _SECTION_KEYS = {
     "browser": frozenset(DEFAULT_HOST_PROFILE["browser"]),
     "web_publish": frozenset(DEFAULT_HOST_PROFILE["web_publish"]),
     "workspace": frozenset(DEFAULT_HOST_PROFILE["workspace"]),
+    "execution": frozenset(DEFAULT_HOST_PROFILE["execution"]),
     "drive": frozenset(DEFAULT_HOST_PROFILE["drive"]),
     "persistence": frozenset(DEFAULT_HOST_PROFILE["persistence"]),
 }
@@ -177,6 +183,39 @@ def _validate_section(section: str, raw: Any) -> dict[str, Any]:
         alias = result["default_local_workspace"]
         if alias is not None and (not isinstance(alias, str) or not alias.strip() or len(alias) > 128):
             raise ValueError("workspace.default_local_workspace must be null or a bounded non-empty alias")
+    elif section == "execution":
+        target = result["default_target"]
+        identifier = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
+        if not isinstance(target, str) or not identifier.fullmatch(target):
+            raise ValueError("execution.default_target must be web, local, or a computer identifier")
+        connections = result["connections"]
+        if not isinstance(connections, list) or len(connections) > 64:
+            raise ValueError("execution.connections must be an ordered array of at most 64 connections")
+        names = set()
+        computers = set()
+        for item in connections:
+            required = {"name", "computer", "connector", "kind"}
+            if not isinstance(item, dict) or not required <= set(item) or set(item) - (required | {"local_root"}):
+                raise ValueError("each execution connection requires name, computer, connector, kind; only local_root is optional")
+            for key in ("name", "computer"):
+                if not isinstance(item[key], str) or not identifier.fullmatch(item[key]):
+                    raise ValueError(f"execution connection {key} must be a bounded lowercase identifier")
+            if item["computer"] in {"web", "local"} or item["name"] in names or item["name"] == "rdc":
+                raise ValueError("execution connections require unique names (rdc is reserved) and non-reserved computer identifiers")
+            names.add(item["name"])
+            computers.add(item["computer"])
+            if not isinstance(item["kind"], str) or item["kind"] not in {"mcp", "rdc"}:
+                raise ValueError("execution connection kind must be mcp or rdc")
+            connector = item["connector"]
+            if not isinstance(connector, str) or not connector.strip() or len(connector) > 512 or any(ord(c) < 32 for c in connector):
+                raise ValueError("execution connector must be a bounded printable name or connector ID, never a URL or credential")
+            if "://" in connector or connector.startswith("sk-"):
+                raise ValueError("execution connector must not contain an endpoint URL or API key")
+            root = item.get("local_root")
+            if root is not None and (not isinstance(root, str) or len(root) > 4096 or any(ord(c) < 32 for c in root) or not (root.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", root))):
+                raise ValueError("execution connection local_root must be an absolute POSIX or Windows path")
+        if target not in {"web", "local"} and target not in computers:
+            raise ValueError("execution.default_target must identify a configured computer")
     elif section == "drive":
         paths = result["cache_folder_paths"]
         if not isinstance(paths, list):
@@ -292,7 +331,7 @@ def effective_host_profile() -> dict[str, Any]:
     profile = copy.deepcopy(DEFAULT_HOST_PROFILE)
     try:
         profile["progress_visibility"] = _validate_progress(raw.get("progress_visibility"))
-        for section in ("browser", "web_publish", "workspace", "drive", "persistence"):
+        for section in ("browser", "web_publish", "workspace", "execution", "drive", "persistence"):
             profile[section] = _validate_section(section, raw.get(section))
     except ValueError as exc:
         profile = copy.deepcopy(DEFAULT_HOST_PROFILE)
@@ -320,6 +359,12 @@ def host_config_show() -> dict[str, Any]:
     return effective_host_profile()
 
 
+def execution_config() -> dict[str, Any]:
+    # Routing must not silently change machines when a profile is malformed.
+    raw, _, _ = _load_raw_host_config(strict=True)
+    return _validate_section("execution", raw.get("execution"))
+
+
 def _leaf_parts(path: str) -> tuple[str, str]:
     if path not in _LEAF_PATHS:
         raise ValueError(f"unsupported host config path: {path}")
@@ -330,6 +375,19 @@ def _leaf_parts(path: str) -> tuple[str, str]:
 def host_config_get(path: str) -> Any:
     section, key = _leaf_parts(path)
     return effective_host_profile()[section][key]
+
+
+def _profile_save_status() -> dict[str, Any]:
+    backend = effective_host_profile()["persistence"]["host_profile_backend"]
+    return {
+        "saved": True,
+        "cross_chat_saved": False,
+        "profile_sync_action": {
+            "auto": "sync_if_current_drive_connected",
+            "google_drive": "sync_required_or_report_failure",
+            "local_only": "local_only_no_upload",
+        }[backend],
+    }
 
 
 def host_config_set(path: str, value: Any) -> dict[str, Any]:
@@ -349,7 +407,7 @@ def host_config_set(path: str, value: Any) -> dict[str, Any]:
     raw[section] = {k: validated[k] for k in _SECTION_KEYS[section]}
     _write_raw_profile(raw)
     result = effective_host_profile()
-    result["saved"] = True
+    result.update(_profile_save_status())
     result["updated_path"] = path
     return result
 
@@ -367,7 +425,7 @@ def host_config_unset(path: str) -> dict[str, Any]:
             raw.pop(section, None)
     _write_raw_profile(raw)
     result = effective_host_profile()
-    result["saved"] = True
+    result.update(_profile_save_status())
     result["unset_path"] = path
     return result
 
@@ -379,7 +437,7 @@ def host_config_reset(section: str) -> dict[str, Any]:
     raw.pop(section, None)
     _write_raw_profile(raw)
     result = effective_host_profile()
-    result["saved"] = True
+    result.update(_profile_save_status())
     result["reset_section"] = section
     return result
 
@@ -423,7 +481,7 @@ def set_progress_config(
         raw["progress_visibility"] = _validate_progress(current)
     _write_raw_profile(raw)
     result = effective_progress_config()
-    result["saved"] = True
+    result.update(_profile_save_status())
     result["reset_to_defaults"] = bool(reset)
     return result
 

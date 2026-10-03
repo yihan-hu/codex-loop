@@ -28,7 +28,7 @@ class InvocationContractTests(unittest.TestCase):
     def test_selection_always_admits_one_lightweight_lifecycle(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("## Mandatory lifecycle admission", skill)
-        self.assertIn("the first task action for a new objective must be `bootstrap`", skill)
+        self.assertIn("Then `bootstrap` must return a `task_id`", skill)
         self.assertIn("fail closed", skill)
         self.assertIn("do not silently continue the objective as ordinary chat/tool execution", skill)
         self.assertIn("Do not run a second direct-vs-durable admission decision", skill)
@@ -46,7 +46,7 @@ class InvocationContractTests(unittest.TestCase):
     def test_repository_routing_stays_at_side_effect_boundary(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("## Repository and host routing", skill)
-        self.assertIn("ordinary/Web objectives bootstrap with the installed ChatGPT Skill runtime", skill)
+        self.assertIn("Web bootstraps with the installed ChatGPT Skill runtime", skill)
         self.assertIn("Before repository mutation, Git publication, local computer use, Skill deployment, or Web/Local transfer", skill)
         self.assertIn("do not force ordinary reasoning/edit/test steps through routing state", skill)
 

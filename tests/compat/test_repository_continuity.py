@@ -32,7 +32,7 @@ def init_repo(root: Path) -> tuple[str, str]:
     subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True)
     git(root, "config", "user.name", "Codex Loop Test")
     git(root, "config", "user.email", "codex-loop@example.invalid")
-    git(root, "remote", "add", "origin", "https://github.com/yihan-hu/codex-loop.git")
+    git(root, "remote", "add", "origin", "https://github.com/example-owner/codex-loop.git")
     (root / "tracked.txt").write_text("base\n", encoding="utf-8")
     git(root, "add", "tracked.txt")
     git(root, "commit", "-q", "-m", "base")
@@ -57,7 +57,7 @@ class RepositoryContinuityTests(unittest.TestCase):
                     "python3", str(CLI), "repository-enter",
                     "--session-id", session_id,
                     "--cwd", str(root),
-                    "--repository", "yihan-hu/codex-loop",
+                    "--repository", "example-owner/codex-loop",
                     "--branch", "main",
                     "--remote-head", head,
                     "--remote-tree", tree,
@@ -77,7 +77,7 @@ class RepositoryContinuityTests(unittest.TestCase):
             head, tree = init_repo(root)
             result = repository_enter(
                 root,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 remote_head=head,
                 remote_tree=tree,
@@ -98,7 +98,7 @@ class RepositoryContinuityTests(unittest.TestCase):
             head, tree = init_repo(first)
             first_result = repository_enter(
                 first,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 remote_head=head,
                 remote_tree=tree,
@@ -107,10 +107,10 @@ class RepositoryContinuityTests(unittest.TestCase):
 
             second = base / "second"
             subprocess.run(["git", "clone", "-q", "--no-local", str(first), str(second)], check=True)
-            git(second, "remote", "set-url", "origin", "https://github.com/yihan-hu/codex-loop.git")
+            git(second, "remote", "set-url", "origin", "https://github.com/example-owner/codex-loop.git")
             second_result = repository_enter(
                 second,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 remote_head=head,
                 remote_tree=tree,
@@ -133,7 +133,7 @@ class RepositoryContinuityTests(unittest.TestCase):
             init_repo(root)
             result = repository_enter(
                 root,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 remote_head="a" * 40,
                 remote_tree="b" * 40,
@@ -158,7 +158,7 @@ class RepositoryContinuityTests(unittest.TestCase):
 
             result = repository_enter(
                 root,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 remote_head=remote_head,
                 remote_tree=remote_tree,
@@ -176,7 +176,7 @@ class RepositoryContinuityTests(unittest.TestCase):
                 "head_commit": "1" * 40,
                 "head_tree": "2" * 40,
                 "branch": "main",
-                "repository": "yihan-hu/codex-loop",
+                "repository": "example-owner/codex-loop",
                 "expires_at": "2999-01-01T00:00:00Z",
                 "consumed": False,
                 "expired": False,
@@ -192,7 +192,7 @@ class RepositoryContinuityTests(unittest.TestCase):
             }
             result = repository_enter(
                 missing,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 workspace_cache=cache,
                 published_source=published,
@@ -220,7 +220,7 @@ class RepositoryContinuityTests(unittest.TestCase):
             }
             result = repository_enter(
                 missing,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 remote_head=remote_head,
                 remote_tree=remote_tree,
@@ -245,7 +245,7 @@ class RepositoryContinuityTests(unittest.TestCase):
             }
             result = repository_enter(
                 missing,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 remote_head="6" * 40,
                 remote_tree="7" * 40,
@@ -269,7 +269,7 @@ class RepositoryContinuityTests(unittest.TestCase):
 
             result = repository_enter(
                 root,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 remote_head=remote_head,
                 remote_tree=remote_tree,
@@ -294,7 +294,7 @@ class RepositoryContinuityTests(unittest.TestCase):
             }
             result = repository_enter(
                 root,
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
                 published_source=published,
             )
@@ -305,7 +305,7 @@ class RepositoryContinuityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             result = repository_enter(
                 Path(tmp) / "missing",
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 branch="main",
             )
             self.assertEqual(result["status"], COLD_ACQUIRE_REQUIRED)

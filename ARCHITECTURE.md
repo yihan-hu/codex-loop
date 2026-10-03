@@ -3,9 +3,21 @@
 ```mermaid
 flowchart TD
   U[Codex Loop selected + exact user request] --> A[Mandatory lifecycle admission]
-  A --> S{Execution surface}
+  A --> DRIVE[First invocation: current connected user My Drive]
+  DRIVE --> PROFILE[Fixed codex-loop/settings/host-profile.json]
+  PROFILE --> PREFER[Validate account and restore private preferences]
+  DRIVE -->|Absent or unconnected| DEFAULT[Fresh Web defaults / own native profile]
+  DEFAULT --> PREFER
+  PROFILE -->|Error or duplicate| PROFILEFAIL[Report recovery failure]
+  PREFER --> S{Explicit target / saved default / Web}
   S -->|Web/default| HR[Installed ChatGPT runtime]
-  S -->|Explicit Local| LR[Mac runtime cache via RDC]
+  S -->|Local computer| MCP[Explicit connector or ordered custom MCPs then RDC]
+  MCP --> OBS[Host-observed file/shell capability + computer identity]
+  MCP -. first-time setup only .-> GUIDE[Local MCP setup tutorial]
+  ROUTE --> DISPATCH[route-check verifies intended connector + task permissions]
+  DISPATCH --> LR[Same connector: selected computer runtime cache]
+  OBS -->|unavailable| Z[Fail closed]
+  OBS --> ROUTE[Private conversation route pins connection]
   HR --> L[bootstrap -> task_id]
   LR --> L
   A -->|known lifecycle| L
@@ -73,6 +85,7 @@ bound to stage + input + instruction + request + generation]
 
 ## Boundaries
 
+- **Execution preferences are private locators.** `host.json` stores an ordered connection list and default Web/computer target outside Git and packages. Explicit task choice wins; saved defaults initialize new conversation routes. Custom MCPs precede RDC, manual connection selection never silently falls back, and observed capabilities remain host-owned. Conversation routing pins the selected computer/connection; a running lifecycle cannot move because preferences changed. Profile reads and connection resolution are narrow pre-admission routing. See `references/local-connections.md`; first-time setup uses `references/local-mcp-tutorial.md`.
 - **Lifecycle admission remains mandatory.** Once selected, Codex Loop must create or resume its lifecycle before any substantive task action. This invariant is not optimized away.
 - **Exact user authority is canonical.** The initial request plus later steers define what the agent is authorized to do. A model-written task objective or acceptance restatement is not created for the same task.
 - **Lifecycle status is explicit but thin.** `active | paused | blocked | complete | cancelled` controls whether work may proceed; it is separate from plan state. `paused` is user-driven, `blocked` requires a concrete impasse, and terminal states never silently resume.
@@ -95,3 +108,7 @@ bound to stage + input + instruction + request + generation]
 - **Deterministic governance stays at real side-effect boundaries.** Non-idempotent external actions, routing, sandbox/approval, protected user work where durable tracking is active, workspace identity, and task-owned process cleanup remain explicit machine checks.
 - **Drive temporary storage has one root.** All ChatGPT-created temporary Drive objects live under `ChatGPT-Temporary`; top-level Skill-named folders are reserved for intentionally retained archive content.
 - **The host owns model sampling and normal tool execution.** Codex Loop does not recreate Codex's session runtime, token/budget manager, native multi-agent runtime, Plan Mode, Guardian/approval engine, tool dispatcher, or automatic idle-turn scheduler. No Composer DAG is introduced; the host-native agent loop remains the dynamic execution graph.
+
+Host Profile recovery is independent of task resume. The host Drive connector owns authenticated transport; `host-profile` validates/imports/exports account-bound preference envelopes. Saved changes require provider read-back before claiming cross-chat durability. Fixed folder/file names are constants; private IDs never enter the Skill.
+
+Local lifecycle dispatch has its own `local_lifecycle` route check, including bootstrap and resume. The host supplies the actual owning connector before dispatch; mismatches fail. This validates caller-provided identity, not interception of arbitrary host tool calls. Initialization recovery stays on the selected connector; only explicit user transition can change a pinned transport.

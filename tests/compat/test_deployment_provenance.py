@@ -56,18 +56,18 @@ class DeploymentProvenanceTests(unittest.TestCase):
         self.assertEqual(manifest["schema_version"], 2)
         self.assertEqual(manifest["distribution"], {"profile": "consumer", "repository_binding": "none"})
         self.assertNotIn("source", manifest)
-        self.assertNotIn("yihan-hu/codex-loop", json.dumps(manifest))
+        self.assertNotIn("example-owner/codex-loop", json.dumps(manifest))
 
     def test_consumer_manifest_rejects_repository_arguments(self):
         with self.assertRaisesRegex(ValueError, "must not carry"):
-            build_deployment_manifest(self.source, repository="yihan-hu/codex-loop")
+            build_deployment_manifest(self.source, repository="example-owner/codex-loop")
 
     def test_maintainer_wrong_tree_is_rejected_before_packaging(self):
         with self.assertRaisesRegex(ValueError, "source tree mismatch"):
             build_deployment_manifest(
                 self.source,
                 distribution_profile="maintainer",
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 commit=self.source_commit,
                 tree="b" * 40,
             )
@@ -77,7 +77,7 @@ class DeploymentProvenanceTests(unittest.TestCase):
             build_deployment_manifest(
                 self.source,
                 distribution_profile="maintainer",
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 commit="short",
                 tree=self.source_tree,
             )
@@ -108,7 +108,7 @@ class DeploymentProvenanceTests(unittest.TestCase):
                 self.source,
                 package,
                 distribution_profile="maintainer",
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 commit=self.source_commit,
                 tree=self.source_tree,
             )
@@ -117,7 +117,7 @@ class DeploymentProvenanceTests(unittest.TestCase):
                 archive.extractall(install)
             result = verify_installed_skill(install / "codex-loop")
             self.assertEqual(result["distribution"]["repository_binding"], "provenance_only")
-            self.assertEqual(result["source"]["repository"], "yihan-hu/codex-loop")
+            self.assertEqual(result["source"]["repository"], "example-owner/codex-loop")
             self.assertEqual(result["source"]["commit"], self.source_commit)
 
     def test_legacy_v1_manifest_remains_readable(self):
@@ -143,7 +143,7 @@ class DeploymentProvenanceTests(unittest.TestCase):
             build_deployment_manifest(
                 self.source,
                 distribution_profile="maintainer",
-                repository="yihan-hu/codex-loop",
+                repository="example-owner/codex-loop",
                 commit=self.source_commit,
                 tree=self.source_tree,
             ),

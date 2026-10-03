@@ -44,9 +44,9 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text()
         routing = (ROOT / "references" / "interaction-routing.md").read_text()
         deployment = (ROOT / "references" / "skill-deployment.md").read_text()
-        self.assertIn("ordinary/Web objectives bootstrap with the installed ChatGPT Skill runtime; an explicitly Local objective bootstraps through RDC", skill)
-        self.assertIn("Every new conversation starts with `workspace_mode=web`", routing)
-        self.assertIn("Enter `local` only after explicit local repository-development intent", routing)
+        self.assertIn("Web bootstraps with the installed ChatGPT Skill runtime; Local bootstraps through the selected local connection", skill)
+        self.assertIn("Every new conversation resolves its current explicit Web/computer/connection choice, otherwise `execution.default_target`, otherwise Web", routing)
+        self.assertIn("A saved Local default is a location preference", routing)
         self.assertIn("workspace-sync-offer", deployment)
         self.assertIn("WORKSPACE_SYNCED", deployment)
 
@@ -59,7 +59,7 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("do not force ordinary reasoning/edit/test steps through routing state", skill)
         self.assertIn("Development mode is a pre-tool gate", deployment)
         self.assertIn("Web mode fails closed", deployment)
-        self.assertIn("Development-location resolution must happen before any **repository-affecting** RDC/local-filesystem discovery", local_setup)
+        self.assertIn("Development-location resolution must happen before any **repository-affecting** local connector/local-filesystem discovery", local_setup)
 
     def test_public_readme_and_configurable_local_root_contract(self):
         readme = (ROOT / "README.md").read_text()
@@ -76,13 +76,13 @@ class WorkspaceSyncOfferTests(unittest.TestCase):
         self.assertIn("references/web-to-local-handoff.md", skill)
         self.assertIn("exact self-contained verified Git bundle", handoff)
         self.assertIn("Google Drive binary staging", handoff)
-        self.assertIn("RDC downloads the exact binary", handoff)
+        self.assertIn("local connector downloads the exact binary", handoff)
         self.assertIn("Do not choose among transports", handoff)
 
     def test_public_docs_do_not_hardcode_author_local_root(self):
         docs = [ROOT / "SKILL.md", ROOT / "README.md", *sorted((ROOT / "references").glob("*.md"))]
         for path in docs:
-            self.assertNotIn("/Users/yihanhu/PiWork", path.read_text(), str(path))
+            self.assertNotIn("/Users/private-author/Work", path.read_text(), str(path))
 
     def test_workflow_emits_commit_bound_source_hash(self):
         workflow = (ROOT / ".github" / "workflows" / "workspace-download.yml").read_text()
