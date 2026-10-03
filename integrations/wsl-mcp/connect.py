@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Interactive local-only credential entry for the already-installed WSL adapter."""
+import argparse
 import getpass
 import json
 import os
@@ -17,7 +18,10 @@ def main():
     home = Path.home()
     config = home / ".config/codex-loop-wsl"
     settings = json.loads((config / "settings.json").read_text())
-    tunnel = input("Tunnel ID from Platform tunnel settings: ").strip()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tunnel-id", help="Preselect the non-secret Platform tunnel ID")
+    args = parser.parse_args()
+    tunnel = (args.tunnel_id or input("Tunnel ID from Platform tunnel settings: ")).strip()
     if not re.fullmatch(r"tunnel_[A-Za-z0-9_-]{16,128}", tunnel):
         raise SystemExit("Invalid tunnel ID")
     if not sys.stdin.isatty():
