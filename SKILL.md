@@ -19,10 +19,6 @@ Use `scripts/codex_loop.py` from this Skill as the stable runtime entry point on
 
 ## Lifecycle admission
 
-### Optional WSL execution adapter
-
-When the user explicitly selects a WSL checkout as the Local source baseline, load `references/wsl-mcp.md` and use the connected `codex-loop-wsl` MCP terminal adapter. For this adapter, that reference replaces RDC-specific executable transport examples: bootstrap/resume and every later lifecycle command run through `wsl_exec` on the same WSL runtime cache, never on a second ChatGPT runtime. The narrow pre-admission infrastructure exception permits `wsl_status` and the runtime's own bootstrap/resume only; it does not authorize target-repository inspection. Require `route-check --action wsl_repository` before repository access, plus `repository_mutate` before source writes. A connected WSL server never selects Local mode or grants task access by itself. This adapter provides Linux terminal execution, not Chrome or Windows GUI control.
-
 Every newly admitted objective begins by creating the lifecycle and retaining the exact current user request:
 
 ```bash

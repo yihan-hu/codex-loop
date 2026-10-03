@@ -51,7 +51,7 @@ test('sandbox isolates files, credentials and Windows mounts; jobs support polli
   }
 });
 
-test('Codex Loop task and routing state survive separate sandboxed tool calls', async () => {
+test('Codex Loop task state survives separate sandboxed tool calls', async () => {
   const base = mkdtempSync(path.join(tmpdir(), 'codex-loop-wsl-lifecycle-'));
   const root = path.join(base, 'workspace'); mkdirSync(root);
   const runtime = path.join(base, 'runtime'); mkdirSync(runtime);
@@ -69,12 +69,7 @@ test('Codex Loop task and routing state survive separate sandboxed tool calls', 
     assert.ok(admitted.task_id);
     const continued = await run(`${controller} next --task-id '${admitted.task_id}'`);
     assert.equal(continued.task.task_id, admitted.task_id);
-    const route = await run(`${controller} route-init --host-surface chatgpt_web`);
-    const denied = await run(`${controller} route-check --session-id '${route.session_id}' --action wsl_repository`);
-    assert.equal(denied.allowed, false);
-    await run(`${controller} route-transition --session-id '${route.session_id}' --workspace-mode local --current-user-selection-observed --selection-evidence 'test user selected WSL'`);
-    const allowed = await run(`${controller} route-check --session-id '${route.session_id}' --action wsl_repository --workspace-granted`);
-    assert.equal(allowed.allowed, true);
+
   } finally { await executor.close(); rmSync(base, { recursive: true, force: true }); }
 });
 

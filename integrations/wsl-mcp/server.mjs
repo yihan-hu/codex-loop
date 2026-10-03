@@ -130,7 +130,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
 
 export function createServer(executor) {
   const server = new McpServer({ name: 'codex-loop-wsl', version: '0.1.0' }, {
-    instructions: 'This connection executes on the user\'s local WSL computer. Require explicit Local mode and current-task authorization. Call wsl_status to observe roots; scope each command to the task\'s bound repository. Shells have network access and can mutate authorized roots. Never read credentials. Keep lifecycle commands on this same WSL runtime. Poll existing job IDs; never duplicate ambiguous writes. This is a terminal adapter, not browser or Windows desktop control.',
+    instructions: 'This connection executes on the user\'s local WSL computer. Use this host only when selected by the user and authorized for the current task. Call wsl_status to observe roots; scope each command to the task\'s bound repository. Shells have network access and can mutate authorized roots. Never read credentials. If the task uses a lifecycle runtime, keep its commands and state on this same WSL host. Poll existing job IDs; never duplicate ambiguous writes. This is a terminal adapter, not browser or Windows desktop control.',
   });
   const guarded = fn => async args => { try { return result(await fn(args)); } catch (error) { return { ...result({ error: error.message }), isError: true }; } };
   server.registerTool('wsl_status', { description: 'Read WSL workspace roots and active job IDs. Does not execute a shell.',

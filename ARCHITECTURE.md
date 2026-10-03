@@ -5,7 +5,7 @@ flowchart TD
   U[Codex Loop selected + exact user request] --> A[Mandatory lifecycle admission]
   A --> S{Execution surface}
   S -->|Web/default| HR[Installed ChatGPT runtime]
-  S -->|Explicit Local| LR[Local runtime cache via RDC or WSL MCP]
+  S -->|Explicit Local| LR[Mac runtime cache via RDC]
   HR --> L[bootstrap -> task_id]
   LR --> L
   A -->|known lifecycle| L
@@ -72,8 +72,6 @@ bound to stage + input + instruction + request + generation]
 
 
 ## Boundaries
-
-- **WSL MCP is an optional Local terminal transport.** `integrations/wsl-mcp/` runs a stdio MCP server inside WSL/Linux and connects through OpenAI Secure MCP Tunnel. `wsl_repository` shares RDC's explicit-Local and current-workspace-grant checks; source mutation retains its separate gate. Bubblewrap exposes only configured project roots plus Codex Loop's secret-free runtime, with a private persistent `/tmp` for routing continuity. Commands do not inherit tunnel credentials or Windows mounts. Network access remains enabled. The standalone service and npm dependencies are excluded from the consumer Skill ZIP; `references/wsl-mcp.md` is included. No second model runtime is launched.
 
 - **Lifecycle admission remains mandatory.** Once selected, Codex Loop must create or resume its lifecycle before any substantive task action. This invariant is not optimized away.
 - **Exact user authority is canonical.** The initial request plus later steers define what the agent is authorized to do. A model-written task objective or acceptance restatement is not created for the same task.

@@ -30,7 +30,7 @@ def main():
     args = parser.parse_args()
     if platform.system() != "Linux" or platform.machine() not in {"x86_64", "amd64"}:
         raise SystemExit("This installer currently supports Linux/WSL x86-64 only.")
-    for tool in ("node", "npm", "git", "bwrap", "systemctl"):
+    for tool in ("node", "npm", "bwrap", "systemctl"):
         if not shutil.which(tool):
             raise SystemExit(f"Missing {tool}; install it from the official Ubuntu/Node sources first.")
     if any(not Path(root).is_absolute() for root in args.root):
@@ -69,12 +69,6 @@ def main():
         temp.write_bytes(payload)
         temp.chmod(0o700)
         os.replace(temp, binary)
-    runtime = home / ".codex-loop/runtime-src"
-    if not runtime.exists():
-        runtime.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        subprocess.run(["git", "clone", "https://github.com/yihan-hu/codex-loop.git", str(runtime)], check=True)
-    if subprocess.check_output(["git", "-C", str(runtime), "status", "--porcelain"], text=True).strip():
-        raise RuntimeError("Existing runtime cache is dirty; preserve it and review before updating.")
     settings = {"workspace_roots": roots, "app_dir": str(app), "tunnel_client": str(binary),
                 "tunnel_client_release": release["tag_name"], "archive_sha256": actual[7:]}
     (config / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")

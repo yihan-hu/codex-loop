@@ -79,7 +79,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertEqual(names.count("codex-loop/SKILL.md"), 1)
             self.assertIn(f"codex-loop/{DEPLOYMENT_MANIFEST_REL.as_posix()}", names)
             self.assertEqual(modes, {0o100644})
-            for forbidden in ("/.github/", "/tests/", "/tools/", "/integrations/", "/node_modules/", "/README.md", "/.gitignore", "__pycache__", ".pyc", "host.json"):
+            for forbidden in ("/.github/", "/tests/", "/tools/", "/README.md", "/.gitignore", "__pycache__", ".pyc", "host.json"):
                 self.assertFalse(any(forbidden in name or name.endswith(forbidden) for name in names), forbidden)
             self.assertEqual(result["file_count"], len(names))
 
