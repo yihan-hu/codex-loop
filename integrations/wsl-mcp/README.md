@@ -1,6 +1,6 @@
 # Codex Loop WSL MCP
 
-Connect ChatGPT web/phone to a Windows computer's WSL terminal through OpenAI Secure MCP Tunnel. This optional stdio server offers `wsl_status`, `wsl_exec`, `wsl_poll` and `wsl_stop`. It does not launch another AI model or control the Windows desktop.
+Connect ChatGPT web/phone to a Windows computer's WSL terminal through OpenAI Secure MCP Tunnel. This optional stdio/Streamable HTTP server offers `wsl_status`, `wsl_exec`, `wsl_poll` and `wsl_stop`. It does not launch another AI model or control the Windows desktop.
 
 Requirements: Ubuntu/WSL 2 on x86-64, Node.js 20+, npm, Python 3, bubblewrap and a working systemd user session. Obtain missing bubblewrap from the official Ubuntu distribution. The npm lockfile uses the maintained MCP SDK v1 compatibility line.
 
@@ -50,3 +50,23 @@ Bubblewrap exposes writable project roots and the secret-free lifecycle runtime;
 The standalone server is excluded from the consumer Skill ZIP. Keep the current installed Skill; adding this connection does not require replacing it. MCP registration and private Host Profile configuration are separate operations.
 
 Official documentation: [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), [ChatGPT connection setup](https://developers.openai.com/plugins/deploy/connect-chatgpt).
+
+## Upgrade an existing connection to HTTP
+
+The updated local MCP tutorial also applies to this WSL adapter. After pausing other chats using this shared connection, install Ubuntu's `python3-yaml` if needed and run:
+
+```bash
+python3 upgrade-http.py --check-only
+python3 upgrade-http.py
+python3 ~/.local/share/codex-loop-wsl/operate.py status
+```
+
+This keeps the existing tunnel and control-plane key reference, backs up the old private profile/unit, and creates a separate mode-600 bearer-header file outside the command sandbox. The HTTP listener binds only `127.0.0.1:18790`, validates Host/Origin and authentication, and runs under its own systemd user service without inheriting the Platform key. Tunnel runtime and discovery headers reference the private file. No second tunnel client is started.
+
+Both HTTP and Tunnel execution request limits are 64. SSE streams do not consume execution slots. Commands retain a separate global limit of four running jobs across all sessions; this is not a promise of 64 concurrent compute jobs. Stateful MCP sessions have independent job registries, lazy executors and automatic idle cleanup (two minutes for discovery-only sessions, thirty minutes after tool use). Active requests and running commands prevent idle cleanup. A DELETE closes only its own session. There is no cumulative session-count cap. Discovery does not start a command worker for each session.
+
+Requests without a session ID share one executor but close their own protocol context after each response. They cannot be reliably separated by ChatGPT chat identity. All sessions share project files and durable lifecycle state; concurrent edits of the same files still require coordination. Cleanup does not delete project files or tasks. This adapter already returns plain-text results without MCP App UI metadata or structured configuration panels, preserving the tool safety annotations and actual command output.
+
+`operate.py start` starts the HTTP backend, waits for health, then starts the Tunnel and waits for ready. Repeated starts reuse healthy services and their PIDs. `operate.py stop` stops both services. A Windows desktop launcher should start one hidden WSL keepalive before calling `operate.py start`; its stop counterpart should terminate only that dedicated keepalive, never shut down the entire WSL distribution. Closing the launch window does not stop background services. These launchers do not imply Windows login autostart.
+
+Run `node --test test.mjs http.test.mjs` for sandbox/lifecycle/protocol checks, more than twenty discovery sessions, isolated job handles, idle cleanup with a running command, stateless requests, and 64-slot admission/release. Verify a real ChatGPT tool call after refreshing the connection; service health alone is insufficient.

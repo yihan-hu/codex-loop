@@ -14,7 +14,7 @@ const MAX_HISTORY = 32;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const result = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 
-export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-loop') }) {
+export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-loop'), budget = { active: 0, limit: MAX_RUNNING }, transport = 'stdio' }) {
   if (process.platform !== 'linux') throw new Error('Run this server inside WSL/Linux.');
   if (!roots?.length) throw new Error('Set CODEX_LOOP_WSL_ROOTS to explicit colon-separated Linux workspace roots.');
   roots = roots.map(root => {
@@ -80,12 +80,13 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
     if (!Number.isInteger(timeout_seconds) || timeout_seconds < 1 || timeout_seconds > 3600) throw new Error('Invalid timeout.');
     if (!Number.isInteger(wait_ms) || wait_ms < 0 || wait_ms > 5000) throw new Error('Invalid wait.');
     cwd = authorized(cwd);
-    if ([...jobs.values()].filter(job => job.state === 'running').length >= MAX_RUNNING) throw new Error('Four jobs are already running. Poll or stop one first.');
+    if (budget.active >= budget.limit) throw new Error(`${budget.limit} jobs are already running across connections. Poll or stop one first.`);
     for (const [id, job] of jobs) {
       if (jobs.size < MAX_HISTORY) break;
       if (job.state !== 'running') jobs.delete(id);
     }
     const child = spawn('/usr/bin/bwrap', [...sandboxArgs(cwd), command], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    budget.active++;
     const job = { id: randomUUID(), child, cwd, state: 'running', exitCode: null, signal: null,
       output: Buffer.alloc(0), base: 0, total: 0, timedOut: false };
     jobs.set(job.id, job);
@@ -101,6 +102,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
       child.on('error', error => append(Buffer.from(`Failed to start sandbox: ${error.message}\n`)));
       child.on('close', (code, signal) => {
         job.state = 'finished'; job.exitCode = code; job.signal = signal;
+        budget.active--;
         clearTimeout(job.timer); clearTimeout(job.killTimer); resolve();
       });
     });
@@ -116,7 +118,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
       if (value.exit_code !== 0 || value.output !== 'SANDBOX_READY') throw new Error(`Bubblewrap unavailable; no unsandboxed fallback: ${value.output}`);
     },
     status() { return { platform: 'linux', host: 'WSL/Linux', workspace_roots: roots, runtime_root: runtime,
-      transport: 'stdio', sandbox: 'bubblewrap', network: 'enabled', windows_mounts: 'not exposed unless explicitly configured as roots',
+      transport, max_running_jobs: budget.limit, sandbox: 'bubblewrap', network: 'enabled', windows_mounts: 'not exposed unless explicitly configured as roots',
       running_jobs: [...jobs.values()].filter(job => job.state === 'running').map(job => ({ job_id: job.id, cwd: job.cwd })) }; },
     execute,
     async poll({ job_id, offset = 0, wait_ms = 1000 }) {
