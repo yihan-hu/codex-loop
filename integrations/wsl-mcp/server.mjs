@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { createGrants } from './grants.mjs';
 
 const OUTPUT_LIMIT = 128 * 1024;
 const MAX_RUNNING = 4;
@@ -14,7 +15,7 @@ const MAX_HISTORY = 32;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const result = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 
-export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-loop'), budget = { active: 0, limit: MAX_RUNNING }, transport = 'stdio' }) {
+export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-loop'), budget = { active: 0, limit: MAX_RUNNING }, transport = 'stdio', grants = createGrants() }) {
   if (process.platform !== 'linux') throw new Error('Run this server inside WSL/Linux.');
   if (!roots?.length) throw new Error('Set CODEX_LOOP_WSL_ROOTS to explicit colon-separated Linux workspace roots.');
   roots = roots.map(root => {
@@ -27,21 +28,22 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
   });
   mkdirSync(runtime, { recursive: true, mode: 0o700 });
   runtime = realpathSync(runtime);
+  grants.assertHidden([...roots, runtime]);
   // Codex Loop keeps routing sessions in tempfile.gettempdir(). Preserve a private
   // /tmp across tool calls; a fresh tmpfs would lose route-init/workspace grants.
   const privateTemp = path.join(runtime, 'wsl-sandbox-tmp');
   mkdirSync(privateTemp, { recursive: true, mode: 0o700 });
   const jobs = new Map();
   const env = { PATH: '/usr/bin:/bin', HOME: homedir(), LANG: 'C.UTF-8' };
-  const authorized = cwd => {
+  const authorized = (cwd, extraRoots = []) => {
     if (!path.isAbsolute(cwd)) throw new Error('cwd must be an absolute Linux path.');
     const canonical = realpathSync(cwd);
-    if (!statSync(canonical).isDirectory() || !roots.some(root => canonical === root || canonical.startsWith(root + '/')) ) {
+    if (!statSync(canonical).isDirectory() || ![...roots, ...extraRoots].some(root => canonical === root || canonical.startsWith(root + '/')) ) {
       throw new Error('cwd is outside the configured workspace roots.');
     }
     return canonical;
   };
-  const sandboxArgs = cwd => {
+  const sandboxArgs = (cwd, grant) => {
     // spawn(detached) already creates an isolated session/process group. A second
     // --new-session inside bwrap would detach descendants from cancellation.
     const args = ['--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--die-with-parent', '--cap-drop', 'ALL'];
@@ -53,6 +55,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
       if (existsSync(file)) args.push('--ro-bind', realpathSync(file), file);
     }
     for (const root of [...new Set([...roots, runtime])]) args.push('--bind', root, root);
+    if (grant && !roots.includes(grant.root)) args.push(grant.access === 'read-only' ? '--ro-bind' : '--bind', grant.root, grant.root);
     args.push('--clearenv', '--setenv', 'HOME', homedir(), '--setenv', 'PATH', env.PATH,
       '--setenv', 'LANG', env.LANG, '--setenv', 'npm_config_cache', '/tmp/npm-cache',
       '--setenv', 'CODEX_LOOP_HOME', runtime,
@@ -75,21 +78,26 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
     job.killTimer = setTimeout(() => { if (job.state === 'running') kill(job, 'SIGKILL'); }, 1000);
     job.killTimer.unref();
   };
-  async function execute({ command, cwd, timeout_seconds = 120, wait_ms = 1000 }) {
+  async function execute({ command, cwd, timeout_seconds = 120, wait_ms = 1000, grant_id, task_id }) {
+    if (Boolean(grant_id) !== Boolean(task_id)) throw new Error('Provide both grant_id and task_id.');
+    const grantArgs = { grant_id, task_id };
+    const grant = grant_id ? grants.resolve(grantArgs) : null;
+    if (grant && [...roots, runtime].some(root => grant.root === root || grant.root.startsWith(root + '/') || root.startsWith(grant.root + '/'))) throw new Error('Project is already exposed by a default root; temporary grants cannot restrict default roots.');
     if (!command || command.length > 65536 || command.includes('\0')) throw new Error('Invalid command.');
     if (!Number.isInteger(timeout_seconds) || timeout_seconds < 1 || timeout_seconds > 3600) throw new Error('Invalid timeout.');
     if (!Number.isInteger(wait_ms) || wait_ms < 0 || wait_ms > 5000) throw new Error('Invalid wait.');
-    cwd = authorized(cwd);
+    cwd = authorized(cwd, grant ? [grant.root] : []);
     if (budget.active >= budget.limit) throw new Error(`${budget.limit} jobs are already running across connections. Poll or stop one first.`);
     for (const [id, job] of jobs) {
       if (jobs.size < MAX_HISTORY) break;
       if (job.state !== 'running') jobs.delete(id);
     }
-    const child = spawn('/usr/bin/bwrap', [...sandboxArgs(cwd), command], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('/usr/bin/bwrap', [...sandboxArgs(cwd, grant), command], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     budget.active++;
     const job = { id: randomUUID(), child, cwd, state: 'running', exitCode: null, signal: null,
       output: Buffer.alloc(0), base: 0, total: 0, timedOut: false };
     jobs.set(job.id, job);
+    const detachGrant = grant ? grants.attach(grant, () => { terminate(job); return job.done; }) : () => {};
     const append = chunk => {
       job.total += chunk.length;
       job.output = Buffer.concat([job.output, chunk]);
@@ -102,7 +110,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
       child.on('error', error => append(Buffer.from(`Failed to start sandbox: ${error.message}\n`)));
       child.on('close', (code, signal) => {
         job.state = 'finished'; job.exitCode = code; job.signal = signal;
-        budget.active--;
+        budget.active--; detachGrant();
         clearTimeout(job.timer); clearTimeout(job.killTimer); resolve();
       });
     });
@@ -118,9 +126,11 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
       if (value.exit_code !== 0 || value.output !== 'SANDBOX_READY') throw new Error(`Bubblewrap unavailable; no unsandboxed fallback: ${value.output}`);
     },
     status() { return { platform: 'linux', host: 'WSL/Linux', workspace_roots: roots, runtime_root: runtime,
-      transport, max_running_jobs: budget.limit, sandbox: 'bubblewrap', network: 'enabled', windows_mounts: 'not exposed unless explicitly configured as roots',
+      transport, max_running_jobs: budget.limit, sandbox: 'bubblewrap', network: 'enabled', windows_mounts: 'not exposed unless configured as roots or authorized project grants',
+      registered_projects: grants.list(),
       running_jobs: [...jobs.values()].filter(job => job.state === 'running').map(job => ({ job_id: job.id, cwd: job.cwd })) }; },
     execute,
+    grant: grants.grant, revoke: grants.revoke,
     async poll({ job_id, offset = 0, wait_ms = 1000 }) {
       if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(wait_ms) || wait_ms < 0 || wait_ms > 5000) throw new Error('Invalid offset or wait.');
       const job = lookup(job_id); await Promise.race([job.done, sleep(wait_ms)]); return snapshot(job, offset);
@@ -131,14 +141,14 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
 }
 
 export function createServer(executor) {
-  const server = new McpServer({ name: 'codex-loop-wsl', version: '0.1.0' }, {
+  const server = new McpServer({ name: 'codex-loop-wsl', version: '0.2.0' }, {
     instructions: 'This connection executes on the user\'s local WSL computer. Use this host only when selected by the user and authorized for the current task. Call wsl_status to observe roots; scope each command to the task\'s bound repository. Shells have network access and can mutate authorized roots. Never read credentials. If the task uses a lifecycle runtime, keep its commands and state on this same WSL host. Poll existing job IDs; never duplicate ambiguous writes. This is a terminal adapter, not browser or Windows desktop control.',
   });
   const guarded = fn => async args => { try { return result(await fn(args)); } catch (error) { return { ...result({ error: error.message }), isError: true }; } };
   server.registerTool('wsl_status', { description: 'Read WSL workspace roots and active job IDs. Does not execute a shell.',
     inputSchema: {}, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, guarded(() => executor.status()));
   server.registerTool('wsl_exec', { description: 'Execute an authorized Bash command in the local WSL sandbox. Can read/write files and access the network. Returns a job ID; use wsl_poll if still running.',
-    inputSchema: { command: z.string().min(1).max(65536), cwd: z.string().min(1),
+    inputSchema: { grant_id: z.string().uuid().optional(), task_id: z.string().min(1).max(128).optional(), command: z.string().min(1).max(65536), cwd: z.string().min(1),
       timeout_seconds: z.number().int().min(1).max(3600).default(120), wait_ms: z.number().int().min(0).max(5000).default(1000) },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } }, guarded(executor.execute));
   server.registerTool('wsl_poll', { description: 'Observe a previously started job without restarting it. Use next_offset from the previous result to read new output. Offsets are bytes; truncated output is reported.',
@@ -146,6 +156,12 @@ export function createServer(executor) {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, guarded(executor.poll));
   server.registerTool('wsl_stop', { description: 'Stop only a job started by this MCP server. Terminates its sandbox and child processes.',
     inputSchema: { job_id: z.string().uuid() }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, guarded(executor.stop));
+  server.registerTool('wsl_grant_project', { description: 'After explicit user authorization, temporarily enable a locally registered project for a task. Returns a private bearer grant; pass it and task_id to wsl_exec. No arbitrary paths. Never expose the grant to another task.',
+    inputSchema: { access: z.enum(['read-only', 'read-write']).default('read-only'), project_id: z.string().min(1).max(100), task_id: z.string().min(1).max(128), ttl_seconds: z.number().int().min(1).max(86400).default(3600) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }, guarded(executor.grant));
+  server.registerTool('wsl_revoke_project', { description: 'Revoke a task grant and terminate its running commands. Project files remain. Reauthorize explicitly for continuation.',
+    inputSchema: { grant_id: z.string().uuid(), task_id: z.string().min(1).max(128) },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } }, guarded(executor.revoke));
   return server;
 }
 

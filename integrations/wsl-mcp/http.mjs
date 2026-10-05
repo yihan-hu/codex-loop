@@ -5,13 +5,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createExecutor, createServer } from './server.mjs';
+import { createGrants } from './grants.mjs';
 
 export async function startHttp({ roots, runtime, authorization, port = 0, maxRequests = 64,
-  discoveryIdleMs = 120000, toolIdleMs = 1800000, cleanupMs = 30000 }) {
+  discoveryIdleMs = 120000, toolIdleMs = 1800000, cleanupMs = 30000, projectsFile }) {
   if (!authorization?.startsWith('Bearer ') || authorization.length < 32) throw new Error('A private local bearer header is required.');
   if (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 256) throw new Error('Invalid HTTP request limit.');
+  const grants = createGrants({ projectsFile });
   const budget = { active: 0, limit: 4 };
-  const executor = () => createExecutor({ roots, runtime, budget, transport: 'streamable-http' });
+  const executor = () => createExecutor({ roots, runtime, budget, grants, transport: 'streamable-http' });
   const shared = executor();
   await shared.probe();
   const sessions = new Map();
@@ -75,7 +77,7 @@ export async function startHttp({ roots, runtime, authorization, port = 0, maxRe
         // Discovery sessions stay lightweight: no job executor until tools/call.
         session = { last: Date.now(), used: false, active: 0, executor: null };
         const facade = {};
-        for (const method of ['status', 'execute', 'poll', 'stop']) facade[method] = (...args) => {
+        for (const method of ['status', 'execute', 'poll', 'stop', 'grant', 'revoke']) facade[method] = (...args) => {
           session.executor ||= executor(); return session.executor[method](...args);
         };
         session.server = createServer(facade);
@@ -116,7 +118,7 @@ export async function startHttp({ roots, runtime, authorization, port = 0, maxRe
   const timer = setInterval(() => sweep().catch(() => {}), cleanupMs); timer.unref();
   return { url: `http://127.0.0.1:${listener.address().port}`, metrics, sweep,
     async close() {
-      closing = true; clearInterval(timer);
+      closing = true; clearInterval(timer); await grants.close();
       for (const [id, s] of sessions) await closeSession(id, s);
       await shared.close();
       listener.closeAllConnections();

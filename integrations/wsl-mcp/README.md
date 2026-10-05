@@ -1,6 +1,6 @@
 # Codex Loop WSL MCP
 
-Connect ChatGPT web/phone to a Windows computer's WSL terminal through OpenAI Secure MCP Tunnel. This optional stdio/Streamable HTTP server offers `wsl_status`, `wsl_exec`, `wsl_poll` and `wsl_stop`. It does not launch another AI model or control the Windows desktop.
+Connect ChatGPT web/phone to a Windows computer's WSL terminal through OpenAI Secure MCP Tunnel. This optional stdio/Streamable HTTP server keeps the original `wsl_status`, `wsl_exec`, `wsl_poll` and `wsl_stop` tools and adds `wsl_grant_project` / `wsl_revoke_project` for temporary project access. It does not launch another AI model or control the Windows desktop.
 
 Requirements: Ubuntu/WSL 2 on x86-64, Node.js 20+, npm, Python 3, bubblewrap and a working systemd user session. Obtain missing bubblewrap from the official Ubuntu distribution. The npm lockfile uses the maintained MCP SDK v1 compatibility line.
 
@@ -69,4 +69,32 @@ Requests without a session ID share one executor but close their own protocol co
 
 `operate.py start` starts the HTTP backend, waits for health, then starts the Tunnel and waits for ready. Repeated starts reuse healthy services and their PIDs. `operate.py stop` stops both services. A Windows desktop launcher should start one hidden WSL keepalive before calling `operate.py start`; its stop counterpart should terminate only that dedicated keepalive, never shut down the entire WSL distribution. Closing the launch window does not stop background services. These launchers do not imply Windows login autostart.
 
-Run `node --test test.mjs http.test.mjs` for sandbox/lifecycle/protocol checks, more than twenty discovery sessions, isolated job handles, idle cleanup with a running command, stateless requests, and 64-slot admission/release. Verify a real ChatGPT tool call after refreshing the connection; service health alone is insufficient.
+Run `node --test test.mjs http.test.mjs grants.test.mjs` for sandbox/lifecycle/protocol checks, more than twenty discovery sessions, isolated job handles, idle cleanup with a running command, stateless requests, and 64-slot admission/release. Verify a real ChatGPT tool call after refreshing the connection; service health alone is insufficient.
+
+
+## Temporarily authorize another project
+
+Keep the default workspace roots narrow. Register additional projects **in your own WSL terminal**, outside the command sandbox:
+
+```bash
+python3 ~/.local/share/codex-loop-wsl/projects.py example-project \
+  "/mnt/c/Users/example/OneDrive/Projects/example-project" --access read-write
+```
+
+Use a real existing project path. The default access is `read-only`; request `read-write` explicitly when edits are intended. This writes the fixed private file `~/.config/codex-loop-wsl/projects.json` with owner-only permissions. It is not stored in this Git repository or restored from Drive. Registration makes a project eligible for authorization; it does not mount it into every command. The registry must remain outside all default roots, temporary project roots and the lifecycle runtime. Never register a credential directory. Updating registrations does not require a service restart.
+
+After you explicitly authorize the project for the current task, the assistant calls:
+
+```json
+{"project_id":"example-project","task_id":"current-task-id","ttl_seconds":3600,"access":"read-write"}
+```
+
+with `wsl_grant_project`. The response contains a random `grant_id`, the canonical root, allowed access and expiry. The grant defaults to `read-only` even when the local registration permits writes; request `access: "read-write"` only for an explicitly authorized edit. Grants cannot exceed the locally registered access. Each `wsl_exec` accessing the project must include both `grant_id` and the same `task_id`, alongside its normal command/cwd parameters. The project is mounted only into commands carrying this authorization. Commands without it retain the original default roots; other registered projects remain hidden. Read-only projects cannot be written through this mount. A temporary project must not overlap default roots or the shared lifecycle runtime, since temporary grants cannot narrow access already provided there.
+
+Treat `grant_id` as a private bearer capability, not a project preference: do not save it to shared task files, Drive, Git or logs, or give it to another task. Task IDs are labels, not independently verified ChatGPT identities. The connector cannot prove that a request came from a particular chat or that the human authorized it; the assistant must obtain explicit user authorization before requesting a grant. Local registration is the enforced upper boundary, and possession of the random grant plus the matching task ID controls command access. Another chat does not automatically receive an existing grant, but could request its own grant for a locally registered project if the user authorizes it.
+
+A grant defaults to one hour and is limited to 24 hours. It survives HTTP protocol session expiry/reinitialization while the backend stays running, including sessionless calls. Closing a protocol session still terminates that session's own running jobs; it does not revoke the task grant. Backend restart clears all grants and ephemeral job handles; durable project/task files remain. Reauthorization is needed for continuation after restart or expiry. A Host Profile project entry never supplies a grant.
+
+At task completion, on user request, or when changing projects, call `wsl_revoke_project` with `grant_id` and `task_id`. Revocation terminates the grant's active process groups across executors and waits for their exit. Automatic expiry also terminates its running commands, because removing an in-memory entry alone would not remove mounts from an existing sandbox. Files are retained. Task completion itself is not detected by this terminal adapter: explicit revocation or the expiry timer performs cleanup. This is a filesystem boundary; it does not undo completed edits or data already sent over the enabled network.
+
+For an existing HTTP installation, update the checkout and run `python3 upgrade-http.py` only after current commands have completed. This copies the new grant module and local registration script as well as the backend. Refresh tool discovery to see the two added tools; old tool names and ordinary default-root calls still work.

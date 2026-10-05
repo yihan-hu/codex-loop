@@ -15,6 +15,10 @@ flowchart TD
   LOOKUP --> CACHE[Selected connector verifies and materializes conversation cache]
   CACHE --> GRANT[Exact path authority + connector boundary]
   GRANT --> ACCESS
+  GRANT -. WSL extra project .-> WREG[Owner-only local project allowlist]
+  WREG --> WGRANT[Explicit task authorization: expiring bearer grant]
+  WGRANT --> ACCESS
+  WGRANT -. expiry or explicit revoke .-> WKILL[Stop grant commands; retain project files]
   DRIVE -->|Absent or unconnected| DEFAULT[Fresh Web defaults / own native profile]
   DEFAULT --> PREFER
   PROFILE -->|Error or duplicate| PROFILEFAIL[Report recovery failure]
@@ -100,6 +104,7 @@ bound to stage + input + instruction + request + generation]
 ## Boundaries
 
 - **Execution preferences are private locators.** `host.json` stores an ordered connection list, default Web/environment target, and per-environment workspace/project/runtime/state locations outside Git and packages. Explicit task choice wins; saved defaults initialize new conversation routes. Custom MCPs precede RDC, manual connection selection never silently falls back, and observed capabilities remain host-owned. Conversation routing pins the selected computer/connection; a running lifecycle cannot move because preferences changed. Profile reads and connection resolution are narrow pre-admission routing. See `references/local-connections.md`; first-time setup uses `references/local-mcp-tutorial.md`.
+- **WSL temporary directories stay host-enforced.** The optional adapter has a private local project allowlist, separate from Host Profile locators. After explicit user authorization, a task receives an expiring bearer grant; only commands carrying that capability and matching task label mount the extra project. Protocol reconnection does not clear an unexpired grant, backend restart does. Expiry/revocation stops dependent commands and preserves durable files. Chat identity is not independently authenticated, and grants never enter saved preferences or shared task state. See `integrations/wsl-mcp/README.md`.
 - **Lifecycle admission remains mandatory.** Once selected, Codex Loop must create or resume its lifecycle before any substantive task action. This invariant is not optimized away.
 - **Exact user authority is canonical.** The initial request plus later steers define what the agent is authorized to do. A model-written task objective or acceptance restatement is not created for the same task.
 - **Lifecycle status is explicit but thin.** `active | paused | blocked | complete | cancelled` controls whether work may proceed; it is separate from plan state. `paused` is user-driven, `blocked` requires a concrete impasse, and terminal states never silently resume.

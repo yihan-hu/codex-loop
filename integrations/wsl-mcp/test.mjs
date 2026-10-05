@@ -89,7 +89,7 @@ test('real MCP client initializes, lists tools and executes/polls/stops WSL jobs
   try {
     await client.connect(transport);
     const tools = (await client.listTools()).tools;
-    assert.deepEqual(tools.map(tool => tool.name).sort(), ['wsl_exec', 'wsl_poll', 'wsl_status', 'wsl_stop']);
+    assert.deepEqual(tools.map(tool => tool.name).sort(), ['wsl_exec', 'wsl_grant_project', 'wsl_poll', 'wsl_revoke_project', 'wsl_status', 'wsl_stop']);
     assert.equal(tools.find(tool => tool.name === 'wsl_exec').annotations.readOnlyHint, false);
     assert.equal((await call('wsl_status')).value.sandbox, 'bubblewrap');
     const executed = await call('wsl_exec', { command: "printf MCP_CONNECTED; uname -s", cwd: root, wait_ms: 5000 });

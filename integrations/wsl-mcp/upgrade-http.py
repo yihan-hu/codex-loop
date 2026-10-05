@@ -36,7 +36,7 @@ def main():
             raise SystemExit('A sandbox command is active; wait before upgrading.')
     if args.check_only:
         print(json.dumps({'upgrade_safe': True})); return
-    subprocess.run(['node', '--test', str(source / 'test.mjs'), str(source / 'http.test.mjs')], cwd=source, check=True)
+    subprocess.run(['node', '--test', str(source / 'test.mjs'), str(source / 'http.test.mjs'), str(source / 'grants.test.mjs')], cwd=source, check=True)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     backup = config / ('http-upgrade-backup-' + stamp)
     backup.mkdir(mode=0o700)
@@ -44,7 +44,7 @@ def main():
     units = home / '.config/systemd/user'
     tunnel_unit = units / 'codex-loop-wsl-tunnel.service'
     shutil.copy2(tunnel_unit, backup / tunnel_unit.name)
-    for name in ('server.mjs', 'http.mjs', 'operate.py'):
+    for name in ('server.mjs', 'grants.mjs', 'projects.py', 'http.mjs', 'operate.py'):
         if (app / name).exists():
             shutil.copy2(app / name, backup / name)
         shutil.copy2(source / name, app / name)

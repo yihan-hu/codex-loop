@@ -35,7 +35,7 @@ test('HTTP sessions isolate handles, stay lazy, expire safely and support statel
       await client.connect(new StreamableHTTPClientTransport(new URL(app.url + '/mcp'), { requestInit: { headers: { authorization } } })); clients.push(client);
     }
     const tools = (await clients[0].listTools()).tools;
-    assert.equal(tools.length, 4);
+    assert.equal(tools.length, 6);
     assert.ok(tools.every(t => !t._meta));
     const call = async (client, name, args = {}) => {
       const r = await client.callTool({ name, arguments: args });
@@ -58,7 +58,7 @@ test('HTTP sessions isolate handles, stay lazy, expire safely and support statel
     const started = await raw('tools/call', { name: 'wsl_exec', arguments: { command: 'printf STATELESS_OK', cwd: root, wait_ms: 1000 } });
     assert.equal(started.response.status, 200);
     assert.equal(JSON.parse(started.body.result.content[0].text).output, 'STATELESS_OK');
-    const listed = await raw('tools/list'); assert.equal(listed.body.result.tools.length, 4);
+    const listed = await raw('tools/list'); assert.equal(listed.body.result.tools.length, 6);
   } finally { for (const c of clients) await c.close(); await app.close(); rmSync(base, { recursive: true, force: true }); }
 });
 

@@ -19,7 +19,7 @@ Add integrations only when the task needs them:
 - GitHub: repository reads/source acquisition/Actions/publication.
 - Google Drive: verified binary staging for Web -> GitHub publication and Web -> local/Mac synchronization. All temporary Drive material lives under the fixed `ChatGPT-Temporary` root; only retained archives belong under top-level Skill-named folders.
 - Custom local file/shell MCP: for local files and native Git; RDC is the fallback. Browser/GUI interaction needs its own supported capability.
-- WSL MCP: an optional Linux terminal connection from ChatGPT web/phone to a Windows computer's WSL through OpenAI Secure MCP Tunnel. See [setup](integrations/wsl-mcp/README.md). It provides command execution and process observation independently of RDC.
+- WSL MCP: an optional Linux terminal connection from ChatGPT web/phone to a Windows computer's WSL through OpenAI Secure MCP Tunnel. See [setup](integrations/wsl-mcp/README.md). It provides command execution and process observation independently of RDC, with locally registered projects and temporary task grants for additional directories.
 
 See `references/consumer-onboarding.md` for the staged setup checklist and exact permission boundaries. Codex Loop should disclose only the dependencies required by the current task and can preflight those capabilities before substantive work.
 

@@ -38,14 +38,14 @@ def main():
     roots = [str(Path(root).resolve(strict=True)) for root in args.root]
     if any(not Path(root).is_dir() or root in {"/", "/home", str(Path.home()), "/mnt", "/etc", "/usr", "/tmp", "/proc", "/dev"} or ":" in root for root in roots):
         raise SystemExit("Choose explicit narrow Linux project directories.")
-    subprocess.run(["node", "--test", str(SOURCE / "test.mjs")], cwd=SOURCE, check=True)
+    subprocess.run(["node", "--test", str(SOURCE / "test.mjs"), str(SOURCE / "grants.test.mjs")], cwd=SOURCE, check=True)
     home = Path.home()
     app = home / ".local/share/codex-loop-wsl"
     config = home / ".config/codex-loop-wsl"
     binary = home / ".local/bin/tunnel-client"
     for directory in (app, config, binary.parent, home / ".config/systemd/user"):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    for filename in ("server.mjs", "package.json", "package-lock.json", "connect.py"):
+    for filename in ("server.mjs", "grants.mjs", "projects.py", "package.json", "package-lock.json", "connect.py"):
         shutil.copy2(SOURCE / filename, app / filename)
     subprocess.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=app, check=True)
     release = json.loads(download("https://api.github.com/repos/openai/tunnel-client/releases/latest"))
