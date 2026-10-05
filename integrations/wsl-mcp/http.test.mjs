@@ -7,6 +7,7 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startHttp } from './http.mjs';
+import { SERVER_VERSION } from './server.mjs';
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 test('HTTP sessions isolate handles, stay lazy, expire safely and support stateless Tunnel calls', async () => {
@@ -21,6 +22,8 @@ test('HTTP sessions isolate handles, stay lazy, expire safely and support statel
   };
   const clients = [];
   try {
+    assert.equal(app.metrics().server_version, SERVER_VERSION);
+    assert.equal(app.metrics().grant_policy, 'three-day-idle');
     assert.equal((await fetch(app.url + '/healthz')).status, 401);
     assert.equal((await fetch(app.url + '/.well-known/oauth-protected-resource/mcp')).status, 404);
     assert.equal((await fetch(app.url + '/healthz', { headers: { authorization, origin: 'https://evil.example' } })).status, 403);

@@ -37,6 +37,7 @@ def main():
     if args.check_only:
         print(json.dumps({'upgrade_safe': True})); return
     subprocess.run(['node', '--test', str(source / 'test.mjs'), str(source / 'http.test.mjs'), str(source / 'grants.test.mjs')], cwd=source, check=True)
+    expected_version = json.loads((source / 'package.json').read_text())['version']
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     backup = config / ('http-upgrade-backup-' + stamp)
     backup.mkdir(mode=0o700)
@@ -85,11 +86,16 @@ def main():
     subprocess.run(['systemd-analyze', '--user', 'verify', str(http_unit), str(tunnel_unit)], check=True)
     subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
     subprocess.run(['systemctl', '--user', 'stop', 'codex-loop-wsl-tunnel.service'], check=True)
-    subprocess.run(['systemctl', '--user', 'enable', '--now', 'codex-loop-wsl-http.service'], check=True)
+    subprocess.run(['systemctl', '--user', 'enable', 'codex-loop-wsl-http.service'], check=True)
+    # Starting an active unit reuses the old process even after files changed.
+    subprocess.run(['systemctl', '--user', 'restart', 'codex-loop-wsl-http.service'], check=True)
     subprocess.run(['python3', str(app / 'operate.py'), 'start'], check=True)
+    actual = health()
+    if actual.get('server_version') != expected_version:
+        raise SystemExit('Backend version mismatch after upgrade; do not report success or refresh ChatGPT yet.')
     keepalive = home / '.local/bin/codex-loop-wsl-keepalive'
     keepalive.write_text('#!/bin/sh\nexec /bin/sleep infinity\n'); keepalive.chmod(0o700)
-    print(json.dumps({'upgraded': True, 'backup': str(backup), 'max_requests': 64}))
+    print(json.dumps({'upgraded': True, 'backup': str(backup), 'max_requests': 64, 'server_version': actual['server_version'], 'next': 'Register project locally, refresh ChatGPT tools, grant project, then execute with grant_id.'}))
 
 
 if __name__ == '__main__':

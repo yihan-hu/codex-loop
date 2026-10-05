@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createExecutor, createServer } from './server.mjs';
+import { createExecutor, createServer, SERVER_VERSION } from './server.mjs';
 import { createGrants } from './grants.mjs';
 
 export async function startHttp({ roots, runtime, authorization, port = 0, maxRequests = 64,
@@ -18,7 +18,7 @@ export async function startHttp({ roots, runtime, authorization, port = 0, maxRe
   await shared.probe();
   const sessions = new Map();
   let activeRequests = 0, closing = false;
-  const metrics = () => ({ transport: 'streamable-http', max_concurrent_requests: maxRequests,
+  const metrics = () => ({ server_version: SERVER_VERSION, grant_policy: 'three-day-idle', transport: 'streamable-http', max_concurrent_requests: maxRequests,
     active_requests: activeRequests, sessions: sessions.size, executors: 1 + [...sessions.values()].filter(s => s.executor).length,
     running_jobs: budget.active, max_running_jobs: budget.limit, ui: 'plain-text' });
   const send = (res, status, value) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); };

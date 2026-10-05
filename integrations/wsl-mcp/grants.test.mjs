@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createGrants, GRANT_IDLE_MS } from './grants.mjs';
-import { createExecutor } from './server.mjs';
+import { createExecutor, SERVER_VERSION } from './server.mjs';
 import { startHttp } from './http.mjs';
 const delay = ms => new Promise(r => setTimeout(r, ms));
 function fixture() {
@@ -103,7 +103,11 @@ test('HTTP conversation grants survive protocol reconnection without appearing i
     assert.equal((await call('wsl_exec', { command: 'printf STATELESS_GRANT', cwd: f.project, grant_id: grant.grant_id })).value.output, 'STATELESS_GRANT');
     const third = await init();
     assert.equal((await call('wsl_exec', { command: 'pwd', cwd: f.project }, third)).isError, true);
-    assert.ok(!JSON.stringify((await call('wsl_status', {}, third)).value).includes(grant.grant_id));
+    const status = (await call('wsl_status', {}, third)).value;
+    assert.ok(!JSON.stringify(status).includes(grant.grant_id));
+    assert.equal(status.server_version, SERVER_VERSION);
+    assert.equal(status.grant_policy, 'three-day-idle');
+    assert.deepEqual(status.workspace_roots, [f.root]);
     await call('wsl_revoke_project', { grant_id: grant.grant_id, task_id: 'next-task' }, third);
     assert.equal((await call('wsl_exec', { command: 'pwd', cwd: f.project, grant_id: grant.grant_id, task_id: 'next-task' }, second)).isError, true);
     // The service has no persistent grant store; restart requires explicit reauthorization.

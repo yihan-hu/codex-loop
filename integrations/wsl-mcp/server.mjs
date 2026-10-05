@@ -9,6 +9,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { createGrants } from './grants.mjs';
 
+export const SERVER_VERSION = '0.3.1';
 const OUTPUT_LIMIT = 128 * 1024;
 const MAX_RUNNING = 4;
 const MAX_HISTORY = 32;
@@ -39,7 +40,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
     if (!path.isAbsolute(cwd)) throw new Error('cwd must be an absolute Linux path.');
     const canonical = realpathSync(cwd);
     if (!statSync(canonical).isDirectory() || ![...roots, ...extraRoots].some(root => canonical === root || canonical.startsWith(root + '/')) ) {
-      throw new Error('cwd is outside the configured workspace roots.');
+      throw new Error('cwd is outside the configured workspace roots. Extra projects require local registration, wsl_grant_project, and grant_id on wsl_exec; Host Profile alone does not grant access.');
     }
     return canonical;
   };
@@ -125,7 +126,8 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
       const value = await execute({ command: 'printf SANDBOX_READY', cwd: roots[0], wait_ms: 5000 });
       if (value.exit_code !== 0 || value.output !== 'SANDBOX_READY') throw new Error(`Bubblewrap unavailable; no unsandboxed fallback: ${value.output}`);
     },
-    status() { return { platform: 'linux', host: 'WSL/Linux', workspace_roots: roots, runtime_root: runtime,
+    status() { return { server_version: SERVER_VERSION, grant_policy: 'three-day-idle',
+      project_access: 'workspace_roots are defaults only; register locally, call wsl_grant_project, then pass grant_id to wsl_exec.', platform: 'linux', host: 'WSL/Linux', workspace_roots: roots, runtime_root: runtime,
       transport, max_running_jobs: budget.limit, sandbox: 'bubblewrap', network: 'enabled', windows_mounts: 'not exposed unless configured as roots or authorized project grants',
       registered_projects: grants.list(),
       running_jobs: [...jobs.values()].filter(job => job.state === 'running').map(job => ({ job_id: job.id, cwd: job.cwd })) }; },
@@ -141,11 +143,11 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
 }
 
 export function createServer(executor) {
-  const server = new McpServer({ name: 'codex-loop-wsl', version: '0.3.0' }, {
+  const server = new McpServer({ name: 'codex-loop-wsl', version: SERVER_VERSION }, {
     instructions: 'This connection executes on the user\'s local WSL computer. Use this host only when selected by the user and authorized for the current task. Call wsl_status to observe roots; scope each command to the task\'s bound repository. Shells have network access and can mutate authorized roots. Never read credentials. If the task uses a lifecycle runtime, keep its commands and state on this same WSL host. Poll existing job IDs; never duplicate ambiguous writes. Project grants are private bearer capabilities reusable across tasks in the authorized conversation. Successful grant-backed execution or polling renews three days of idle validity; status and discovery do not. Backend restart clears all grants. When the user authorizes this conversation scope, do not revoke on task completion; revoke on explicit withdrawal. Retain grants only in the authorized chat context, never shared files. This is a terminal adapter, not browser or Windows desktop control.',
   });
   const guarded = fn => async args => { try { return result(await fn(args)); } catch (error) { return { ...result({ error: error.message }), isError: true }; } };
-  server.registerTool('wsl_status', { description: 'Read WSL workspace roots and active job IDs. Does not execute a shell.',
+  server.registerTool('wsl_status', { description: 'Read backend version, default workspace roots, locally registered projects and active job IDs. Extra project access requires wsl_grant_project and grant_id; it never enlarges shared workspace_roots. Does not execute a shell.',
     inputSchema: {}, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, guarded(() => executor.status()));
   server.registerTool('wsl_exec', { description: 'Execute an authorized Bash command in the local WSL sandbox. Can read/write files and access the network. Returns a job ID; use wsl_poll if still running.',
     inputSchema: { grant_id: z.string().uuid().optional(), task_id: z.string().min(1).max(128).optional().describe('Optional task context; not an authorization binding.'), command: z.string().min(1).max(65536), cwd: z.string().min(1),

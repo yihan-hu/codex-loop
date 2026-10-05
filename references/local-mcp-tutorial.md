@@ -279,3 +279,6 @@ Host Profile 中的项目路径只用于定位项目，不修改 connector 的�
 
 
 不修改 Codex Loop 核心时，在聊天中明确说明：“允许本聊天持续访问该项目，任务完成不撤销；连续 3 天未使用授权、主动撤销或 My WSL 重启时清除。”该指令覆盖现有 Skill 中按任务完成撤销的默认要求。后端不识别网页聊天 ID，也看不到最后一条聊天消息；凭据需由当前聊天保留，不能承诺上下文丢失后自动恢复。授权记录只占少量内存，不会维持一个持续运行的沙箱；每条命令结束后释放沙箱进程，连接空闲清理独立执行。
+
+
+WSL 升级后仍报目录拒绝时，不要只看 `workspace_roots`：它只列默认目录，不应因临时授权扩大。应依次核对运行中的 `server_version`、`grant_policy`、本机 `registered_projects` 是否包含项目、聊天是否实际暴露授权工具，以及命令是否传入有效 `grant_id`。Host Profile 里路径正确只证明定位信息已保存。升级脚本现在会重启已运行的 HTTP 后端并验证版本；启动 CMD 复用健康服务，不承担升级职责。完整步骤见 [WSL 升级后排错](https://github.com/yihan-hu/codex-loop/blob/main/integrations/wsl-mcp/README.md#upgrade-succeeded-but-the-project-is-still-denied)。
