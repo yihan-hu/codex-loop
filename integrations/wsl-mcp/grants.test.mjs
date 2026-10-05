@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createGrants } from './grants.mjs';
+import { createGrants, GRANT_IDLE_MS } from './grants.mjs';
 import { createExecutor } from './server.mjs';
 import { startHttp } from './http.mjs';
 const delay = ms => new Promise(r => setTimeout(r, ms));
@@ -16,7 +16,7 @@ function fixture() {
   return { base, root, project, other, projectsFile };
 }
 
-test('grant capabilities require local registration, task match, expiry and private configuration', async () => {
+test('conversation grants require registration, renew three idle days across tasks and keep private configuration', async () => {
   const f = fixture(); let time = 0;
   const g = createGrants({ projectsFile: f.projectsFile, now: () => time });
   try {
@@ -25,10 +25,14 @@ test('grant capabilities require local registration, task match, expiry and priv
     assert.throws(() => g.grant({ project_id: 'readonly', task_id: 'task-a', access: 'read-write' }), /exceeds/);
     const grant = g.grant({ project_id: 'example', task_id: 'task-a', ttl_seconds: 1 });
     assert.equal(g.resolve(grant).root, realpathSync(f.project)); assert.equal(grant.access, 'read-only');
-    assert.throws(() => g.resolve({ ...grant, task_id: 'task-b' }), /mismatch/);
+    assert.equal(g.resolve({ ...grant, task_id: 'task-b' }).root, realpathSync(f.project));
+    assert.equal(grant.idle_timeout_seconds, 3 * 24 * 60 * 60);
+    assert.equal(g.resolve(grant).expires_at, GRANT_IDLE_MS);
+    time = GRANT_IDLE_MS - 1; g.renew(g.resolve(grant));
+    time = GRANT_IDLE_MS + 1; assert.ok(g.resolve(grant));
     assert.ok(!JSON.stringify(g.list()).includes(grant.grant_id));
     let stopped = false; g.attach(g.resolve(grant), () => { stopped = true; });
-    time = 1001; assert.throws(() => g.resolve(grant), /expired/); assert.equal(stopped, true);
+    time = 2 * GRANT_IDLE_MS; assert.throws(() => g.resolve(grant), /expired/); assert.equal(stopped, true);
     const removed = g.grant({ project_id: 'example', task_id: 'task-remove' });
     let removalStopped = false; g.attach(g.resolve(removed), () => { removalStopped = true; });
     const original = (await import('node:fs')).readFileSync(f.projectsFile, 'utf8');
@@ -47,13 +51,14 @@ test('grant capabilities require local registration, task match, expiry and priv
 });
 
 test('sandbox grant exposes only its project, enforces read-only, revokes running jobs and expires', { skip: process.platform !== 'linux' }, async () => {
-  const f = fixture(), grants = createGrants({ projectsFile: f.projectsFile });
+  const f = fixture(), grants = createGrants({ projectsFile: f.projectsFile, idleMs: 1000 });
   const e = createExecutor({ roots: [f.root], runtime: path.join(f.base, 'runtime'), grants });
   try {
     await e.probe();
     await assert.rejects(e.execute({ command: 'pwd', cwd: f.project }), /outside/);
     const a = grants.grant({ project_id: 'example', task_id: 'task-a', access: 'read-write' });
-    await assert.rejects(e.execute({ command: 'pwd', cwd: f.project, ...a, task_id: 'task-b' }), /mismatch/);
+    const nextTask = await e.execute({ command: 'printf NEXT_TASK', cwd: f.project, ...a, task_id: 'task-b', wait_ms: 5000 });
+    assert.equal(nextTask.output, 'NEXT_TASK');
     symlinkSync(f.other, path.join(f.project, 'escape'));
     await assert.rejects(e.execute({ command: 'pwd', cwd: path.join(f.project, 'escape'), ...a }), /outside/);
     const written = await e.execute({ command: `printf OK > result.txt; test ! -e '${f.projectsFile}'; test ! -e '${f.other}'; cat result.txt`, cwd: f.project, ...a, wait_ms: 5000 });
@@ -75,7 +80,7 @@ test('sandbox grant exposes only its project, enforces read-only, revokes runnin
   } finally { await grants.close(); await e.close(); rmSync(f.base, { recursive: true, force: true }); }
 });
 
-test('HTTP task grants survive protocol reconnection without appearing in another session status', { skip: process.platform !== 'linux' }, async () => {
+test('HTTP conversation grants survive protocol reconnection without appearing in another session status', { skip: process.platform !== 'linux' }, async () => {
   const f = fixture(), authorization = 'Bearer local-test-only-not-a-real-secret';
   const app = await startHttp({ roots: [f.root], runtime: path.join(f.base, 'runtime'), authorization, projectsFile: f.projectsFile });
   const headers = { authorization, 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
@@ -90,16 +95,46 @@ test('HTTP task grants survive protocol reconnection without appearing in anothe
   }
   try {
     const first = await init();
-    const grant = (await call('wsl_grant_project', { project_id: 'example', task_id: 'task-a' }, first)).value;
+    const grant = (await call('wsl_grant_project', { project_id: 'example', task_id: 'task-a', ttl_seconds: 3600 }, first)).value;
+    assert.equal(grant.idle_timeout_seconds, 259200);
     await fetch(app.url + '/mcp', { method: 'DELETE', headers: { ...headers, 'mcp-session-id': first } });
     const second = await init();
-    assert.equal((await call('wsl_exec', { command: 'printf RECONNECTED', cwd: f.project, grant_id: grant.grant_id, task_id: grant.task_id }, second)).value.output, 'RECONNECTED');
+    assert.equal((await call('wsl_exec', { command: 'printf RECONNECTED', cwd: f.project, grant_id: grant.grant_id, task_id: 'next-task' }, second)).value.output, 'RECONNECTED');
+    assert.equal((await call('wsl_exec', { command: 'printf STATELESS_GRANT', cwd: f.project, grant_id: grant.grant_id })).value.output, 'STATELESS_GRANT');
     const third = await init();
     assert.equal((await call('wsl_exec', { command: 'pwd', cwd: f.project }, third)).isError, true);
     assert.ok(!JSON.stringify((await call('wsl_status', {}, third)).value).includes(grant.grant_id));
-    await call('wsl_revoke_project', { grant_id: grant.grant_id, task_id: grant.task_id }, third);
-    assert.equal((await call('wsl_exec', { command: 'pwd', cwd: f.project, grant_id: grant.grant_id, task_id: grant.task_id }, second)).isError, true);
+    await call('wsl_revoke_project', { grant_id: grant.grant_id, task_id: 'next-task' }, third);
+    assert.equal((await call('wsl_exec', { command: 'pwd', cwd: f.project, grant_id: grant.grant_id, task_id: 'next-task' }, second)).isError, true);
     // The service has no persistent grant store; restart requires explicit reauthorization.
     assert.throws(() => createGrants({ projectsFile: f.projectsFile }).resolve(grant), /Unknown/);
   } finally { await app.close(); rmSync(f.base, { recursive: true, force: true }); }
+});
+
+test('only admitted execution and matching job polling renew idle expiry; status and rejected calls do not', { skip: process.platform !== 'linux' }, async () => {
+  const f = fixture(); let time = 1000;
+  const grants = createGrants({ projectsFile: f.projectsFile, now: () => time });
+  const e = createExecutor({ roots: [f.root], runtime: path.join(f.base, 'runtime'), grants });
+  try {
+    const grant = grants.grant({ project_id: 'example' });
+    const initialDeadline = grants.resolve(grant).expires_at;
+    time += 1000; e.status();
+    assert.equal(grants.resolve(grant).expires_at, initialDeadline);
+    await assert.rejects(e.execute({ command: 'pwd', cwd: f.other, grant_id: grant.grant_id }), /outside/);
+    assert.equal(grants.resolve(grant).expires_at, initialDeadline);
+    const job = await e.execute({ command: 'printf RENEWED', cwd: f.project, grant_id: grant.grant_id, wait_ms: 5000 });
+    assert.equal(job.output, 'RENEWED');
+    assert.equal(grants.resolve(grant).expires_at, time + GRANT_IDLE_MS);
+    time += 1000;
+    await assert.rejects(e.poll({ job_id: 'unknown', wait_ms: 0 }), /Unknown/);
+    assert.equal(grants.resolve(grant).last_used_at, time - 1000);
+    await e.poll({ job_id: job.job_id, wait_ms: 0 });
+    assert.equal(grants.resolve(grant).expires_at, time + GRANT_IDLE_MS);
+    assert.equal(grants.resolve(grant).last_used_at, time);
+    time += GRANT_IDLE_MS;
+    assert.throws(() => grants.resolve(grant), /expired/);
+    // Reading an already finished diagnostic cannot resurrect an expired grant.
+    await e.poll({ job_id: job.job_id, wait_ms: 0 });
+    assert.throws(() => grants.resolve(grant), /Unknown/);
+  } finally { await grants.close(); await e.close(); rmSync(f.base, { recursive: true, force: true }); }
 });

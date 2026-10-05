@@ -8,11 +8,13 @@ const canonicalLocation = file => {
   return path.join(realpathSync(parent), ...parts);
 };
 const inside = (child, parent) => child === parent || child.startsWith(parent + '/');
+export const GRANT_IDLE_MS = 3 * 24 * 60 * 60 * 1000;
 export const defaultProjectsFile = path.join(homedir(), '.config/codex-loop-wsl/projects.json');
 
 // Local registration is outside the shell sandbox. Grant IDs are bearer
-// capabilities; a task label is not authenticated ChatGPT identity.
-export function createGrants({ projectsFile = defaultProjectsFile, now = Date.now } = {}) {
+// capabilities, not authenticated ChatGPT identities or lifecycle task IDs.
+export function createGrants({ projectsFile = defaultProjectsFile, now = Date.now, idleMs = GRANT_IDLE_MS } = {}) {
+  if (!Number.isInteger(idleMs) || idleMs < 1 || idleMs > GRANT_IDLE_MS) throw new Error('Invalid grant idle interval.');
   const grants = new Map();
   function projects() {
     let file;
@@ -36,9 +38,9 @@ export function createGrants({ projectsFile = defaultProjectsFile, now = Date.no
     grants.delete(id); clearTimeout(grant.timer);
     return Promise.all([...grant.jobs].map(stop => stop()));
   }
-  function get({ grant_id, task_id }) {
+  function get({ grant_id }) {
     const grant = grants.get(grant_id);
-    if (!grant || grant.task_id !== task_id) throw new Error('Unknown grant or task mismatch; request authorization again.');
+    if (!grant) throw new Error('Unknown grant; request authorization again.');
     if (now() >= grant.expires_at) { finish(grant_id); throw new Error('Grant expired; request authorization again.'); }
     try {
       const current = projects()[grant.project_id];
@@ -46,24 +48,31 @@ export function createGrants({ projectsFile = defaultProjectsFile, now = Date.no
     } catch (error) { finish(grant_id); throw error; }
     return grant;
   }
-  const view = grant => ({ grant_id: grant.grant_id, task_id: grant.task_id, project_id: grant.project_id,
-    root: grant.root, access: grant.access, expires_at: new Date(grant.expires_at).toISOString() });
+  function renew(grant) {
+    if (grants.get(grant.grant_id) !== grant) return false;
+    if (now() >= grant.expires_at) { finish(grant.grant_id); return false; }
+    get(grant);
+    clearTimeout(grant.timer);
+    grant.last_used_at = now(); grant.expires_at = grant.last_used_at + idleMs;
+    grant.timer = setTimeout(() => finish(grant.grant_id), idleMs); grant.timer.unref();
+    return true;
+  }
+  const view = grant => ({ grant_id: grant.grant_id, scope: 'conversation-capability', project_id: grant.project_id,
+    root: grant.root, access: grant.access, idle_timeout_seconds: idleMs / 1000, last_used_at: new Date(grant.last_used_at).toISOString(), expires_at: new Date(grant.expires_at).toISOString() });
   return {
     list() { return Object.entries(projects()).map(([project_id, value]) => ({ project_id, access: value.access })); },
     assertHidden(roots) {
       if (roots.some(root => inside(canonicalLocation(projectsFile), realpathSync(root)))) throw new Error('Private project registry must be outside all sandbox roots.');
     },
-    grant({ project_id, task_id, ttl_seconds = 3600, access = 'read-only' }) {
-      if (!/^[A-Za-z0-9_-]{1,100}$/.test(project_id || '') || !/^[A-Za-z0-9_-]{1,128}$/.test(task_id || '')) throw new Error('Invalid project or task ID.');
-      if (!Number.isInteger(ttl_seconds) || ttl_seconds < 1 || ttl_seconds > 86400) throw new Error('Grant lifetime must be 1–86400 seconds.');
+    grant({ project_id, access = 'read-only' }) {
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(project_id || '')) throw new Error('Invalid project ID.');
       const project = projects()[project_id], root = rootFor(project);
       if (!['read-only', 'read-write'].includes(access) || (access === 'read-write' && project.access !== 'read-write')) throw new Error('Requested access exceeds local registration.');
-      const grant = { grant_id: randomUUID(), project_id, task_id, root, access, registered_access: project.access,
-        expires_at: now() + ttl_seconds * 1000, jobs: new Set() };
-      grant.timer = setTimeout(() => finish(grant.grant_id), ttl_seconds * 1000); grant.timer.unref();
-      grants.set(grant.grant_id, grant); return view(grant);
+      const grant = { grant_id: randomUUID(), project_id, root, access, registered_access: project.access,
+        last_used_at: now(), expires_at: now() + idleMs, jobs: new Set() };
+      grants.set(grant.grant_id, grant); renew(grant); return view(grant);
     },
-    resolve: get,
+    resolve: get, renew,
     attach(grant, stop) { grant.jobs.add(stop); return () => grant.jobs.delete(stop); },
     async revoke(args) { get(args); await finish(args.grant_id); return { revoked: true, grant_id: args.grant_id }; },
     async close() { await Promise.all([...grants.keys()].map(finish)); },

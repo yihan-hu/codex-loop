@@ -271,8 +271,11 @@ delete env.MCP_COMMAND;
 
 Host Profile 中的项目路径只用于定位项目，不修改 connector 的文件系统权限。聊天中的当前任务授权也不会自动修改 WSL 的 `workspace_roots`。当前 WSL adapter 会在启动命令前核对 `cwd`，并只将默认 roots、有效临时授权的项目和生命周期 runtime 挂入 bubblewrap 沙箱；`cwd is outside the configured workspace roots` 表示目录未开放，不表示连接离线或 OneDrive 同步失败。更换 cwd、软链接或改用绝对路径不能作为绕过沙箱的办法。
 
-更新后的 WSL adapter 提供 `wsl_grant_project` 和 `wsl_revoke_project`，具体步骤见 [WSL 临时项目授权](https://github.com/yihan-hu/codex-loop/blob/main/integrations/wsl-mcp/README.md#temporarily-authorize-another-project)。先在本机用 `projects.py` 把项目登记到固定私有文件 `~/.config/codex-loop-wsl/projects.json`，再在用户明确授权后按任务申请临时凭据。旧安装需先更新后端；Host Profile 登记不会替代本机登记。若采用安装时的 `--root` 配置开放其他项目目录，它会成为持久配置，并对使用这些 roots 的连接生效，不能描述为仅给当前任务的临时授权。只配置明确的项目目录，不因为一个项目需要访问就开放整个 Windows 用户目录或整块 OneDrive。
+更新后的 WSL adapter 提供 `wsl_grant_project` 和 `wsl_revoke_project`，具体步骤见 [WSL 临时项目授权](https://github.com/yihan-hu/codex-loop/blob/main/integrations/wsl-mcp/README.md#temporarily-authorize-another-project)。先在本机用 `projects.py` 把项目登记到固定私有文件 `~/.config/codex-loop-wsl/projects.json`，再在用户明确授权当前聊天可持续访问后申请临时凭据。旧安装需先更新后端；Host Profile 登记不会替代本机登记。若采用安装时的 `--root` 配置开放其他项目目录，它会成为持久配置，并对使用这些 roots 的连接生效，不能描述为仅给当前任务的临时授权。只配置明确的项目目录，不因为一个项目需要访问就开放整个 Windows 用户目录或整块 OneDrive。
 
-临时授权区分本机允许授予的目录与当前任务已启用的目录：先由用户在本机登记可授权目录；再将授权绑定到明确的任务，记录读写范围、到期时间，并提供撤销。不得仅信任 LLM 在工具参数中提交的“用户已同意”标记。HTTP 会话可能重建，无会话 ID 请求还会共用 executor，因此不能直接把协议会话当作任务身份，也不能修改所有任务共享的 roots 来实现临时授权。
+临时授权区分本机允许授予的目录与当前聊天持有访问凭据的目录：先由用户在本机登记可授权目录；再按用户明确的聊天授权范围发放随机访问凭据，记录读写范围、闲置到期时间，并提供撤销。不得仅信任 LLM 在工具参数中提交的“用户已同意”标记。HTTP 会话可能重建，无会话 ID 请求还会共用 executor，因此不能直接把协议会话当作任务身份，也不能修改所有任务共享的 roots 来实现临时授权。
 
-到期或撤销必须处理仍在运行的命令，因为已经启动的沙箱不会随配置变化自动收回挂载。断点续跑需要核对任务记录并重新确认有效授权；从 Drive 恢复项目路径不能恢复执行权限。默认有效期为 1 小时，最长 24 小时；到期自动停止相关命令，任务结束由助手显式撤销。授权凭据在服务内存中跨协议连接有效，后端重启后必须重新授权。任务 ID 本身不能证明聊天身份，随机凭据也不能写进 Drive、Git 或共享任务文件。
+到期或撤销必须处理仍在运行的命令，因为已经启动的沙箱不会随配置变化自动收回挂载。断点续跑需要核对任务记录并重新确认有效授权；从 Drive 恢复项目路径不能恢复执行权限。连续 3 天未使用授权后到期；通过凭据执行命令或读取对应命令输出会从该次调用重新计时，状态检查和聊天消息不续期。到期自动停止相关命令，同一聊天新开任务可继续复用凭据，不因一个任务结束而自动撤销；明确要求撤销时由助手调用撤销工具。授权凭据在服务内存中跨协议连接有效，后端重启后必须重新授权。任务 ID 本身不能证明聊天身份，随机凭据也不能写进 Drive、Git 或共享任务文件。
+
+
+不修改 Codex Loop 核心时，在聊天中明确说明：“允许本聊天持续访问该项目，任务完成不撤销；连续 3 天未使用授权、主动撤销或 My WSL 重启时清除。”该指令覆盖现有 Skill 中按任务完成撤销的默认要求。后端不识别网页聊天 ID，也看不到最后一条聊天消息；凭据需由当前聊天保留，不能承诺上下文丢失后自动恢复。授权记录只占少量内存，不会维持一个持续运行的沙箱；每条命令结束后释放沙箱进程，连接空闲清理独立执行。

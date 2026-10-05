@@ -79,8 +79,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
     job.killTimer.unref();
   };
   async function execute({ command, cwd, timeout_seconds = 120, wait_ms = 1000, grant_id, task_id }) {
-    if (Boolean(grant_id) !== Boolean(task_id)) throw new Error('Provide both grant_id and task_id.');
-    const grantArgs = { grant_id, task_id };
+    const grantArgs = { grant_id };
     const grant = grant_id ? grants.resolve(grantArgs) : null;
     if (grant && [...roots, runtime].some(root => grant.root === root || grant.root.startsWith(root + '/') || root.startsWith(grant.root + '/'))) throw new Error('Project is already exposed by a default root; temporary grants cannot restrict default roots.');
     if (!command || command.length > 65536 || command.includes('\0')) throw new Error('Invalid command.');
@@ -92,10 +91,11 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
       if (jobs.size < MAX_HISTORY) break;
       if (job.state !== 'running') jobs.delete(id);
     }
+    if (grant && !grants.renew(grant)) throw new Error('Grant expired; request authorization again.');
     const child = spawn('/usr/bin/bwrap', [...sandboxArgs(cwd, grant), command], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     budget.active++;
     const job = { id: randomUUID(), child, cwd, state: 'running', exitCode: null, signal: null,
-      output: Buffer.alloc(0), base: 0, total: 0, timedOut: false };
+      grant, output: Buffer.alloc(0), base: 0, total: 0, timedOut: false };
     jobs.set(job.id, job);
     const detachGrant = grant ? grants.attach(grant, () => { terminate(job); return job.done; }) : () => {};
     const append = chunk => {
@@ -133,7 +133,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
     grant: grants.grant, revoke: grants.revoke,
     async poll({ job_id, offset = 0, wait_ms = 1000 }) {
       if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(wait_ms) || wait_ms < 0 || wait_ms > 5000) throw new Error('Invalid offset or wait.');
-      const job = lookup(job_id); await Promise.race([job.done, sleep(wait_ms)]); return snapshot(job, offset);
+      const job = lookup(job_id); if (job.grant) grants.renew(job.grant); await Promise.race([job.done, sleep(wait_ms)]); return snapshot(job, offset);
     },
     async stop({ job_id }) { const job = lookup(job_id); terminate(job); await Promise.race([job.done, sleep(2000)]); return snapshot(job); },
     async close() { const active = [...jobs.values()].filter(job => job.state === 'running'); active.forEach(terminate); await Promise.all(active.map(job => job.done)); },
@@ -141,14 +141,14 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
 }
 
 export function createServer(executor) {
-  const server = new McpServer({ name: 'codex-loop-wsl', version: '0.2.0' }, {
-    instructions: 'This connection executes on the user\'s local WSL computer. Use this host only when selected by the user and authorized for the current task. Call wsl_status to observe roots; scope each command to the task\'s bound repository. Shells have network access and can mutate authorized roots. Never read credentials. If the task uses a lifecycle runtime, keep its commands and state on this same WSL host. Poll existing job IDs; never duplicate ambiguous writes. This is a terminal adapter, not browser or Windows desktop control.',
+  const server = new McpServer({ name: 'codex-loop-wsl', version: '0.3.0' }, {
+    instructions: 'This connection executes on the user\'s local WSL computer. Use this host only when selected by the user and authorized for the current task. Call wsl_status to observe roots; scope each command to the task\'s bound repository. Shells have network access and can mutate authorized roots. Never read credentials. If the task uses a lifecycle runtime, keep its commands and state on this same WSL host. Poll existing job IDs; never duplicate ambiguous writes. Project grants are private bearer capabilities reusable across tasks in the authorized conversation. Successful grant-backed execution or polling renews three days of idle validity; status and discovery do not. Backend restart clears all grants. When the user authorizes this conversation scope, do not revoke on task completion; revoke on explicit withdrawal. Retain grants only in the authorized chat context, never shared files. This is a terminal adapter, not browser or Windows desktop control.',
   });
   const guarded = fn => async args => { try { return result(await fn(args)); } catch (error) { return { ...result({ error: error.message }), isError: true }; } };
   server.registerTool('wsl_status', { description: 'Read WSL workspace roots and active job IDs. Does not execute a shell.',
     inputSchema: {}, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, guarded(() => executor.status()));
   server.registerTool('wsl_exec', { description: 'Execute an authorized Bash command in the local WSL sandbox. Can read/write files and access the network. Returns a job ID; use wsl_poll if still running.',
-    inputSchema: { grant_id: z.string().uuid().optional(), task_id: z.string().min(1).max(128).optional(), command: z.string().min(1).max(65536), cwd: z.string().min(1),
+    inputSchema: { grant_id: z.string().uuid().optional(), task_id: z.string().min(1).max(128).optional().describe('Optional task context; not an authorization binding.'), command: z.string().min(1).max(65536), cwd: z.string().min(1),
       timeout_seconds: z.number().int().min(1).max(3600).default(120), wait_ms: z.number().int().min(0).max(5000).default(1000) },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } }, guarded(executor.execute));
   server.registerTool('wsl_poll', { description: 'Observe a previously started job without restarting it. Use next_offset from the previous result to read new output. Offsets are bytes; truncated output is reported.',
@@ -156,11 +156,11 @@ export function createServer(executor) {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, guarded(executor.poll));
   server.registerTool('wsl_stop', { description: 'Stop only a job started by this MCP server. Terminates its sandbox and child processes.',
     inputSchema: { job_id: z.string().uuid() }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, guarded(executor.stop));
-  server.registerTool('wsl_grant_project', { description: 'After explicit user authorization, temporarily enable a locally registered project for a task. Returns a private bearer grant; pass it and task_id to wsl_exec. No arbitrary paths. Never expose the grant to another task.',
-    inputSchema: { access: z.enum(['read-only', 'read-write']).default('read-only'), project_id: z.string().min(1).max(100), task_id: z.string().min(1).max(128), ttl_seconds: z.number().int().min(1).max(86400).default(3600) },
+  server.registerTool('wsl_grant_project', { description: 'After explicit user authorization, enable a locally registered project for reuse in this conversation. Returns a private bearer grant; pass grant_id to wsl_exec across tasks. Three days idle expiry renews on execution/polling; restart clears it. No arbitrary paths. Do not share with other chats.',
+    inputSchema: { access: z.enum(['read-only', 'read-write']).default('read-only'), project_id: z.string().min(1).max(100), task_id: z.string().min(1).max(128).optional().describe('Optional task context; not an authorization binding.') },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }, guarded(executor.grant));
-  server.registerTool('wsl_revoke_project', { description: 'Revoke a task grant and terminate its running commands. Project files remain. Reauthorize explicitly for continuation.',
-    inputSchema: { grant_id: z.string().uuid(), task_id: z.string().min(1).max(128) },
+  server.registerTool('wsl_revoke_project', { description: 'Explicitly revoke a conversation project grant and terminate its running commands. Project files remain. Task completion alone does not require revocation for conversation-scoped authorization.',
+    inputSchema: { grant_id: z.string().uuid(), task_id: z.string().min(1).max(128).optional().describe('Optional task context; not an authorization binding.') },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } }, guarded(executor.revoke));
   return server;
 }
