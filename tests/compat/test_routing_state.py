@@ -213,7 +213,8 @@ class RoutingStateTests(unittest.TestCase):
             needs_grant = route_check(action="local_repository", session_id=sid)
             self.assertFalse(needs_grant["allowed"])
             self.assertIn("current_conversation_workspace_grant", needs_grant["requirements"])
-            allowed = route_check(action="local_repository", session_id=sid, workspace_granted=True)
+            allowed = route_check(action="local_repository", session_id=sid, workspace_granted=True,
+                                  local_root="/explicit/work", dispatch_connector="Remote Desktop Commander")
             self.assertTrue(allowed["allowed"])
             self.assertEqual(allowed["effective_workspace"], "local")
         finally:
@@ -227,7 +228,7 @@ class RoutingStateTests(unittest.TestCase):
             self.assertEqual(result["config_role"], "codex_loop_bootstrap_read_only")
             self.assertFalse(result["config_mutation_allowed"])
             self.assertEqual(result["allowed_config_paths"], [
-                "~/.codex-loop/host.json", "~/.codex-loop/workspace-registry.json",
+                "~/.codex-loop/host.json",
             ])
             self.assertIn("not an authorization bypass", result["rule"])
         finally:

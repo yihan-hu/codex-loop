@@ -100,7 +100,7 @@ Once Local mode is selected, later repository tasks in the same conversation kee
 
 ## Adaptive progress visibility
 
-Codex Loop increases user-visible progress for substantive multi-step objectives by default so a long Web task does not look stalled. The built-in enhanced policy uses an approximate **15-second / 3-substantive-tool-call** cadence (whichever comes first), plus immediate concise updates for material findings or blockers. Lightweight tasks remain low-noise. This is host-facing guidance: ChatGPT owns actual message timing and tool dispatch.
+Codex Loop uses the host’s standard progress cadence for substantive multi-step work, with concise material findings and blockers. An explicit enhanced preference uses an approximate **15-second / 3-substantive-tool-call** cadence. Lightweight tasks remain low-noise. This is host-facing guidance: ChatGPT owns actual message timing and tool dispatch.
 
 The preference is user-specific and is never committed. `python3 scripts/codex_loop.py progress-config` shows the effective values; `progress-config --mode enhanced --interval-seconds 20 --tool-call-interval 4` writes overrides atomically to `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`). The supported modes are `enhanced`, `standard`, and `quiet`; upfront planning and material-event updates can be toggled independently. `progress-config --reset` removes only the progress override and returns to built-in defaults. See `references/progress-visibility.md`.
 
@@ -126,7 +126,7 @@ Codex Loop tracks not only source lineage but also behavioral/control-plane alig
 
 Local mode requires a connected file/shell MCP app. Codex Loop prefers registered custom MCPs in configured order, then uses Remote Desktop Commander (RDC) when no custom connection is usable. A manually selected connection is exact and never silently falls back. The end-to-end verified reference path is macOS + RDC + native Git. Windows + RDC + native Git is explicitly allowed as a best-effort/beta repository host even before full parity testing; Windows-only gaps must be surfaced per operation instead of rejecting Local mode globally.
 
-Choose one absolute directory to be your persistent local workspace root. Codex Loop calls this `LOCAL_ROOT`. For example:
+Choose one absolute default workspace directory for each execution environment (keep Mac, Windows, and each WSL distribution separate). Codex Loop calls this `LOCAL_ROOT`. For example:
 
 ```text
 /Users/alice/PiWork
@@ -147,14 +147,15 @@ See `references/local-mode-setup.md` for the exact agent-side resolution and saf
 
 Start with the [local MCP setup tutorial](references/local-mcp-tutorial.md) to connect and verify your computer. Then register the connection and choose a default below. The tutorial distinguishes the observed no-top-up setup from any guarantee about other accounts or future pricing.
 
-`~/.codex-loop/host.json` is outside the repository and is never pushed or included in the Skill ZIP. It stores connector locators, their priority, and an optional default computer; it contains no API keys or permission grants. Existing `host-config` commands edit it, and ordinary language such as “remember this Mac as my default”, “use Web this time”, or “use my second MCP this time” maps to saving or overriding those settings.
+`~/.codex-loop/host.json` is outside the repository and is never pushed or included in the Skill ZIP. It stores connector locators, their priority, a default execution environment, and per-environment workspace/project/runtime/state locations; it contains no API keys or permission grants. Existing `host-config` commands edit it, and ordinary language such as “remember this Mac as my default”, “use Web this time”, or “use my second MCP this time” maps to saving or overriding those settings.
 
 ```bash
 python3 scripts/codex_loop.py host-config set execution.connections '[
-  {"name":"my-mac","computer":"mac","connector":"My Mac","kind":"mcp","local_root":"/absolute/path/to/work"},
+  {"name":"my-mac","computer":"mac","connector":"My Mac","kind":"mcp"},
   {"name":"backup-mac","computer":"mac","connector":"My other MCP","kind":"mcp"},
   {"name":"rdc-mac","computer":"mac","connector":"Remote Desktop Commander","kind":"rdc"}
 ]'
+python3 scripts/codex_loop.py host-config set workspace.environments '{"mac":{"default_root":"/absolute/path/to/work"}}'
 python3 scripts/codex_loop.py host-config set execution.default_target mac
 python3 scripts/codex_loop.py execution-resolve --connection backup-mac \
   --available-connections-json '["backup-mac"]'
@@ -182,58 +183,35 @@ If `LOCAL_ROOT` is missing or the selected connector has not authorized it, Loca
 
 ### Remembering `LOCAL_ROOT` across conversations
 
-Codex Loop now prefers a **Known Workspace Registry** for stable local paths. The registry lives at `~/.codex-loop/workspace-registry.json` on the host. Register a development root once:
-
-```bash
-python3 scripts/codex_loop.py workspace-register \
-  --name piwork \
-  --path "/absolute/path/to/PiWork" \
-  --kind development_root
-```
-
-Then `~/.codex-loop/host.json` can remember only the preferred alias:
+Save each environment's default root in `workspace.environments` in the private Host Profile, then follow Drive synchronization for cross-chat recovery:
 
 ```json
 {
-  "schema_version": 1,
-  "default_local_workspace": "piwork"
+  "schema_version": 4,
+  "workspace": {
+    "environments": {"laptop": {"default_root": "/absolute/path/to/work"}}
+  }
 }
 ```
 
-Older installations may still contain `"default_local_root"`. Codex Loop treats that as a compatibility/migration input after you explicitly choose Local mode; it does not itself select Local mode or grant access. Register the path as `piwork` and prefer `default_local_workspace` afterward.
+Current-task authorized directories and explicitly named saved projects override this default. Profiles contain locators, never grants or observed capability claims. Keep all personal configuration outside repositories and Skill packages; an older profile requires an explicit private-profile update.
 
-The host-local config and registry are deliberately outside every repository and outside the packaged Skill. Git commits, GitHub pushes, Web-mode Git bundles, and `skill.zip` must not include them. Do not put tokens, passwords, cookies, OAuth credentials, approval state, or session-grant nonces in either file.
+### Remembering local projects
 
-### Remembering local workspaces without permanent access
-
-You can register a frequently used repository once:
+Save a frequently used project in the current private Host Profile, then synchronize
+that same Drive file through `references/host-profile-drive.md`:
 
 ```bash
-python3 scripts/codex_loop.py workspace-register \
-  --name epiagent \
-  --path "/absolute/path/to/EpiAgent" \
-  --kind repository
+CODEX_LOOP_HOME=SESSION_PRIVATE_HOME python3 scripts/codex_loop.py host-project set \
+  --computer laptop --name epiagent --path "/absolute/path/to/EpiAgent"
 ```
 
-That makes the workspace **KNOWN**, not authorized. In a later conversation you can simply say:
-
-```text
-Give EpiAgent path permission.
-```
-
-Codex Loop records that explicit grant only for the current conversation. You do not need to paste the absolute path again. A new conversation keeps the alias/path knowledge but starts with no usable grants.
-
-The three states stay separate:
-
-```text
-KNOWN    I know where the workspace is.
-GRANTED  This conversation may use that exact registered workspace.
-BOUND    The current lifecycle uses one canonical Git working tree.
-```
-
-A request such as `modify EpiAgent` does not by itself grant the path. If the alias is registered but not granted, Codex Loop asks for current-conversation path permission instead of asking for the path again. Host/selected-connector authorization is still required after the semantic grant, and host denial always wins.
-
-For Local mode, the access model is `Primary Local Root + Session Granted Roots = Effective Local Roots`. Multiple roots can be accessible in one conversation, but each task still binds to one canonical Git working tree. See `references/workspace-registry.md`.
+This changes only `workspace.environments.laptop.projects.epiagent` and preserves
+other settings, including the Web default. A later chat can resolve this alias
+without asking for its path again. Saved locations do not grant access or move a
+running lifecycle. The local workspace registry is only a temporary conversation
+lookup derived from the current profile, never a long-term location source. See
+`references/workspace-registry.md`.
 
 ## Workspace mode versus interaction target
 
@@ -510,3 +488,5 @@ See `ATTRIBUTION.md`, `LICENSE`, and `NOTICE` for provenance and licensing infor
 ### Preferences across new chats
 
 At the first Codex Loop invocation in each new chat, connected Google Drive restores preferences from the fixed private path **My Drive → `codex-loop/settings/host-profile.json`**, then selects Web or the saved computer. Names are fixed; only the connected user's Drive and settings differ. With no Drive or no saved profile, Web uses defaults. Recovery failures and duplicate files are reported. Tasks are never automatically resumed by preference recovery. See [setup, recovery, and save verification](references/host-profile-drive.md). Local user settings and credentials are excluded from Git and Skill packages.
+
+Private Host Profile schema v4 uses `workspace.environments[computer]` for directory locators and `interaction.language` for language preference. Empty profiles default to Web with no connections or workspace paths. Local directory-dependent work blocks without a task directory or environment default, and all chosen paths still require current task authority and actual connector access. See [host-profile.md](references/host-profile.md) for the configuration contract.

@@ -49,6 +49,26 @@ class HostProfileSyncTests(unittest.TestCase):
         self.assertEqual(resolve_execution(target='web')['workspace_mode'], 'web')
         self.assertEqual(host_config_show()['drive']['cache_folder_paths'], [])
 
+    def test_environment_locations_and_language_survive_cross_chat_without_grants(self):
+        host_config_set('execution.connections', [
+            dict(name='mac', computer='mac', connector='My Mac', kind='mcp'),
+            dict(name='wsl', computer='wsl', connector='My WSL', kind='mcp')])
+        locations = {'mac': {'default_root': '/mac/work', 'projects': {'demo': '/mac/demo'}},
+                     'wsl': {'default_root': '/mnt/c/Work Area', 'state_directory': '/wsl/state'}}
+        host_config_set('workspace.environments', locations)
+        host_config_set('interaction.language', 'Chinese')
+        path, _ = self.export()
+        os.environ['CODEX_LOOP_HOME'] = str(self.root / 'restored-chat')
+        imported = import_profile(drive_root_id='current-user-root', input_path=str(path))
+        self.assertFalse(imported['authorization_restored'])
+        self.assertEqual(resolve_execution()['workspace_mode'], 'web')
+        profile = host_config_show()
+        self.assertEqual(profile['interaction']['language'], 'Chinese')
+        for environment, original in locations.items():
+            self.assertEqual(profile['workspace']['environments'][environment]['default_root'], original['default_root'])
+        resolved = resolve_execution(target='wsl', available_connections=['wsl'])
+        self.assertEqual(resolved['local_connection']['locations']['default_root'], '/mnt/c/Work Area')
+
     def test_wrong_account_corruption_unknown_fields_leave_existing_untouched(self):
         host_config_set('execution.default_target', 'web')
         path, _ = self.export()

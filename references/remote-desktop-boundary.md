@@ -74,11 +74,11 @@ When `interaction_target` is `local_chrome` or `local_mac_gui`, local connector 
 - Keep temporary interaction artifacts ephemeral and delete them after verification when practical.
 - macOS Accessibility, Screen Recording, browser-profile, and similar permissions remain host-owned; never change them silently.
 
-The host-local files `~/.codex-loop/host.json` and `~/.codex-loop/workspace-registry.json` are the only paths allowed by the routed `local_host_config` read-only action. They are not repository workspaces and must never contain credentials or persistent permission state. Reading them does not select Local mode, grant repository access, or authorize configuration mutation.
+The host-local file `~/.codex-loop/host.json` is the only path allowed by the routed `local_host_config` read-only action. It is not a repository workspace and must never contain credentials or persistent permission state. Reading it does not select Local mode, grant repository access, or authorize configuration mutation.
 
 ## Establishing a workspace
 
-If a repository alias is already registered, resolve it through the registry; do not rediscover it by scanning the machine. If the path is not registered, search only within an already resolved/authorized primary root or use an exact path supplied by the user. Once a repository is selected, bind the task to that repository's Git working tree as the canonical workspace.
+If a repository alias is saved, resolve it from the current controller Host Profile for the selected environment, then materialize the temporary conversation lookup; do not rediscover it by scanning the machine. If the path is not registered, search only within an already resolved/authorized primary root or use an exact path supplied by the user. Once a repository is selected, bind the task to that repository's Git working tree as the canonical workspace.
 
 An illustrative layout is:
 

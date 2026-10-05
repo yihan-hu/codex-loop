@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .host_config import execution_config
+from .host_config import execution_config, environment_locations, validate_absolute_locator
 
 
 def resolve_execution(
@@ -51,7 +51,35 @@ def resolve_execution(
     if not candidates:
         raise RuntimeError("selected local target has no available connection; do not switch computers or Web/Local mode")
     selected = dict(candidates[0])
+    selected["locations"] = environment_locations(selected["computer"])
     return {"workspace_mode": "local", "computer": selected["computer"],
             "local_connection": selected,
             "basis": "explicit_user_target" if explicit else "saved_default",
             "status": "needs_observation" if available_connections is None else "resolved"}
+
+
+def resolve_local_root(selected: dict[str, Any], *, local_root: str | None = None,
+                       project: str | None = None, workspace_granted: bool = False) -> dict[str, Any]:
+    """Resolve locators only. The caller observes authorization and the remote directory."""
+    if local_root is not None and project is not None:
+        raise ValueError("choose a task directory or a project alias, not both")
+    locations = selected["locations"]
+    if local_root is not None:
+        root = validate_absolute_locator(local_root, "task local_root")
+        basis = "current_task_directory"
+    elif project is not None:
+        projects = environment_locations(selected["computer"])["projects"]
+        if project not in projects:
+            raise ValueError(f"unknown project {project!r} on environment {selected['computer']!r}")
+        root = projects[project]
+        basis = "saved_project"
+    else:
+        root = locations["default_root"]
+        basis = "saved_environment_default"
+    requirements = []
+    if root is None:
+        requirements.append("specify_task_directory_or_save_environment_default_workspace")
+    if not workspace_granted:
+        requirements.append("current_task_path_authorization_and_connector_directory_verification")
+    return {"local_root": root, "local_root_basis": basis, "requirements": requirements,
+            "path_authorization_persisted": False}

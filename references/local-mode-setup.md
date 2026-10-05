@@ -5,7 +5,7 @@ Use this reference after Local selection from the current request or saved execu
 Codex Loop separates three states:
 
 ```text
-KNOWN    persistent registry identity/location
+KNOWN    current Host Profile identity/location
 GRANTED  explicit authorization for the current conversation
 BOUND    one lifecycle's canonical Git working tree
 ```
@@ -30,7 +30,7 @@ Windows support here is deliberately permissive at the routing layer and conserv
 
 A resolved Local objective must create and resume its Codex Loop lifecycle on the local host, not in the transient ChatGPT host filesystem. The authoritative state root is the local host's `CODEX_LOOP_HOME/runtime`, normally `~/.codex-loop/runtime`.
 
-Use a runtime-owned source cache at `~/.codex-loop/runtime-src`. It is infrastructure, not the user's project checkout. The consumer Skill intentionally carries no maintainer-repository identity, so the host must resolve the canonical public Codex Loop source URL from the current distribution/public repository metadata (or obtain it from the user) before first Local bootstrap. Pass that externally resolved URL as `CODEX_LOOP_SOURCE_URL`; do not persist it as lifecycle authority. If the cache already exists, require it to be clean and update it only by fast-forward. On the verified macOS path:
+Use the pinned environment’s configured `runtime_directory` and `state_directory` from `host-profile.md`; null values use `~/.codex-loop/runtime-src` and `~/.codex-loop`. Expand and verify them on that environment. The example below illustrates the standard locations; substitute configured paths and pass the selected state directory as command-scoped `CODEX_LOOP_HOME` for every lifecycle command. Use a runtime-owned source cache at `~/.codex-loop/runtime-src` by default. It is infrastructure, not the user's project checkout. The consumer Skill intentionally carries no maintainer-repository identity, so the host must resolve the canonical public Codex Loop source URL from the current distribution/public repository metadata (or obtain it from the user) before first Local bootstrap. Pass that externally resolved URL as `CODEX_LOOP_SOURCE_URL`; do not persist it as lifecycle authority. If the cache already exists, require it to be clean and update it only by fast-forward. On the verified macOS path:
 
 ```bash
 RUNTIME="$HOME/.codex-loop/runtime-src"
@@ -55,7 +55,7 @@ A bound repository may contain task-owned ephemeral scratch such as `<worktree>/
 
 `LOCAL_ROOT` remains the logical name for the **primary** local development root selected for Local mode. It is not a hard-coded author path and not necessarily a persistent operating-system environment variable.
 
-V1 expands the access model to:
+The access model is:
 
 ```text
 Primary Local Root + Session Granted Roots = Effective Local Roots
@@ -65,12 +65,12 @@ The primary root is the workspace root chosen when Local mode is resolved. Addit
 
 Multiple effective roots do not merge repositories. Each lifecycle still binds to exactly one canonical Git working tree. A grant for one repository never grants its parent or sibling repositories.
 
-## Persistent workspace registry
+## Temporary conversation workspace lookup
 
-Frequently used local roots and repositories belong in the host-local registry:
+Saved project locations and default roots belong to the per-environment Host Profile. The host-local registry materializes saved aliases for grant lookup and can hold additional conversation-only roots:
 
 ```text
-~/.codex-loop/workspace-registry.json
+platform temporary codex-loop/workspace-sessions/<conversation>.registry.json
 ```
 
 Example logical entries:
@@ -80,45 +80,21 @@ piwork   -> /absolute/path/to/PiWork     kind=development_root
 epiagent -> /absolute/path/to/EpiAgent   kind=repository
 ```
 
-The registry stores identity/location only. It never stores authorization, trust, or cross-conversation grants. Knowing a registry alias never selects Local mode by itself.
+The registry stores derived identity/location for this conversation only. It is never a long-term source and never reads the old home-directory registry. It never stores authorization, trust, or cross-conversation grants. Knowing a registry alias never selects Local mode by itself.
 
-Registering PiWork through the same registry removes the need for PiWork-specific path logic. Prefer a stable alias such as `piwork` for the primary development root and repository aliases such as `epiagent` for fixed repositories.
+Materialize the selected saved location on its own environment before using registry grants. Do not edit a profile-defined alias independently in this registry; reconcile it from the profile and invalidate a stale grant. No PiWork-specific path logic is needed.
 
 ## Resolving the primary root
 
-Resolve the primary Local root in this order, but only after Local repository development is resolved:
+Resolve the root from the pinned environment profile as described in `host-profile.md`: current-task authorized absolute directory (including an existing lifecycle binding), explicitly named saved project, then the environment's `default_root`. Current task choice wins over saved defaults. Check the chosen directory and canonical realpath through the pinned connector and confirm task/path authority before access.
 
-1. Reuse the exact primary root already established on the same computer earlier in the current conversation. A computer change requires fresh root resolution and grants.
-2. If the user names a registered workspace alias and explicitly grants it for this conversation, resolve that alias through the workspace registry and confirm local connector access.
-3. Otherwise, use an absolute root explicitly named by the user when they select Local mode, optionally registering it when they ask to remember it.
-4. Otherwise, read the selected computer’s private Host Profile `~/.codex-loop/host.json`. Do not reuse a workspace alias/registry from the profile-owner computer when execution is on a different computer. Prefer `workspace.default_local_workspace`; schema-v1 `default_local_workspace` and `default_local_root` are migration inputs only. Reading the alias is allowed as a global preference, but resolving it to a local filesystem path still begins only after Local-mode resolution.
-5. Otherwise use the selected connection’s `local_root` locator, after the usual path grant and host check. If absent, use a single connector-authorized root from tool metadata only after confirming it is the intended development root.
-6. Otherwise ask once for the exact absolute root and require the user to authorize that root in local connector.
-
-Do not infer a root from a repository author's home directory, a stale prior conversation, a downloaded archive path, or arbitrary filesystem visibility outside the authorized boundary.
+If none is available, block directory-dependent execution and ask for a task directory or a saved environment default. Never use shell cwd, home, a connector's allowed root, another environment's registry, or a disk search to invent a replacement. Missing, non-directory, or connector-denied locations also block; a profile entry never grants access.
 
 ## Host-local persistent configuration
 
-The optional config path is `~/.codex-loop/host.json`. It belongs to the user's computer, not to any repository and not to the packaged Skill.
+Use schema v4 `workspace.environments`, keyed by execution environment ID. The default root is a direct locator shared by that environment's connections. Keep Mac and WSL separate even on one computer. See `host-profile.md` for fields, defaults, and Drive recovery/save. No global workspace alias, connection-specific root, or legacy schema fallback remains.
 
-The current schema is the unified v3 Private Host Profile described in `host-profile.md`; the workspace preference is nested:
-
-```json
-{
-  "schema_version": 3,
-  "workspace": {
-    "default_local_workspace": "piwork"
-  }
-}
-```
-
-Schema-v1 root `default_local_workspace` and historical `default_local_root` remain compatibility/migration inputs only; neither selects Local mode or grants access. Migrate a stable direct path by registering it as `piwork` with `kind=development_root`, then use `workspace.default_local_workspace`.
-
-Store only non-sensitive preferences/locators. `host.json` may also contain progress, browser, Web-publish, and persistence preferences; see `host-profile.md`. Never store observed capability claims, Git/OAuth tokens, passwords, cookies, connector credentials, approval tokens, session grant nonces, or other secrets in this file.
-
-Because host-local files live outside the repository, normal Git commits, Web-mode source transport artifacts, Local-mode `git push`, and Skill packaging must not include them. Do not copy them into a repository merely to make them easier to discover.
-
-A new conversation uses the saved `execution.default_target`, otherwise Web. A saved computer choice selects location, while path grants and current-task scope remain separate. Read `local-connections.md` before Local admission.
+A new conversation uses the saved `execution.default_target`, otherwise Web. Explicit current selection overrides it; an existing lifecycle retains its bound workspace. Profile reads never persist authorization or observed capabilities, and personal paths stay outside Git and packages.
 
 ## Conversation grants
 
@@ -128,9 +104,9 @@ When an alias is KNOWN but not GRANTED, do not ask the user to repeat the absolu
 Give EpiAgent path permission.
 ```
 
-After observing explicit authorization, record it with `workspace-grant`. The first grant returns an opaque session nonce; keep that nonce only in the current conversation context and pass it to later `workspace-resolve` or `workspace-grants` operations. Do not write the nonce into repository files, `host.json`, the registry, or user memory.
+After observing explicit authorization, record it with `workspace-grant`. The first materialization returns an opaque session nonce; keep that nonce only in the current conversation context and pass it to later `workspace-resolve` or `workspace-grants` operations. Do not write the nonce into repository files, `host.json`, the registry, or user memory.
 
-A new conversation has no old nonce, so its effective grant set begins empty even though the registry persists.
+A new conversation has no old nonce, so its effective grant set begins empty while saved project locations remain in Host Profile.
 
 Requests such as `modify EpiAgent`, `look at EpiAgent`, or `you know the EpiAgent path` do not themselves grant filesystem access. Registration and a task request are not authorization evidence.
 
@@ -158,32 +134,35 @@ Before using a registered workspace, resolve its real path, pass only host-obser
 
 Keep repository discovery, clones, worktrees, source edits, tests, builds, packaging, scratch data, release staging, receipts, and terminal/Git operations inside the Effective Local Roots. A task still uses only its bound canonical working tree as source baseline.
 
-If a registered path no longer exists or its realpath changed through a symlink, fail closed. Do not search the user's home directory or whole disk to guess a replacement. Re-register the exact new path.
+If a registered path no longer exists or its realpath changed through a symlink, fail closed. Do not search the user's home directory or whole disk to guess a replacement. Update the source project locator, inspect that exact directory, and refresh the cache.
 
 ## Command examples
 
-Register a primary development root:
+Remembered projects use `host-project set` on the controller followed by updating the same Drive file ID. These examples only create temporary local lookups. The first materialization without `--session-id` returns a nonce; use that nonce throughout this chat.
+
+Materialize a primary development root:
 
 ```bash
-python3 scripts/codex_loop.py workspace-register \
+python3 scripts/codex_loop.py workspace-materialize \
   --name piwork \
   --path "/absolute/path/to/PiWork" \
-  --kind development_root
+  --kind development_root --session-id SESSION_NONCE
 ```
 
-Register a fixed repository:
+Materialize a fixed repository:
 
 ```bash
-python3 scripts/codex_loop.py workspace-register \
+python3 scripts/codex_loop.py workspace-materialize \
   --name epiagent \
   --path "/absolute/path/to/EpiAgent" \
-  --kind repository
+  --kind repository --session-id SESSION_NONCE
 ```
 
 After explicit user authorization:
 
 ```bash
 python3 scripts/codex_loop.py workspace-grant epiagent \
+  --session-id SESSION_NONCE \
   --current-user-authorization-observed \
   --authorization-evidence "user explicitly granted EpiAgent path access in this conversation"
 ```

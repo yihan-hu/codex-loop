@@ -53,6 +53,8 @@ from codex_loop_runtime.host_config import (
     host_config_set,
     host_config_show,
     host_config_unset,
+    host_project_set,
+    host_project_remove,
     progress_policy,
     set_progress_config,
 )
@@ -107,9 +109,9 @@ from codex_loop_runtime.workspace import git_state, hash_workspace_path, repo_ro
 from codex_loop_runtime.workspace_registry import (
     grant_workspace,
     list_workspaces,
-    register_workspace,
+    materialize_workspace,
     registry_path,
-    remove_workspace,
+    forget_workspace,
     resolve_workspace,
     session_grants,
 )
@@ -123,6 +125,7 @@ HOST_ADAPTER_COMMANDS = (
     ('resume', 'resolve an existing active lifecycle, then return the normal continuation capsule'),
     ('host-profile', 'import/export private preferences for the current connected Drive account'),
     ('host-config', 'show or update the unified private Host Profile'),
+    ('host-project', 'edit saved project locations in the current private Host Profile'),
     ('execution-resolve', 'resolve saved Web/computer defaults and ordered local connections'),
     ('progress-config', 'compatibility facade for private progress-visibility preferences'),
     ('progress-policy', 'resolve progress behavior for lightweight or substantive work'),
@@ -155,12 +158,12 @@ HOST_ADAPTER_COMMANDS = (
     ('drive-cache-unregister', 'remove a cache folder path from host-local config'),
     ('drive-cache-list', 'list host-local registered Codex Loop Drive cache folders'),
     ('drive-cache-cleanup-plan', 'return exact owned >=3-day registered cache objects ready for automatic cleanup'),
-    ('workspace-register', 'register a private host workspace alias'),
-    ('workspace-registry-list', 'list private host workspace aliases'),
+    ('workspace-materialize', 'materialize a conversation workspace cache entry'),
+    ('workspace-registry-list', 'list derived conversation workspace entries'),
     ('workspace-resolve', 'resolve a registered workspace under current grants'),
     ('workspace-grant', 'record current-conversation workspace authorization'),
     ('workspace-grants', 'show current-conversation workspace grants'),
-    ('workspace-remove', 'remove a private host workspace alias'),
+    ('workspace-forget', 'forget a conversation workspace cache entry'),
     ('workspace-sync-offer', 'prepare an exact-revision workspace sync offer'),
     ('deployment-provenance-verify', 'verify installed Skill bundle provenance'),
     ('relay-frame', 'frame a guarded model-relay payload'),
@@ -819,7 +822,9 @@ def _cmd_route_check(argv: list[str]) -> int:
     p.add_argument('--session-id')
     p.add_argument('--action', required=True, choices=sorted(ROUTE_ACTIONS))
     p.add_argument('--dispatch-connector', help='actual host-exposed app name or ID intended for this dispatch')
-    p.add_argument('--workspace-granted', action='store_true')
+    p.add_argument('--workspace-granted', action='store_true', help='host observed current path authorization and directory access through the pinned connector')
+    p.add_argument('--local-root', help='current-task explicitly authorized absolute directory; never persisted')
+    p.add_argument('--project', help='saved project alias on the pinned execution environment')
     p.add_argument('--current-user-local-source-mutation-authorized', action='store_true')
     p.add_argument('--current-user-local-computer-authorized', action='store_true')
     p.add_argument('--current-user-local-install-authorized', action='store_true')
@@ -829,6 +834,8 @@ def _cmd_route_check(argv: list[str]) -> int:
         dispatch_connector=args.dispatch_connector,
         session_id=args.session_id,
         workspace_granted=args.workspace_granted,
+        local_root=args.local_root,
+        project=args.project,
         local_source_mutation_authorized=args.current_user_local_source_mutation_authorized,
         local_computer_authorized=args.current_user_local_computer_authorized,
         local_install_authorized=args.current_user_local_install_authorized,
@@ -1307,23 +1314,45 @@ def _cmd_drive_cache_cleanup_plan(argv: list[str]) -> int:
     return 0
 
 
-def _cmd_workspace_register(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-register')
+def _cmd_host_project(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="codex_loop.py host-project")
+    subs = p.add_subparsers(dest="operation", required=True)
+    for operation in ("set", "remove"):
+        sub = subs.add_parser(operation)
+        sub.add_argument("--computer", required=True)
+        sub.add_argument("--name", required=True)
+        if operation == "set":
+            sub.add_argument("--path", required=True)
+    args = p.parse_args(argv[1:])
+    if args.operation == "set":
+        emit_ok(host_project_set(args.computer, args.name, args.path))
+    else:
+        emit_ok(host_project_remove(args.computer, args.name))
+    return 0
+
+
+def _cmd_workspace_materialize(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-materialize')
     p.add_argument('--name', required=True)
     p.add_argument('--path', required=True)
     p.add_argument('--kind', required=True, choices=['repository', 'development_root'])
     p.add_argument('--update', action='store_true')
+    p.add_argument('--session-id')
     args = p.parse_args(argv[1:])
-    emit_ok(register_workspace(args.name, args.path, args.kind, update=args.update))
+    emit_ok(materialize_workspace(args.name, args.path, args.kind, session_id=args.session_id, update=args.update))
     return 0
 
 
 def _cmd_workspace_registry_list(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py workspace-registry-list')
-    p.parse_args(argv[1:])
+    p.add_argument('--session-id')
+    args = p.parse_args(argv[1:])
+    workspaces = list_workspaces(session_id=args.session_id)
     emit_ok({
-        'registry_path': str(registry_path()),
-        'workspaces': list_workspaces(),
+        'scope': 'conversation',
+        'registry_path': str(registry_path(args.session_id)) if workspaces else None,
+        'workspaces': workspaces,
+        'locations_persisted': False,
         'authorization_persisted': False,
     })
     return 0
@@ -1372,11 +1401,12 @@ def _cmd_workspace_grants(argv: list[str]) -> int:
     return 0
 
 
-def _cmd_workspace_remove(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-remove')
+def _cmd_workspace_forget(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-forget')
     p.add_argument('name')
+    p.add_argument('--session-id')
     args = p.parse_args(argv[1:])
-    emit_ok(remove_workspace(args.name))
+    emit_ok(forget_workspace(args.name, session_id=args.session_id))
     return 0
 
 
@@ -1486,8 +1516,10 @@ def main() -> int:
             return _cmd_drive_cache_list(argv)
         if argv[0] == 'drive-cache-cleanup-plan':
             return _cmd_drive_cache_cleanup_plan(argv)
-        if argv[0] == 'workspace-register':
-            return _cmd_workspace_register(argv)
+        if argv[0] == 'host-project':
+            return _cmd_host_project(argv)
+        if argv[0] == 'workspace-materialize':
+            return _cmd_workspace_materialize(argv)
         if argv[0] == 'workspace-registry-list':
             return _cmd_workspace_registry_list(argv)
         if argv[0] == 'workspace-resolve':
@@ -1496,8 +1528,8 @@ def main() -> int:
             return _cmd_workspace_grant(argv)
         if argv[0] == 'workspace-grants':
             return _cmd_workspace_grants(argv)
-        if argv[0] == 'workspace-remove':
-            return _cmd_workspace_remove(argv)
+        if argv[0] == 'workspace-forget':
+            return _cmd_workspace_forget(argv)
         if argv[0] == 'workspace-sync-offer':
             return _cmd_workspace_sync_offer(argv)
         if argv[0] == 'deployment-provenance-verify':

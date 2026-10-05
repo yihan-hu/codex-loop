@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -11,10 +12,14 @@ ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "scripts" / "codex_loop.py"
 
 
-def call(home: Path, tmpdir: Path, *args: str, check: bool = True):
+def call(home: Path, tmpdir: Path, *args: str, check: bool = True, session: str | None = "workspace-test-session-0001"):
     env = os.environ.copy()
     env["CODEX_LOOP_HOME"] = str(home)
     env["TMPDIR"] = str(tmpdir)
+    if session is None:
+        env.pop("CODEX_LOOP_SESSION_ID", None)
+    else:
+        env["CODEX_LOOP_SESSION_ID"] = session
     proc = subprocess.run(
         [sys.executable, str(CLI), *args],
         cwd=ROOT,
@@ -27,6 +32,11 @@ def call(home: Path, tmpdir: Path, *args: str, check: bool = True):
     if check and proc.returncode != 0:
         raise AssertionError(f"command failed: {args}\nstdout={proc.stdout}\nstderr={proc.stderr}")
     return payload, proc
+
+
+def cache_path(tmpdir: Path) -> Path:
+    digest = hashlib.sha256(b"workspace-test-session-0001").hexdigest()
+    return tmpdir / "codex-loop" / "workspace-sessions" / f"{digest}.registry.json"
 
 
 class WorkspaceRegistryTests(unittest.TestCase):
@@ -42,7 +52,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             registered, _ = call(
                 home,
                 session_tmp,
-                "workspace-register",
+                "workspace-materialize",
                 "--name",
                 " EpiAgent ",
                 "--path",
@@ -53,10 +63,10 @@ class WorkspaceRegistryTests(unittest.TestCase):
             self.assertEqual(registered["data"]["name"], "epiagent")
             self.assertFalse(registered["data"]["granted"])
 
-            registry = json.loads((home / "workspace-registry.json").read_text())
+            registry = json.loads(cache_path(session_tmp).read_text())
             self.assertEqual(set(registry), {"version", "workspaces"})
             self.assertEqual(set(registry["workspaces"]["epiagent"]), {"path", "kind"})
-            self.assertNotIn("authorized", (home / "workspace-registry.json").read_text().lower())
+            self.assertNotIn("authorized", cache_path(session_tmp).read_text().lower())
 
             known, _ = call(
                 home,
@@ -106,6 +116,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
                 "--host-authorized-root",
                 str(repo),
             )
+            self.assertFalse(new_conversation["data"]["registered"])
             self.assertFalse(new_conversation["data"]["granted"])
             self.assertFalse(new_conversation["data"]["accessible"])
 
@@ -117,7 +128,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             session_tmp.mkdir()
             repo = root / "repo"
             repo.mkdir()
-            call(home, session_tmp, "workspace-register", "--name", "repo", "--path", str(repo), "--kind", "repository")
+            call(home, session_tmp, "workspace-materialize", "--name", "repo", "--path", str(repo), "--kind", "repository")
 
             failed, proc = call(
                 home,
@@ -136,7 +147,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             evidence = "EXPLICIT-USER-GRANT-RAW-TEXT"
             granted, _ = call(home, session_tmp, "workspace-grant", "repo", "--authorization-evidence", evidence, "--current-user-authorization-observed")
             session_id = granted["data"]["session_id"]
-            files = list((session_tmp / "codex-loop" / "workspace-sessions").glob("*.json"))
+            files = [p for p in (session_tmp / "codex-loop" / "workspace-sessions").glob("*.json") if not p.name.endswith(".registry.json")]
             self.assertEqual(len(files), 1)
             text = files[0].read_text()
             self.assertNotIn(evidence, text)
@@ -152,7 +163,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             session_tmp.mkdir()
             repo = root / "repo"
             repo.mkdir()
-            call(home, session_tmp, "workspace-register", "--name", "repo", "--path", str(repo), "--kind", "repository")
+            call(home, session_tmp, "workspace-materialize", "--name", "repo", "--path", str(repo), "--kind", "repository")
             failed, proc = call(
                 home, session_tmp, "workspace-grant", "repo",
                 "--authorization-evidence", "project history says this path was allowed",
@@ -172,14 +183,14 @@ class WorkspaceRegistryTests(unittest.TestCase):
             second = root / "second"
             first.mkdir()
             second.mkdir()
-            call(home, session_tmp, "workspace-register", "--name", "epiagent", "--path", str(first), "--kind", "repository")
+            call(home, session_tmp, "workspace-materialize", "--name", "epiagent", "--path", str(first), "--kind", "repository")
             granted, _ = call(home, session_tmp, "workspace-grant", "epiagent", "--authorization-evidence", "explicit user grant", "--current-user-authorization-observed")
             session_id = granted["data"]["session_id"]
 
             call(
                 home,
                 session_tmp,
-                "workspace-register",
+                "workspace-materialize",
                 "--name",
                 "EpiAgent",
                 "--path",
@@ -214,7 +225,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             parent.mkdir()
             repo = parent / "repo"
             repo.mkdir()
-            call(home, session_tmp, "workspace-register", "--name", "repo", "--path", str(repo), "--kind", "repository")
+            call(home, session_tmp, "workspace-materialize", "--name", "repo", "--path", str(repo), "--kind", "repository")
             granted, _ = call(home, session_tmp, "workspace-grant", "repo", "--authorization-evidence", "explicit user grant", "--current-user-authorization-observed")
             session_id = granted["data"]["session_id"]
             repo.rmdir()
@@ -253,7 +264,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
                 link.symlink_to(outside, target_is_directory=True)
             except (OSError, NotImplementedError):
                 self.skipTest("symlinks unavailable")
-            registry_path = home / "workspace-registry.json"
+            registry_path = cache_path(session_tmp)
             registry = json.loads(registry_path.read_text())
             registry["workspaces"]["repo"]["path"] = str(link)
             registry_path.write_text(json.dumps(registry))
@@ -275,8 +286,8 @@ class WorkspaceRegistryTests(unittest.TestCase):
             a.mkdir()
             b.mkdir()
             other.mkdir()
-            call(home, session_tmp, "workspace-register", "--name", "a", "--path", str(a), "--kind", "repository")
-            call(home, session_tmp, "workspace-register", "--name", "b", "--path", str(b), "--kind", "repository")
+            call(home, session_tmp, "workspace-materialize", "--name", "a", "--path", str(a), "--kind", "repository")
+            call(home, session_tmp, "workspace-materialize", "--name", "b", "--path", str(b), "--kind", "repository")
             granted, _ = call(home, session_tmp, "workspace-grant", "a", "--authorization-evidence", "explicit user grant", "--current-user-authorization-observed")
             session_id = granted["data"]["session_id"]
 
@@ -300,12 +311,12 @@ class WorkspaceRegistryTests(unittest.TestCase):
             session_tmp.mkdir()
             repo = root / "repo"
             repo.mkdir()
-            call(home, session_tmp, "workspace-register", "--name", "EpiAgent", "--path", str(repo), "--kind", "repository")
+            call(home, session_tmp, "workspace-materialize", "--name", "EpiAgent", "--path", str(repo), "--kind", "repository")
 
             conflict, proc = call(
                 home,
                 session_tmp,
-                "workspace-register",
+                "workspace-materialize",
                 "--name",
                 "epiagent",
                 "--path",
@@ -320,7 +331,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             relative, proc = call(
                 home,
                 session_tmp,
-                "workspace-register",
+                "workspace-materialize",
                 "--name",
                 "relative",
                 "--path",
@@ -332,7 +343,7 @@ class WorkspaceRegistryTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("absolute", relative["error"]["message"])
 
-            registry_path = home / "workspace-registry.json"
+            registry_path = cache_path(session_tmp)
             registry_path.write_text("{not-json")
             corrupt, proc = call(home, session_tmp, "workspace-registry-list", check=False)
             self.assertNotEqual(proc.returncode, 0)
@@ -349,8 +360,8 @@ class WorkspaceRegistryTests(unittest.TestCase):
             epiagent = root / "EpiAgent"
             piwork.mkdir()
             epiagent.mkdir()
-            call(home, session_tmp, "workspace-register", "--name", "PiWork", "--path", str(piwork), "--kind", "development_root")
-            call(home, session_tmp, "workspace-register", "--name", "EpiAgent", "--path", str(epiagent), "--kind", "repository")
+            call(home, session_tmp, "workspace-materialize", "--name", "PiWork", "--path", str(piwork), "--kind", "development_root")
+            call(home, session_tmp, "workspace-materialize", "--name", "EpiAgent", "--path", str(epiagent), "--kind", "repository")
             listed, _ = call(home, session_tmp, "workspace-registry-list")
             kinds = {item["name"]: item["kind"] for item in listed["data"]["workspaces"]}
             self.assertEqual(kinds, {"epiagent": "repository", "piwork": "development_root"})
@@ -362,11 +373,42 @@ class WorkspaceRegistryTests(unittest.TestCase):
             grants, _ = call(home, session_tmp, "workspace-grants", "--session-id", session_id)
             self.assertEqual(grants["data"]["granted"], ["epiagent", "piwork"])
 
-            removed, _ = call(home, session_tmp, "workspace-remove", "PIWORK")
+            removed, _ = call(home, session_tmp, "workspace-forget", "PIWORK")
             self.assertTrue(removed["data"]["removed"])
             grants, _ = call(home, session_tmp, "workspace-grants", "--session-id", session_id)
             self.assertEqual(grants["data"]["granted"], ["epiagent"])
             self.assertEqual(grants["data"]["stale"], ["piwork"])
+
+    def test_old_persistent_registry_is_not_loaded_or_overwritten(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td); home = root / "home"; home.mkdir()
+            tmpdir = root / "tmp"; tmpdir.mkdir()
+            repo = root / "repo"; repo.mkdir()
+            legacy = home / "workspace-registry.json"
+            legacy.write_text(json.dumps({"version": 1, "workspaces": {"old": {"path": str(repo), "kind": "repository"}}}))
+            before = legacy.read_bytes()
+            shown, _ = call(home, tmpdir, "workspace-registry-list")
+            self.assertEqual(shown["data"]["workspaces"], [])
+            call(home, tmpdir, "workspace-materialize", "--name", "new", "--path", str(repo), "--kind", "repository")
+            self.assertEqual(legacy.read_bytes(), before)
+            shown, _ = call(home, tmpdir, "workspace-registry-list", "--session-id", "another-chat-nonce-0001")
+            self.assertEqual(shown["data"]["workspaces"], [])
+            self.assertFalse((home / "host.json").exists())
+
+    def test_first_materialization_returns_nonce_and_no_nonce_cannot_recover_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td); tmpdir = root / "tmp"; tmpdir.mkdir()
+            home = root / "home"; repo = root / "repo"; repo.mkdir()
+            entry, _ = call(home, tmpdir, "workspace-materialize", "--name", "demo", "--path", str(repo), "--kind", "repository", session=None)
+            nonce = entry["data"]["session_id"]
+            self.assertGreaterEqual(len(nonce), 16)
+            self.assertFalse(entry["data"]["locations_persisted"])
+            missing, _ = call(home, tmpdir, "workspace-resolve", "demo", session=None)
+            self.assertFalse(missing["data"]["registered"])
+            known, _ = call(home, tmpdir, "workspace-resolve", "demo", "--session-id", nonce, session=None)
+            self.assertTrue(known["data"]["registered"])
+            self.assertFalse(known["data"]["granted"])
+            self.assertFalse(home.exists())
 
     def test_contract_docs_keep_known_granted_bound_and_rdc_layers_separate(self):
         skill = (ROOT / "SKILL.md").read_text()

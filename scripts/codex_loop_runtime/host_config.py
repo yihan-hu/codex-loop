@@ -11,7 +11,7 @@ from typing import Any
 
 from .workspace_registry import host_config_path
 
-HOST_CONFIG_SCHEMA_VERSION = 3
+HOST_CONFIG_SCHEMA_VERSION = 4
 HOST_CONFIG_MAX_BYTES = 64 * 1024
 PROGRESS_MODES = frozenset({"quiet", "standard", "enhanced"})
 BROWSER_TARGETS = frozenset({"cloud_browser", "local_chrome"})
@@ -20,7 +20,7 @@ PROFILE_PERSISTENCE_BACKENDS = frozenset({"auto", "local_only", "google_drive"})
 DRIVE_CACHE_MAX_FOLDERS = 64
 
 DEFAULT_PROGRESS_CONFIG: dict[str, Any] = {
-    "mode": "enhanced",
+    "mode": "standard",
     "interval_seconds": 15,
     "tool_call_interval": 3,
     "upfront_plan": True,
@@ -38,12 +38,13 @@ DEFAULT_HOST_PROFILE: dict[str, Any] = {
         "staging_folder_id": None,
     },
     "workspace": {
-        "default_local_workspace": None,
+        "environments": {},
     },
     "execution": {
         "default_target": "web",
         "connections": [],
     },
+    "interaction": {"language": "follow_user"},
     "drive": {
         "cache_folder_paths": [],
     },
@@ -52,13 +53,14 @@ DEFAULT_HOST_PROFILE: dict[str, Any] = {
         "host_profile_backend": "auto",
     },
 }
-_TOP_LEVEL_KEYS = frozenset(DEFAULT_HOST_PROFILE) | {"default_local_root"}
+_TOP_LEVEL_KEYS = frozenset(DEFAULT_HOST_PROFILE)
 _SECTION_KEYS = {
     "progress_visibility": frozenset(DEFAULT_PROGRESS_CONFIG),
     "browser": frozenset(DEFAULT_HOST_PROFILE["browser"]),
     "web_publish": frozenset(DEFAULT_HOST_PROFILE["web_publish"]),
     "workspace": frozenset(DEFAULT_HOST_PROFILE["workspace"]),
     "execution": frozenset(DEFAULT_HOST_PROFILE["execution"]),
+    "interaction": frozenset(DEFAULT_HOST_PROFILE["interaction"]),
     "drive": frozenset(DEFAULT_HOST_PROFILE["drive"]),
     "persistence": frozenset(DEFAULT_HOST_PROFILE["persistence"]),
 }
@@ -180,9 +182,18 @@ def _validate_section(section: str, raw: Any) -> dict[str, Any]:
         if folder is not None and (not isinstance(folder, str) or not folder.strip() or len(folder) > 512):
             raise ValueError("web_publish.staging_folder_id must be null or a bounded non-empty string")
     elif section == "workspace":
-        alias = result["default_local_workspace"]
-        if alias is not None and (not isinstance(alias, str) or not alias.strip() or len(alias) > 128):
-            raise ValueError("workspace.default_local_workspace must be null or a bounded non-empty alias")
+        environments = result["environments"]
+        if not isinstance(environments, dict) or len(environments) > 64:
+            raise ValueError("workspace.environments must be an object of at most 64 execution environments")
+        result["environments"] = {}
+        for name, locations in environments.items():
+            if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", name) or name in {"web", "local"}:
+                raise ValueError("workspace environment must be a non-reserved lowercase identifier")
+            result["environments"][name] = validate_environment_locations(locations)
+    elif section == "interaction":
+        language = result["language"]
+        if not isinstance(language, str) or not language.strip() or len(language) > 128 or any(ord(c) < 32 for c in language):
+            raise ValueError("interaction.language must be follow_user or a bounded printable language name")
     elif section == "execution":
         target = result["default_target"]
         identifier = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
@@ -195,8 +206,8 @@ def _validate_section(section: str, raw: Any) -> dict[str, Any]:
         computers = set()
         for item in connections:
             required = {"name", "computer", "connector", "kind"}
-            if not isinstance(item, dict) or not required <= set(item) or set(item) - (required | {"local_root"}):
-                raise ValueError("each execution connection requires name, computer, connector, kind; only local_root is optional")
+            if not isinstance(item, dict) or not required <= set(item) or set(item) != required:
+                raise ValueError("each execution connection supports only name, computer, connector, kind; paths belong to workspace.environments")
             for key in ("name", "computer"):
                 if not isinstance(item[key], str) or not identifier.fullmatch(item[key]):
                     raise ValueError(f"execution connection {key} must be a bounded lowercase identifier")
@@ -211,9 +222,6 @@ def _validate_section(section: str, raw: Any) -> dict[str, Any]:
                 raise ValueError("execution connector must be a bounded printable name or connector ID, never a URL or credential")
             if "://" in connector or connector.startswith("sk-"):
                 raise ValueError("execution connector must not contain an endpoint URL or API key")
-            root = item.get("local_root")
-            if root is not None and (not isinstance(root, str) or len(root) > 4096 or any(ord(c) < 32 for c in root) or not (root.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", root))):
-                raise ValueError("execution connection local_root must be an absolute POSIX or Windows path")
         if target not in {"web", "local"} and target not in computers:
             raise ValueError("execution.default_target must identify a configured computer")
     elif section == "drive":
@@ -246,101 +254,76 @@ def _validate_section(section: str, raw: Any) -> dict[str, Any]:
     return result
 
 
-def _migrate_v1(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    allowed = {"schema_version", "default_local_workspace", "default_local_root", "progress_visibility"}
-    extra = sorted(set(raw) - allowed)
-    if extra:
-        raise ValueError(f"legacy host config contains unsupported keys: {extra}")
-    migrated: dict[str, Any] = {"schema_version": HOST_CONFIG_SCHEMA_VERSION}
-    if "progress_visibility" in raw:
-        migrated["progress_visibility"] = raw["progress_visibility"]
-    if "default_local_workspace" in raw:
-        migrated["workspace"] = {"default_local_workspace": raw.get("default_local_workspace")}
-    if "default_local_root" in raw:
-        root = raw.get("default_local_root")
-        if root is not None and not isinstance(root, str):
-            raise ValueError("legacy default_local_root must be a string or null")
-        migrated["default_local_root"] = root
-    return migrated, ["host_config_schema_v1_migrated_in_memory"]
+def validate_absolute_locator(value: Any, label: str) -> str:
+    if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 32 for c in value) or not (value.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", value)):
+        raise ValueError(f"{label} must be an absolute POSIX or Windows path")
+    return value
 
 
-def _validate_raw_v2(raw: dict[str, Any]) -> dict[str, Any]:
+def validate_environment_locations(raw: Any) -> dict[str, Any]:
+    defaults = {"default_root": None, "projects": {}, "runtime_directory": None, "state_directory": None}
+    if not isinstance(raw, dict) or set(raw) - set(defaults):
+        raise ValueError("environment locations support only default_root, projects, runtime_directory, state_directory")
+    result = {**defaults, **copy.deepcopy(raw)}
+    for key in ("default_root", "runtime_directory", "state_directory"):
+        if result[key] is not None:
+            validate_absolute_locator(result[key], key)
+    projects = result["projects"]
+    if not isinstance(projects, dict) or len(projects) > 256:
+        raise ValueError("environment projects must be an object of at most 256 aliases")
+    for alias, path in projects.items():
+        if not isinstance(alias, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", alias):
+            raise ValueError("project alias must be a bounded lowercase identifier")
+        validate_absolute_locator(path, f"project {alias}")
+    return result
+
+
+def _validate_raw_profile(raw: dict[str, Any]) -> dict[str, Any]:
+    if not raw:
+        return raw
     extra = sorted(set(raw) - _TOP_LEVEL_KEYS)
     if extra:
         raise ValueError(f"host config contains unsupported top-level keys: {extra}")
-    if raw.get("schema_version") != HOST_CONFIG_SCHEMA_VERSION:
-        raise ValueError(f"unsupported host config schema_version: {raw.get('schema_version')!r}")
+    if type(raw.get("schema_version")) is not int or raw["schema_version"] != HOST_CONFIG_SCHEMA_VERSION:
+        raise ValueError(f"unsupported host config schema_version: {raw.get('schema_version')!r}; update the private profile explicitly")
     for section in _SECTION_KEYS:
         if section in raw:
             if section == "progress_visibility":
                 _validate_progress(raw[section])
             else:
                 _validate_section(section, raw[section])
-    legacy_root = raw.get("default_local_root")
-    if legacy_root is not None and not isinstance(legacy_root, str):
-        raise ValueError("default_local_root compatibility input must be a string or null")
     return raw
 
 
-def _load_raw_host_config(*, strict: bool) -> tuple[dict[str, Any], list[str], bool]:
+def _load_raw_host_config() -> tuple[dict[str, Any], list[str], bool]:
+    # Missing is a default; unsafe, unreadable, corrupt, or unsupported is an error.
     path = host_config_path()
     try:
         _check_private_regular_file(path)
     except FileNotFoundError:
         return {"schema_version": HOST_CONFIG_SCHEMA_VERSION}, [], False
-    except (OSError, RuntimeError, PermissionError, ValueError) as exc:
-        if strict:
-            raise
-        return {"schema_version": HOST_CONFIG_SCHEMA_VERSION}, [f"unsafe_host_config_using_defaults:{type(exc).__name__}"], True
     try:
-        payload = path.read_bytes()
-        raw = json.loads(payload.decode("utf-8"))
+        raw = json.loads(path.read_bytes().decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        if strict:
-            raise RuntimeError(f"host config is invalid and was not overwritten: {path}") from exc
-        return {"schema_version": HOST_CONFIG_SCHEMA_VERSION}, ["invalid_host_config_json_using_defaults"], True
-    except OSError:
-        if strict:
-            raise
-        return {"schema_version": HOST_CONFIG_SCHEMA_VERSION}, ["unreadable_host_config_using_defaults"], True
+        raise RuntimeError(f"host config is invalid and was not overwritten: {path}") from exc
     if not isinstance(raw, dict):
-        if strict:
-            raise ValueError("host config must be a JSON object")
-        return {"schema_version": HOST_CONFIG_SCHEMA_VERSION}, ["invalid_host_config_object_using_defaults"], True
-    try:
-        version = raw.get("schema_version", 1)
-        if version == 1:
-            migrated, warnings = _migrate_v1(raw)
-            _validate_raw_v2(migrated)
-            return migrated, warnings, True
-        if version == 2:
-            migrated = dict(raw)
-            migrated["schema_version"] = HOST_CONFIG_SCHEMA_VERSION
-            _validate_raw_v2(migrated)
-            return migrated, ["host_config_schema_v2_migrated_in_memory"], True
-        _validate_raw_v2(raw)
-        return dict(raw), [], True
-    except (ValueError, TypeError) as exc:
-        if strict:
-            raise
-        return {"schema_version": HOST_CONFIG_SCHEMA_VERSION}, [f"invalid_host_config_using_defaults:{exc}"], True
+        raise ValueError("host config must be a JSON object")
+    _validate_raw_profile(raw)
+    return dict(raw), [], True
 
 
 def effective_host_profile() -> dict[str, Any]:
-    raw, warnings, file_exists = _load_raw_host_config(strict=False)
+    raw, warnings, file_exists = _load_raw_host_config()
     profile = copy.deepcopy(DEFAULT_HOST_PROFILE)
-    try:
-        profile["progress_visibility"] = _validate_progress(raw.get("progress_visibility"))
-        for section in ("browser", "web_publish", "workspace", "execution", "drive", "persistence"):
+    profile["progress_visibility"] = _validate_progress(raw.get("progress_visibility"))
+    for section in _SECTION_KEYS:
+        if section != "progress_visibility":
             profile[section] = _validate_section(section, raw.get(section))
-    except ValueError as exc:
-        profile = copy.deepcopy(DEFAULT_HOST_PROFILE)
-        warnings = [*warnings, f"invalid_host_profile_using_defaults:{exc}"]
     return {
         **profile,
         "config_path": str(host_config_path()),
         "config_file_exists": file_exists,
-        "source": "host_file" if file_exists and not warnings else "default",
+        "source": "host_file" if file_exists else "default",
         "warnings": warnings,
         "repository_persisted": False,
         "authorization_persisted": False,
@@ -348,10 +331,16 @@ def effective_host_profile() -> dict[str, Any]:
     }
 
 
+def environment_locations(computer: str | None) -> dict[str, Any]:
+    raw, _, _ = _load_raw_host_config()
+    environments = _validate_section("workspace", raw.get("workspace"))["environments"]
+    return copy.deepcopy(environments.get(computer, validate_environment_locations({})))
+
+
 def _write_raw_profile(raw: dict[str, Any]) -> None:
     raw = copy.deepcopy(raw)
     raw["schema_version"] = HOST_CONFIG_SCHEMA_VERSION
-    _validate_raw_v2(raw)
+    _validate_raw_profile(raw)
     _atomic_json_write(host_config_path(), raw)
 
 
@@ -361,7 +350,7 @@ def host_config_show() -> dict[str, Any]:
 
 def execution_config() -> dict[str, Any]:
     # Routing must not silently change machines when a profile is malformed.
-    raw, _, _ = _load_raw_host_config(strict=True)
+    raw, _, _ = _load_raw_host_config()
     return _validate_section("execution", raw.get("execution"))
 
 
@@ -392,7 +381,7 @@ def _profile_save_status() -> dict[str, Any]:
 
 def host_config_set(path: str, value: Any) -> dict[str, Any]:
     section, key = _leaf_parts(path)
-    raw, _warnings, _exists = _load_raw_host_config(strict=True)
+    raw, _warnings, _exists = _load_raw_host_config()
     current = raw.get(section)
     if current is None:
         current = {}
@@ -412,9 +401,42 @@ def host_config_set(path: str, value: Any) -> dict[str, Any]:
     return result
 
 
+def _host_project_edit(computer: str, name: str, path: str | None) -> dict[str, Any]:
+    """Edit one locator in the restored controller profile, preserving other raw fields."""
+    raw, _, _ = _load_raw_host_config()
+    workspace = raw.get("workspace") or {}
+    raw["workspace"] = workspace
+    environments = workspace.setdefault("environments", {})
+    if path is None:
+        projects = environments.get(computer, {}).get("projects", {})
+        if name not in projects:
+            raise KeyError(f"unknown project {name!r} on environment {computer!r}")
+        del projects[name]
+    else:
+        # Validate the identifiers and locator before changing the original profile.
+        _validate_section("workspace", {"environments": {computer: {"projects": {name: path}}}})
+        projects = environments.setdefault(computer, {}).setdefault("projects", {})
+        projects[name] = path
+    _write_raw_profile(raw)
+    return {
+        **_profile_save_status(), "computer": computer, "name": name,
+        "path": path, "removed": path is None,
+        "config_path": str(host_config_path()),
+        "authorization_persisted": False,
+    }
+
+
+def host_project_set(computer: str, name: str, path: str) -> dict[str, Any]:
+    return _host_project_edit(computer, name, path)
+
+
+def host_project_remove(computer: str, name: str) -> dict[str, Any]:
+    return _host_project_edit(computer, name, None)
+
+
 def host_config_unset(path: str) -> dict[str, Any]:
     section, key = _leaf_parts(path)
-    raw, _warnings, _exists = _load_raw_host_config(strict=True)
+    raw, _warnings, _exists = _load_raw_host_config()
     current = raw.get(section)
     if isinstance(current, dict):
         updated = dict(current)
@@ -433,7 +455,7 @@ def host_config_unset(path: str) -> dict[str, Any]:
 def host_config_reset(section: str) -> dict[str, Any]:
     if section not in _SECTION_KEYS:
         raise ValueError(f"unsupported host config section: {section}")
-    raw, _warnings, _exists = _load_raw_host_config(strict=True)
+    raw, _warnings, _exists = _load_raw_host_config()
     raw.pop(section, None)
     _write_raw_profile(raw)
     result = effective_host_profile()
@@ -463,7 +485,7 @@ def set_progress_config(
     material_event_updates: bool | None = None,
     reset: bool = False,
 ) -> dict[str, Any]:
-    raw, _warnings, _file_exists = _load_raw_host_config(strict=True)
+    raw, _warnings, _file_exists = _load_raw_host_config()
     if reset:
         raw.pop("progress_visibility", None)
     else:

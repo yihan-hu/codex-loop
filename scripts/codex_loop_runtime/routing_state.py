@@ -10,9 +10,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .local_connection import resolve_execution
+from .local_connection import resolve_execution, resolve_local_root
+from .host_config import validate_environment_locations
 
-ROUTING_SCHEMA_VERSION = 2
+ROUTING_SCHEMA_VERSION = 3
 HOST_SURFACES = frozenset({"unknown", "chatgpt_web", "codex_local"})
 WORKSPACE_MODES = frozenset({"web", "local"})
 INTERACTION_TARGETS = frozenset({"none", "cloud_browser", "local_chrome", "local_mac_gui"})
@@ -192,6 +193,10 @@ def _validate_state(payload: Any) -> dict[str, Any]:
         or not all(isinstance(connection.get(key), str) and connection[key] for key in ("name", "connector"))
     ):
         raise ValueError("Local routing requires a selected connection")
+    if connection is not None:
+        if "locations" not in connection:
+            raise ValueError("Local routing requires an environment location snapshot")
+        validate_environment_locations(connection["locations"])
     if payload.get("interaction_target") not in INTERACTION_TARGETS:
         raise ValueError("routing session state has an invalid interaction target")
     deployment_target = payload.get("deployment_target")
@@ -289,8 +294,14 @@ def route_transition(
                                           available_connections=available_connections)
             if execution["status"] != "resolved":
                 raise RuntimeError("observe usable local connections before route-transition")
+            previous = state["local_connection"]
+            selected = execution["local_connection"]
+            if (previous is not None and selected is not None
+                    and previous["computer"] is not None
+                    and previous["computer"] == selected["computer"]):
+                selected["locations"] = previous["locations"]
             state["workspace_mode"] = workspace_mode
-            state["local_connection"] = execution["local_connection"]
+            state["local_connection"] = selected
             state["workspace_basis"] = "explicit_user_local_workspace" if workspace_mode == "local" else "explicit_web_selection"
             state["selection_evidence_sha256"]["workspace_mode"] = digest
             changed.append("workspace_mode")
@@ -357,6 +368,8 @@ def route_check(
     dispatch_connector: str | None = None,
     session_id: str | None = None,
     workspace_granted: bool = False,
+    local_root: str | None = None,
+    project: str | None = None,
     local_source_mutation_authorized: bool = False,
     local_computer_authorized: bool = False,
     local_install_authorized: bool = False,
@@ -398,7 +411,7 @@ def route_check(
         result.update({
             "allowed": True,
             "config_role": "codex_loop_bootstrap_read_only",
-            "allowed_config_paths": ["~/.codex-loop/host.json", "~/.codex-loop/workspace-registry.json"],
+            "allowed_config_paths": ["~/.codex-loop/host.json"],
             "config_mutation_allowed": False,
             "rule": "Local connector host-config reads are routed Codex Loop bootstrap actions, not an authorization bypass; mutation requires a separate explicit host-administration task",
         })
@@ -433,7 +446,10 @@ def route_check(
             if action == "github_publish":
                 result["publish_transport"] = "verified_web_mode"
             return result
-        missing: list[str] = []
+        location = resolve_local_root(state["local_connection"], local_root=local_root,
+                                      project=project, workspace_granted=workspace_granted)
+        result.update({key: value for key, value in location.items() if key != "requirements"})
+        missing: list[str] = list(location["requirements"])
         if not workspace_granted:
             missing.append("current_conversation_workspace_grant")
         if action == "repository_mutate" and not local_source_mutation_authorized:

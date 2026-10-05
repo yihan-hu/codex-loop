@@ -7,15 +7,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.codex_loop_runtime.host_config import host_config_set
-from scripts.codex_loop_runtime.local_connection import resolve_execution
+from scripts.codex_loop_runtime.host_config import host_config_set, host_project_set, host_project_remove
+from scripts.codex_loop_runtime.local_connection import resolve_execution, resolve_local_root
 from scripts.codex_loop_runtime.routing_state import route_check, route_init, route_transition
 
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "scripts/codex_loop.py"
 CONNECTIONS = [
     {"name": "rdc-mac", "computer": "mac", "connector": "Remote Desktop Commander", "kind": "rdc"},
-    {"name": "mac-first", "computer": "mac", "connector": "My Mac", "kind": "mcp", "local_root": "/work"},
+    {"name": "mac-first", "computer": "mac", "connector": "My Mac", "kind": "mcp"},
     {"name": "mac-second", "computer": "mac", "connector": "Other Mac MCP", "kind": "mcp"},
     {"name": "pc", "computer": "pc", "connector": "My PC", "kind": "mcp"},
 ]
@@ -136,6 +136,93 @@ class LocalConnectionTests(unittest.TestCase):
                                     dispatch_connector="Remote Desktop Commander")["allowed"])
         self.assertFalse(route_check(action="local_lifecycle", session_id=sid,
                                      dispatch_connector="My Mac")["allowed"])
+
+    def test_missing_root_blocks_filesystem_but_not_lifecycle_or_web(self):
+        route = route_init(workspace_target="mac", available_connections=["mac-first"])
+        sid = route["session_id"]
+        lifecycle = route_check(action="local_lifecycle", session_id=sid, dispatch_connector="My Mac")
+        self.assertTrue(lifecycle["allowed"])
+        blocked = route_check(action="local_repository", session_id=sid,
+                              dispatch_connector="My Mac", workspace_granted=True)
+        self.assertFalse(blocked["allowed"])
+        self.assertIn("specify_task_directory_or_save_environment_default_workspace", blocked["requirements"])
+        override = route_check(action="local_repository", session_id=sid, dispatch_connector="My Mac",
+                               workspace_granted=True, local_root="/task/approved")
+        self.assertTrue(override["allowed"])
+        self.assertEqual(override["local_root"], "/task/approved")
+        raw = json.loads((self.home / "host.json").read_text())
+        self.assertNotIn("/task/approved", json.dumps(raw))
+        self.assertEqual(resolve_execution()["workspace_mode"], "web")
+
+    def test_environment_default_task_override_project_and_connector_denial(self):
+        host_config_set("workspace.environments", {
+            "mac": {"default_root": "/mac/work", "projects": {"repo": "/mac/project"}},
+            "pc": {"default_root": "/mnt/c/Work Area", "runtime_directory": "/runtime/code",
+                   "state_directory": "/runtime/state"},
+        })
+        for computer, connector, expected in [("mac", "mac-first", "/mac/work"), ("pc", "pc", "/mnt/c/Work Area")]:
+            route = route_init(workspace_target=computer, available_connections=[connector])
+            args = dict(action="local_repository", session_id=route["session_id"],
+                        dispatch_connector=route["local_connection"]["connector"])
+            denied = route_check(**args)
+            self.assertFalse(denied["allowed"])
+            self.assertEqual(denied["local_root"], expected)
+            allowed = route_check(**args, workspace_granted=True)
+            self.assertTrue(allowed["allowed"])
+            self.assertEqual(allowed["local_root"], expected)
+            override = route_check(**args, workspace_granted=True, local_root="/task/explicit")
+            self.assertEqual(override["local_root"], "/task/explicit")
+            if computer == "mac":
+                project = route_check(**args, workspace_granted=True, project="repo")
+                self.assertEqual(project["local_root"], "/mac/project")
+            else:
+                with self.assertRaisesRegex(ValueError, "unknown project"):
+                    route_check(**args, workspace_granted=True, project="repo")
+                self.assertEqual(route["local_connection"]["locations"]["runtime_directory"], "/runtime/code")
+
+    def test_saved_project_is_current_without_moving_existing_route_defaults(self):
+        host_config_set("workspace.environments", {"mac": {"default_root": "/first"}})
+        route = route_init(workspace_target="mac", available_connections=["mac-first"])
+        selected = route["local_connection"]
+        host_project_set("mac", "demo", "/new/project")
+        resolved = resolve_local_root(selected, project="demo", workspace_granted=True)
+        self.assertEqual(resolved["local_root"], "/new/project")
+        host_project_set("mac", "demo", "/changed/project")
+        self.assertEqual(resolve_local_root(selected, project="demo")["local_root"], "/changed/project")
+        self.assertEqual(resolve_local_root(selected)["local_root"], "/first")
+        self.assertEqual(resolve_local_root(selected, local_root="/already/bound")["local_root"], "/already/bound")
+        host_project_remove("mac", "demo")
+        with self.assertRaisesRegex(ValueError, "unknown project"):
+            resolve_local_root(selected, project="demo")
+
+    def test_directory_snapshot_survives_preference_save_and_same_environment_transport_change(self):
+        host_config_set("workspace.environments", {"mac": {"default_root": "/first"}})
+        first = route_init(workspace_target="mac", available_connections=["mac-first"])
+        host_config_set("workspace.environments", {"mac": {"default_root": "/later"}})
+        changed = route_transition(session_id=first["session_id"], workspace_target="mac", connection="mac-second",
+                                   available_connections=["mac-second"], current_user_selection_observed=True,
+                                   selection_evidence="Use the other connector on this environment")
+        self.assertEqual(changed["local_connection"]["locations"]["default_root"], "/first")
+        new = route_init(workspace_target="mac", available_connections=["mac-second"])
+        self.assertEqual(new["local_connection"]["locations"]["default_root"], "/later")
+
+    def test_cli_directory_resolution_and_no_grant_restored_from_profile(self):
+        host_config_set("workspace.environments", {"mac": {"default_root": "/mac/work"}})
+        initialized = subprocess.run([sys.executable, str(CLI), "route-init", "--workspace-target", "mac",
+                                      "--available-connections-json", '["mac-first"]'],
+                                     capture_output=True, text=True, check=True)
+        route = json.loads(initialized.stdout)["data"]
+        self.addCleanup(Path(route["state_path"]).unlink)
+        cmd = [sys.executable, str(CLI), "route-check", "--session-id", route["session_id"],
+               "--action", "local_repository", "--dispatch-connector", "My Mac"]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        self.assertFalse(json.loads(result.stdout)["data"]["allowed"])
+        result = subprocess.run(cmd + ["--local-root", "/task/approved", "--workspace-granted"],
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout)["data"]["local_root"], "/task/approved")
+        result = subprocess.run(cmd + ["--local-root", "relative", "--workspace-granted"],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_cli_reads_private_settings_across_processes_and_override(self):
         host_config_set("execution.default_target", "mac")

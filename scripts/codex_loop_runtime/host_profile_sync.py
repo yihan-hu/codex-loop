@@ -10,7 +10,7 @@ from typing import Any
 
 from .host_config import (
     DEFAULT_HOST_PROFILE, HOST_CONFIG_MAX_BYTES, _atomic_json_write,
-    _check_private_regular_file, _load_raw_host_config, _validate_raw_v2,
+    _check_private_regular_file, _load_raw_host_config, _validate_raw_profile,
     _write_raw_profile,
 )
 
@@ -32,7 +32,7 @@ def _digest(profile: dict[str, Any]) -> str:
 def _profile(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict) or set(raw) - PROFILE_KEYS:
         raise ValueError("portable Host Profile contains unsupported fields")
-    _validate_raw_v2(raw)
+    _validate_raw_profile(raw)
     # Preferences are data, never scripts, tokens, or authentication material.
     if re.search(r"sk-[A-Za-z0-9_-]{12,}|Bearer\s+\S+|-----BEGIN .*PRIVATE KEY", json.dumps(raw), re.IGNORECASE):
         raise ValueError("credentials must remain in the connected app's private authentication store")
@@ -40,7 +40,7 @@ def _profile(raw: Any) -> dict[str, Any]:
 
 
 def export_profile(*, drive_root_id: str, output: str) -> dict[str, Any]:
-    raw, _, _ = _load_raw_host_config(strict=True)
+    raw, _, _ = _load_raw_host_config()
     profile = _profile({k: v for k, v in raw.items() if k in PROFILE_KEYS})
     payload = {"format": "codex-loop-host-profile", "version": 1,
                "account_sha256": _account(drive_root_id), "profile": profile,
@@ -71,7 +71,7 @@ def import_profile(*, drive_root_id: str, input_path: str) -> dict[str, Any]:
     if payload["profile_sha256"] != _digest(profile):
         raise ValueError("Host Profile digest mismatch")
     # Keep the receiving native computer's cleanup registry; Web uses a fresh home.
-    existing, _, _ = _load_raw_host_config(strict=True)
+    existing, _, _ = _load_raw_host_config()
     if "drive" in existing:
         profile["drive"] = existing["drive"]
     _write_raw_profile(profile)
