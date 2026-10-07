@@ -100,6 +100,28 @@ class SharedGitMetadataRepairTests(unittest.TestCase):
                 self.assertTrue(backup.is_dir())
                 self.assertTrue((worktree / ".git").is_file())
 
+    def test_git_probe_respects_repository_filemode_configuration(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            worktree = root / "demo"
+            subprocess.run(["git", "init", "-q", str(worktree)], check=True)
+            tracked = worktree / "tracked.txt"
+            tracked.write_text("one\n")
+            subprocess.run(["git", "-C", str(worktree), "add", "tracked.txt"], check=True)
+            subprocess.run([
+                "git", "-C", str(worktree), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "-qm", "init",
+            ], check=True)
+            subprocess.run(["git", "-C", str(worktree), "config", "core.filemode", "false"], check=True)
+            tracked.chmod(0o755)
+            self.assertEqual(
+                subprocess.check_output(["git", "-C", str(worktree), "status", "--porcelain"], text=True),
+                "",
+            )
+            state = workspace.git_state(worktree, include_content_hashes=False)
+            self.assertEqual(state["status"], [])
+            self.assertFalse(state["probe_degraded"])
+
     def test_normal_git_repo_does_not_enter_repair_path(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

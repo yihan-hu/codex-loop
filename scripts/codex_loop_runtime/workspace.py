@@ -64,7 +64,7 @@ def _git_executable(cwd: Path) -> str:
 def run_git(cwd: Path, args: list[str], *, check: bool = False) -> subprocess.CompletedProcess[bytes]:
     env = build_internal_git_env()
     git = _git_executable(cwd)
-    argv = [git, "-c", "core.fsmonitor=false", "-c", "core.filemode=true", "-c", "diff.external=", *args]
+    argv = [git, "-c", "core.fsmonitor=false", "-c", "diff.external=", *args]
     proc = subprocess.Popen(
         argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         close_fds=True, start_new_session=(os.name != "nt"),
@@ -86,7 +86,7 @@ def _external_git_probe(worktree: Path, git_dir: Path, args: list[str]) -> subpr
     env = build_internal_git_env()
     git = _git_executable(worktree)
     argv = [git, "--git-dir", str(git_dir), "--work-tree", str(worktree),
-            "-c", "core.fsmonitor=false", "-c", "core.filemode=true", "-c", "diff.external=", *args]
+            "-c", "core.fsmonitor=false", "-c", "diff.external=", *args]
     return subprocess.run(argv, cwd=worktree, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           timeout=GIT_PROBE_TIMEOUT_SECONDS, check=False)
 
