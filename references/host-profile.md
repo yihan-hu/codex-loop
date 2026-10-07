@@ -43,14 +43,16 @@ Each key in `workspace.environments` matches a connection's `computer` identifie
         "default_root": "/absolute/path/to/work",
         "projects": {"example": "/absolute/path/to/work/example"},
         "runtime_directory": null,
-        "state_directory": null
+        "state_directory": null,
+        "git_metadata_root": null
       }
     }
   }
 }
 ```
 
-Every environment location field is optional: default root, runtime directory, and state directory default to null; projects default to an empty map. All configured paths are absolute locators interpreted on that environment. Never expand or resolve a remote locator on the Web host. `runtime_directory` points to the dedicated runtime checkout (containing `scripts/codex_loop.py`); `state_directory` is the private `CODEX_LOOP_HOME`, whose `runtime/` holds lifecycle state. Null uses the standard locations `~/.codex-loop/runtime-src` and `~/.codex-loop`, expanded and checked on the selected environment. These runtime defaults never substitute for a missing task workspace.
+Every environment location field is optional: default root, runtime directory, state directory, and `git_metadata_root` default to null; projects default to an empty map. All configured paths are absolute locators interpreted on that environment. Never expand or resolve a remote locator on the Web host. `runtime_directory` points to the dedicated runtime checkout (containing `scripts/codex_loop.py`); `state_directory` is the private `CODEX_LOOP_HOME`, whose `runtime/` holds lifecycle state. Null uses the standard locations `~/.codex-loop/runtime-src` and `~/.codex-loop`, expanded and checked on the selected environment. These runtime defaults never substitute for a missing task workspace.
+`git_metadata_root` is an optional host-local root for Git metadata belonging to registered shared worktrees. When set, project alias `NAME` maps to `<git_metadata_root>/NAME`. It is consulted only after the registered project's normal Git probe fails, so ordinary same-host Git access has no additional repair path. The field is a locator, not a grant, and must not point into a shared/synced worktree.
 
 Projects map canonical aliases to absolute directories. Resolve a saved project through the pinned route using `route-check --project ALIAS`; when a local grant registry is needed, materialize and canonicalize that exact project location on the selected environment before granting. The profile is the editable source of saved project locations; the local registry entry for a saved alias is only its derived grant lookup. Reconcile a stale entry from this source, invalidating its old grant, rather than choosing one location arbitrarily. Conversation-only extra directories may use the registry independently and must not be saved as preferences without user intent.
 

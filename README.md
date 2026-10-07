@@ -147,7 +147,7 @@ See `references/local-mode-setup.md` for the exact agent-side resolution and saf
 
 Start with the [local MCP setup tutorial](references/local-mcp-tutorial.md) to connect and verify your computer. Then register the connection and choose a default below. The tutorial distinguishes the observed no-top-up setup from any guarantee about other accounts or future pricing.
 
-`~/.codex-loop/host.json` is outside the repository and is never pushed or included in the Skill ZIP. It stores connector locators, their priority, a default execution environment, and per-environment workspace/project/runtime/state locations; it contains no API keys or permission grants. Existing `host-config` commands edit it, and ordinary language such as “remember this Mac as my default”, “use Web this time”, or “use my second MCP this time” maps to saving or overriding those settings.
+`~/.codex-loop/host.json` is outside the repository and is never pushed or included in the Skill ZIP. It stores connector locators, their priority, a default execution environment, and per-environment workspace/project/runtime/state locations plus an optional host-local `git_metadata_root`; it contains no API keys or permission grants. Existing `host-config` commands edit it, and ordinary language such as “remember this Mac as my default”, “use Web this time”, or “use my second MCP this time” maps to saving or overriding those settings.
 
 ```bash
 python3 scripts/codex_loop.py host-config set execution.connections '[
@@ -189,12 +189,17 @@ Save each environment's default root in `workspace.environments` in the private 
 {
   "schema_version": 4,
   "workspace": {
-    "environments": {"laptop": {"default_root": "/absolute/path/to/work"}}
+    "environments": {
+      "laptop": {
+        "default_root": "/absolute/path/to/work",
+        "git_metadata_root": "/absolute/path/to/host-local-git-metadata"
+      }
+    }
   }
 }
 ```
 
-Current-task authorized directories and explicitly named saved projects override this default. Profiles contain locators, never grants or observed capability claims. Keep all personal configuration outside repositories and Skill packages; an older profile requires an explicit private-profile update.
+Current-task authorized directories and explicitly named saved projects override this default. For a registered shared project, `git_metadata_root` maps project alias `NAME` to `<git_metadata_root>/NAME`; Codex Loop consults it only after a normal Git probe fails, so repeated same-host access stays on the ordinary fast path. Profiles contain locators, never grants or observed capability claims. Keep all personal configuration outside repositories and Skill packages; an older profile requires an explicit private-profile update.
 
 ### Remembering local projects
 

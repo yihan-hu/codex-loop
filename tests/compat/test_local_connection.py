@@ -158,7 +158,7 @@ class LocalConnectionTests(unittest.TestCase):
         host_config_set("workspace.environments", {
             "mac": {"default_root": "/mac/work", "projects": {"repo": "/mac/project"}},
             "pc": {"default_root": "/mnt/c/Work Area", "runtime_directory": "/runtime/code",
-                   "state_directory": "/runtime/state"},
+                   "state_directory": "/runtime/state", "git_metadata_root": "/git-meta"},
         })
         for computer, connector, expected in [("mac", "mac-first", "/mac/work"), ("pc", "pc", "/mnt/c/Work Area")]:
             route = route_init(workspace_target=computer, available_connections=[connector])
@@ -179,6 +179,7 @@ class LocalConnectionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unknown project"):
                     route_check(**args, workspace_granted=True, project="repo")
                 self.assertEqual(route["local_connection"]["locations"]["runtime_directory"], "/runtime/code")
+                self.assertEqual(route["local_connection"]["locations"]["git_metadata_root"], "/git-meta")
 
     def test_saved_project_is_current_without_moving_existing_route_defaults(self):
         host_config_set("workspace.environments", {"mac": {"default_root": "/first"}})

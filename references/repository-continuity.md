@@ -111,3 +111,8 @@ HOT lost + WARM unavailable -> COLD acquisition
 ```
 
 Identity checks exist to protect this fast path, not to force the path to restart.
+## Registered shared worktree host-path repair
+
+A registered project may intentionally keep one synchronized source worktree while Mac/WSL keep separate host-local Git metadata. Do not treat a host-switched `.git` pointer as cold acquisition evidence. The normal Git probe runs first. If it fails and Host Profile maps the project to an environment with `git_metadata_root`, validate `<git_metadata_root>/<project-alias>` against the exact registered worktree, repair the shared `.git` pointer and local `core.worktree`, preserve a conflicting synced `.git` directory outside the worktree, and retry once. Only after that bounded repair fails should repository continuity/source acquisition handle the workspace as genuinely unavailable or broken.
+
+This repair never searches for another checkout, never creates a repository, never runs for unregistered directories, and never retries arbitrary Git failures.

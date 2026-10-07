@@ -67,6 +67,7 @@ class HostConfigTests(unittest.TestCase):
                 {"web": {}}, {"mac": {"default_root": "relative"}},
                 {"mac": {"authorized": True}}, {"mac": {"projects": {"Demo": "/work"}}},
                 {"mac": {"runtime_directory": "/bad\npath"}},
+                {"mac": {"git_metadata_root": "relative"}},
             ]:
                 _, proc = call(home, "host-config", "set", "workspace.environments", json.dumps(environments), check=False)
                 self.assertNotEqual(proc.returncode, 0)
@@ -82,7 +83,8 @@ class HostConfigTests(unittest.TestCase):
                 "interaction": {"language": "Chinese"},
                 "workspace": {"environments": {
                     "mac": {"default_root": "/default/work", "projects": {"existing": "/existing"}},
-                    "wsl": {"default_root": "/mnt/work", "runtime_directory": "/runtime"},
+                    "wsl": {"default_root": "/mnt/work", "runtime_directory": "/runtime",
+                            "git_metadata_root": "/git-meta"},
                 }},
             }
             path.write_text(json.dumps(original)); os.chmod(path, 0o600)

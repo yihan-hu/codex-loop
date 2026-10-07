@@ -65,7 +65,7 @@ Use this continuation contract after admission:
 5. Repair resolvable failures and continue. Use `blocked` only for a genuine impasse with no remaining safe useful work; do not use it merely because work is difficult, slow, uncertain, or incomplete.
 6. Treat completion as unproven until the actual request is verified requirement by requirement against current authoritative evidence.
 
-For repository or filesystem work, bind/orient the existing lifecycle once before the first mutation:
+For repository or filesystem work, bind/orient the existing lifecycle once before the first mutation. Repository discovery normally uses native Git directly. If that normal probe fails for a Host Profile registered shared project and its selected environment has `git_metadata_root`, Codex Loop may perform one bounded host-path repair before treating the workspace as missing/broken: validate `<git_metadata_root>/<project-alias>` against the exact registered worktree, repair the shared `.git` pointer/current-host `core.worktree`, preserve a conflicting synced `.git` directory outside the worktree, and retry once. Do not use this repair for unregistered paths or as a general fallback for arbitrary Git errors:
 
 ```bash
 python3 scripts/codex_loop.py orient --task-id TASK --cwd REPO

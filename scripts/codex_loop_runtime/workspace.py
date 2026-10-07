@@ -6,6 +6,7 @@ import shutil
 import stat
 import subprocess
 import threading
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ MAX_IGNORED_WATCH_FILE_BYTES = 1024 * 1024
 MAX_IGNORED_WATCH_TOTAL_BYTES = 8 * 1024 * 1024
 
 from .environment import build_internal_git_env
+from .host_config import configured_git_metadata_for_path
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,81 @@ def run_git(cwd: Path, args: list[str], *, check: bool = False) -> subprocess.Co
     return completed
 
 
+
+def _external_git_probe(worktree: Path, git_dir: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
+    env = build_internal_git_env()
+    git = _git_executable(worktree)
+    argv = [git, "--git-dir", str(git_dir), "--work-tree", str(worktree),
+            "-c", "core.fsmonitor=false", "-c", "core.filemode=true", "-c", "diff.external=", *args]
+    return subprocess.run(argv, cwd=worktree, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          timeout=GIT_PROBE_TIMEOUT_SECONDS, check=False)
+
+
+def _write_git_pointer(marker: Path, git_dir: Path) -> None:
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=".git.codex-loop-", dir=str(marker.parent))
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(f"gitdir: {git_dir}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, marker)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _repair_registered_external_git(path: Path, *, require_candidate_head: bool = False) -> Path | None:
+    """Repair a host-switched shared worktree only after its normal Git probe failed.
+
+    The project and metadata root must both come from Host Profile. Existing shared `.git`
+    directories are preserved outside the worktree before the pointer is replaced.
+    """
+    binding = configured_git_metadata_for_path(path)
+    if not binding:
+        return None
+    worktree = Path(binding["worktree"]).resolve()
+    git_dir = Path(binding["git_dir"]).resolve()
+    try:
+        git_dir.relative_to(worktree)
+    except ValueError:
+        pass
+    else:
+        raise RuntimeError(f"git_metadata_root must stay outside the registered shared worktree: {git_dir}")
+    if not worktree.is_dir() or not git_dir.is_dir():
+        return None
+    probe = _external_git_probe(worktree, git_dir, ["rev-parse", "--git-dir"])
+    if probe.returncode != 0:
+        return None
+    if require_candidate_head:
+        candidate_head = _external_git_probe(worktree, git_dir, ["rev-parse", "--verify", "HEAD"])
+        if candidate_head.returncode != 0:
+            return None
+    marker = worktree / ".git"
+    if marker.is_dir():
+        recovery_root = git_dir.parent / ".codex-loop-recovered"
+        recovery_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        backup = recovery_root / f"{binding['project']}-shared-dotgit"
+        if backup.exists():
+            raise RuntimeError(f"refusing to overwrite preserved shared .git metadata: {backup}")
+        try:
+            os.replace(marker, backup)
+        except OSError:
+            shutil.move(str(marker), str(backup))
+    elif marker.exists() and not marker.is_file():
+        raise RuntimeError(f"unsupported .git marker type in registered project: {marker}")
+    config = _external_git_probe(worktree, git_dir, ["config", "core.worktree", str(worktree)])
+    if config.returncode != 0:
+        raise RuntimeError(f"failed to bind external Git metadata to registered worktree: {worktree}")
+    _write_git_pointer(marker, git_dir)
+    verify = run_git(worktree, ["rev-parse", "--is-inside-work-tree"])
+    if verify.returncode != 0 or verify.stdout.decode("utf-8", errors="replace").strip().lower() != "true":
+        raise RuntimeError(f"Git metadata repair did not restore registered worktree: {worktree}")
+    return worktree
+
 def repo_root(cwd: str | os.PathLike[str]) -> Path:
     path = Path(cwd).resolve()
     try:
@@ -87,6 +164,9 @@ def repo_root(cwd: str | os.PathLike[str]) -> Path:
             return Path(proc.stdout.decode("utf-8", errors="surrogateescape").strip()).resolve()
     except (FileNotFoundError, PermissionError, OSError, subprocess.TimeoutExpired):
         pass
+    repaired = _repair_registered_external_git(path)
+    if repaired is not None:
+        return repaired
     cursor = path
     while True:
         try:
@@ -105,7 +185,15 @@ def git_repo_probe(root: Path) -> bool | None:
     except (FileNotFoundError, PermissionError, OSError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
-        return False
+        repaired = _repair_registered_external_git(root)
+        if repaired is None:
+            return False
+        try:
+            proc = run_git(repaired, ["rev-parse", "--is-inside-work-tree"])
+        except (FileNotFoundError, PermissionError, OSError, subprocess.TimeoutExpired):
+            return None
+        if proc.returncode != 0:
+            return False
     return proc.stdout.decode("utf-8", errors="replace").strip().lower() == "true"
 
 
@@ -299,9 +387,13 @@ def git_state(root: Path, *, include_content_hashes: bool = True) -> dict[str, A
                 "status": [],
             }
         return {"is_git": False}
+    head, head_probe_failed = _git_head_probe(root)
+    if head is None and not head_probe_failed:
+        repaired = _repair_registered_external_git(root, require_candidate_head=True)
+        if repaired is not None:
+            return git_state(repaired, include_content_hashes=include_content_hashes)
     status_raw = git_status_porcelain_z(root)
     status_probe_failed = status_raw is None
-    head, head_probe_failed = _git_head_probe(root)
     branch, branch_probe_failed = _git_branch_probe(root)
     status = parse_status_porcelain_z(status_raw or b"")
     protected = set()

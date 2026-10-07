@@ -55,8 +55,14 @@ retain prior blocker for recheck]
   RE --> CC
 
   CC -. repo/filesystem work .-> O[One cheap orient]
-  O --> RI[Root-to-cwd repo instructions]
-  O --> PW[Pre-existing dirty/protected paths]
+  O --> GP{Normal Git probe succeeds?}
+  GP -->|yes| RI[Root-to-cwd repo instructions]
+  GP -->|yes| PW[Pre-existing dirty/protected paths]
+  GP -->|no + registered project mapping| GMR[Validate host-local git metadata from Host Profile]
+  GMR --> FIX[Repair shared .git pointer once + retry original probe]
+  FIX --> RI
+  FIX --> PW
+  GP -->|no usable mapping| RI
   CC --> DS{Domain Skill owns workflow?}
   DS -->|no| H[Host-native agent loop]
   DS -->|yes| DW[Domain Skill-owned workflow/state]
@@ -116,6 +122,7 @@ bound to stage + input + instruction + request + generation]
 - **Logical isolation keeps its existing meaning.** It remains behavioral rather than physical context isolation. The new semantic authority contract does not claim cryptographic proof of cognition; it removes the domain-runtime bypass by making logical isolation the only Codex Loop path that can mint authoritative semantic work.
 - **Normal model-facing context is authority-first and low-noise.** It contains the exact request/steers, a short continuation contract, lifecycle status, minimal workspace identity, real machine blockers/live work, and an optional short plan/task-board projection. Hashes, generations, validation history, changed-path inventories, receipts, and diagnostics remain runtime-side unless explicitly pulled or required by a capability.
 - **`orient` is cheap.** Repository tasks establish repo identity, current branch/HEAD/status, applicable instructions, and pre-existing dirty paths without a full content fingerprint or repository-wide baseline.
+- **Shared-worktree Git repair is bounded and failure-triggered.** A normal Git probe always runs first. Only when it fails, and only when the current path belongs to a Host Profile registered project whose environment defines `git_metadata_root`, Codex Loop validates `<git_metadata_root>/<project-alias>` as Git metadata for that exact worktree, updates its `core.worktree`, replaces the shared `.git` entry with the current-host pointer, preserves a conflicting synced `.git` directory outside the worktree, and retries the original probe once. My Mac/My WSL remain unchanged and repeated same-host Git access takes the normal fast path.
 - **Scoped instructions are stable authority.** Load root-to-cwd instructions during orientation and load a deeper scope only before first touching it. Do not rediscover instructions as a heartbeat.
 - **`next` is state-only.** It exposes status, plan/task-board state, and known live work without changing `paused`/`blocked`, reconciling the repository, hashing workspace content, rediscovering instructions, or suggesting that the model should finish. Use it only when a cheap lifecycle-state read is useful.
 - **`resume` owns real re-entry and user continuation.** Active stays active; paused/blocked are reactivated as a new attempt to advance the same objective, with the prior blocker returned for mandatory re-observation; complete/cancelled cannot resume. After re-entry, re-observe the bound workspace, live work, and applicable instructions. Historical summaries or validation never outrank current reality.

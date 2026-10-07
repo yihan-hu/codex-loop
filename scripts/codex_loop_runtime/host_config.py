@@ -261,11 +261,11 @@ def validate_absolute_locator(value: Any, label: str) -> str:
 
 
 def validate_environment_locations(raw: Any) -> dict[str, Any]:
-    defaults = {"default_root": None, "projects": {}, "runtime_directory": None, "state_directory": None}
+    defaults = {"default_root": None, "projects": {}, "runtime_directory": None, "state_directory": None, "git_metadata_root": None}
     if not isinstance(raw, dict) or set(raw) - set(defaults):
-        raise ValueError("environment locations support only default_root, projects, runtime_directory, state_directory")
+        raise ValueError("environment locations support only default_root, projects, runtime_directory, state_directory, git_metadata_root")
     result = {**defaults, **copy.deepcopy(raw)}
-    for key in ("default_root", "runtime_directory", "state_directory"):
+    for key in ("default_root", "runtime_directory", "state_directory", "git_metadata_root"):
         if result[key] is not None:
             validate_absolute_locator(result[key], key)
     projects = result["projects"]
@@ -336,6 +336,43 @@ def environment_locations(computer: str | None) -> dict[str, Any]:
     environments = _validate_section("workspace", raw.get("workspace"))["environments"]
     return copy.deepcopy(environments.get(computer, validate_environment_locations({})))
 
+
+
+def configured_git_metadata_for_path(path: str | os.PathLike[str]) -> dict[str, str] | None:
+    """Resolve a registered project to this host profile's external Git metadata location.
+
+    The lookup is path-only and local: it does not grant access, infer a project, or mutate Git.
+    It is used only after a normal Git probe fails.
+    """
+    target = Path(path).resolve()
+    raw, _, _ = _load_raw_host_config()
+    environments = _validate_section("workspace", raw.get("workspace"))["environments"]
+    matches: list[tuple[int, dict[str, str]]] = []
+    for computer, locations in environments.items():
+        metadata_root = locations.get("git_metadata_root")
+        if not metadata_root:
+            continue
+        for alias, project_raw in locations.get("projects", {}).items():
+            project = Path(project_raw).resolve()
+            try:
+                target.relative_to(project)
+            except ValueError:
+                continue
+            matches.append((len(project.parts), {
+                "computer": str(computer),
+                "project": str(alias),
+                "worktree": str(project),
+                "git_dir": str(Path(metadata_root) / alias),
+            }))
+    if not matches:
+        return None
+    matches.sort(key=lambda item: item[0], reverse=True)
+    best_depth = matches[0][0]
+    best = [item[1] for item in matches if item[0] == best_depth]
+    identities = {(item["worktree"], item["git_dir"]) for item in best}
+    if len(identities) != 1:
+        raise RuntimeError(f"ambiguous Host Profile Git metadata mapping for {target}")
+    return best[0]
 
 def _write_raw_profile(raw: dict[str, Any]) -> None:
     raw = copy.deepcopy(raw)

@@ -6,7 +6,7 @@ The user's private `~/.codex-loop/host.json` stores connection locators and an e
 
 ## Configuration
 
-Use the existing `host-config` command. `execution.connections` is an ordered list; unique `name` identifies a connection, `computer` groups connections to the same execution environment/filesystem (give Mac, Windows, and each WSL distribution distinct IDs), `connector` is its exact host-exposed app name or ID, `kind` is `mcp` or `rdc`; paths belong only to `workspace.environments[computer]`, never to individual connections.
+Use the existing `host-config` command. `execution.connections` is an ordered list; unique `name` identifies a connection, `computer` groups connections to the same execution environment/filesystem (give Mac, Windows, and each WSL distribution distinct IDs), `connector` is its exact host-exposed app name or ID, `kind` is `mcp` or `rdc`; paths belong only to `workspace.environments[computer]`, never to individual connections. This includes the optional host-local `git_metadata_root` used to repair a registered shared project's host-specific `.git` pointer after a failed normal Git probe.
 
 ```bash
 python3 scripts/codex_loop.py host-config set execution.connections '[
