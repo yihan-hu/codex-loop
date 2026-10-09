@@ -26,6 +26,10 @@ flowchart TD
   S -->|Web/default| HR[Installed ChatGPT runtime]
   S -->|Local computer| MCP[Explicit connector or ordered custom MCPs then RDC]
   MCP --> OBS[Host-observed file/shell capability + computer identity]
+  OBS -. My Mac first admission .-> MG[Private-runtime bootstrap/resume, session ID; no task ID yet]
+  MG --> LR
+  L -. after real task ID .-> WG[Register explicitly authorized project and session grant]
+  WG --> ACCESS
   MCP -. first-time setup only .-> GUIDE[Local MCP setup tutorial]
   ROUTE --> DISPATCH[route-check verifies intended connector + task permissions]
   DISPATCH --> LR[Same connector: selected computer runtime cache]
