@@ -26,7 +26,7 @@ flowchart TD
   S -->|Web/default| HR[Installed ChatGPT runtime]
   S -->|Local computer| MCP[Explicit connector or ordered custom MCPs then RDC]
   MCP --> OBS[Host-observed file/shell capability + computer identity]
-  OBS -. My Mac first admission .-> MG[Private-runtime bootstrap/resume, session ID; no task ID yet]
+  OBS -. My Mac first admission .-> MG[Private Codex Loop runtime commands including bootstrap/resume; no task ID yet]
   MG --> LR
   L -. after real task ID .-> WG[Register explicitly authorized project and session grant]
   WG --> ACCESS
