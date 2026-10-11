@@ -40,6 +40,82 @@ def cache_path(tmpdir: Path) -> Path:
 
 
 class WorkspaceRegistryTests(unittest.TestCase):
+    def test_explicit_current_turn_admits_project_without_old_task_or_grant(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home, tmpdir = root / "home", root / "tmp"
+            tmpdir.mkdir()
+            authorized = root / "authorized"
+            authorized.mkdir()
+            repo = authorized / "epi-prose"
+            repo.mkdir()
+            other = authorized / "other"
+            other.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            base = (
+                "workspace-admit", "--name", "epi-prose", "--path", str(repo),
+                "--kind", "repository", "--session-id", "workspace-test-session-0001",
+                "--authorization-evidence", "user explicitly authorized epi-prose this turn",
+            )
+
+            missing_consent, failed = call(
+                home, tmpdir, *base, "--host-authorized-root", str(authorized), check=False,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("host-observed", missing_consent["error"]["message"])
+            self.assertFalse(cache_path(tmpdir).exists())
+
+            wrong_root, failed = call(
+                home, tmpdir, *base, "--host-authorized-root", str(outside),
+                "--current-user-authorization-observed", check=False,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("connector-authorized root", wrong_root["error"]["message"])
+            self.assertFalse(cache_path(tmpdir).exists())
+
+            admitted, _ = call(
+                home, tmpdir, *base, "--host-authorized-root", str(authorized),
+                "--current-user-authorization-observed",
+            )
+            self.assertTrue(admitted["data"]["granted"])
+            self.assertTrue(admitted["data"]["accessible"])
+            self.assertFalse(admitted["data"]["reused_registration"])
+            session = admitted["data"]["session_id"]
+
+            resolved, _ = call(
+                home, tmpdir, "workspace-resolve", "epi-prose", "--session-id", session,
+                "--host-authorized-root", str(authorized), "--require-access",
+            )
+            self.assertTrue(resolved["data"]["accessible"])
+
+            again, _ = call(
+                home, tmpdir, *base, "--host-authorized-root", str(authorized),
+                "--current-user-authorization-observed",
+            )
+            self.assertTrue(again["data"]["reused_registration"])
+            self.assertTrue(again["data"]["granted"])
+
+            conflicting = (
+                "workspace-admit", "--name", "epi-prose", "--path", str(other),
+                "--kind", "repository", "--session-id", session,
+                "--authorization-evidence", "user authorized a different project",
+                "--host-authorized-root", str(authorized),
+                "--current-user-authorization-observed",
+            )
+            conflict, failed = call(home, tmpdir, *conflicting, check=False)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("already registered", conflict["error"]["message"])
+
+            another, _ = call(
+                home, tmpdir, "workspace-resolve", "epi-prose",
+                "--session-id", "second-chat-session-0001",
+                "--host-authorized-root", str(authorized),
+            )
+            self.assertFalse(another["data"]["registered"])
+            self.assertFalse(another["data"]["accessible"])
+
+
     def test_known_granted_and_host_authorized_are_independent(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

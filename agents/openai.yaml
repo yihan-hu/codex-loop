@@ -3,6 +3,6 @@ interface:
   short_description: "Objective lifecycle for multi-step work"
   icon_small: "./assets/icon.svg"
   icon_large: "./assets/icon.svg"
-  default_prompt: "Use $codex-loop for this objective; before any task action, bootstrap a new lifecycle or reuse the exact task_id for an already-admitted continuation, and never continue outside that lifecycle."
+  default_prompt: "Use $codex-loop for this objective; before any task action, bootstrap only a new lifecycle or resume an existing one. For a user-authorized local My Mac project, run route-init then workspace-admit through the private runtime before ordinary project tools; do not re-ask consent or invent a session/task ID. Never continue outside the lifecycle."
 policy:
   allow_implicit_invocation: true

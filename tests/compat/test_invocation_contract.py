@@ -29,6 +29,8 @@ class InvocationContractTests(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("## Mandatory lifecycle admission", skill)
         self.assertIn("Then `bootstrap` must return a `task_id`", skill)
+        self.assertIn("`workspace-admit` materializes and grants the project in one step", skill)
+        self.assertIn("use `resume --task-id TASK`", skill)
         self.assertIn("fail closed", skill)
         self.assertIn("do not silently continue the objective as ordinary chat/tool execution", skill)
         self.assertIn("Do not run a second direct-vs-durable admission decision", skill)

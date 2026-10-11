@@ -346,6 +346,45 @@ def grant_workspace(
     }
 
 
+def admit_workspace(
+    name: str,
+    path: str | os.PathLike[str],
+    kind: str,
+    authorization_evidence: str,
+    *,
+    session_id: str,
+    host_authorized_roots: Iterable[str | os.PathLike[str]],
+    current_user_authorization_observed: bool = False,
+) -> dict[str, Any]:
+    """Admit an explicitly authorized local project in one conversation-scoped step."""
+    if not current_user_authorization_observed:
+        raise PermissionError("workspace-admit requires host-observed explicit current-conversation user authorization")
+    evidence = str(authorization_evidence).strip()
+    if not evidence:
+        raise ValueError("workspace-admit requires explicit authorization evidence")
+    sid = _session_id(session_id)
+    if sid is None:
+        raise ValueError("workspace-admit requires a current conversation session id")
+    alias = normalize_alias(name)
+    if kind not in WORKSPACE_KINDS:
+        raise ValueError(f"workspace kind must be one of {sorted(WORKSPACE_KINDS)}")
+    realpath = _canonical_existing_directory(path)
+    roots = _canonical_host_roots(host_authorized_roots)
+    if not any(_within(realpath, root) for root in roots):
+        raise PermissionError("workspace-admit requires an observed connector-authorized root containing the project")
+
+    entry = {"path": str(realpath), "kind": kind}
+    existing = load_registry(sid)["workspaces"].get(alias)
+    if existing is not None and existing != entry:
+        raise ValueError(f"workspace alias already registered to another location: {alias}")
+    if existing is None:
+        materialize_workspace(alias, realpath, kind, session_id=sid)
+    granted = grant_workspace(
+        alias, evidence, session_id=sid, current_user_authorization_observed=True,
+    )
+    return {**granted, "accessible": True, "host_scope_matched": True, "reused_registration": existing is not None}
+
+
 def session_grants(*, session_id: str | None = None) -> dict[str, Any]:
     resolved_session = _session_id(session_id, generate=False)
     session = _load_session(resolved_session)

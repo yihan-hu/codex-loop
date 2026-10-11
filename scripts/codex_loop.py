@@ -107,6 +107,7 @@ from codex_loop_runtime.workspace_cache import (
 from codex_loop_runtime.state import workspace_task_id, latest_resumable_task_id, open_store, set_workspace_task
 from codex_loop_runtime.workspace import git_state, hash_workspace_path, repo_root, run_git, workspace_identity_status
 from codex_loop_runtime.workspace_registry import (
+    admit_workspace,
     grant_workspace,
     list_workspaces,
     materialize_workspace,
@@ -158,6 +159,7 @@ HOST_ADAPTER_COMMANDS = (
     ('drive-cache-unregister', 'remove a cache folder path from host-local config'),
     ('drive-cache-list', 'list host-local registered Codex Loop Drive cache folders'),
     ('drive-cache-cleanup-plan', 'return exact owned >=3-day registered cache objects ready for automatic cleanup'),
+    ('workspace-admit', 'admit an explicitly authorized local project and grant the current conversation'),
     ('workspace-materialize', 'materialize a conversation workspace cache entry'),
     ('workspace-registry-list', 'list derived conversation workspace entries'),
     ('workspace-resolve', 'resolve a registered workspace under current grants'),
@@ -1333,6 +1335,25 @@ def _cmd_host_project(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_workspace_admit(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog='codex_loop.py workspace-admit')
+    p.add_argument('--name', required=True)
+    p.add_argument('--path', required=True)
+    p.add_argument('--kind', required=True, choices=['repository', 'development_root'])
+    p.add_argument('--session-id', required=True)
+    p.add_argument('--host-authorized-root', action='append', required=True)
+    p.add_argument('--authorization-evidence', required=True)
+    p.add_argument('--current-user-authorization-observed', action='store_true')
+    args = p.parse_args(argv[1:])
+    emit_ok(admit_workspace(
+        args.name, args.path, args.kind, args.authorization_evidence,
+        session_id=args.session_id,
+        host_authorized_roots=args.host_authorized_root,
+        current_user_authorization_observed=args.current_user_authorization_observed,
+    ))
+    return 0
+
+
 def _cmd_workspace_materialize(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py workspace-materialize')
     p.add_argument('--name', required=True)
@@ -1520,6 +1541,8 @@ def main() -> int:
             return _cmd_drive_cache_cleanup_plan(argv)
         if argv[0] == 'host-project':
             return _cmd_host_project(argv)
+        if argv[0] == 'workspace-admit':
+            return _cmd_workspace_admit(argv)
         if argv[0] == 'workspace-materialize':
             return _cmd_workspace_materialize(argv)
         if argv[0] == 'workspace-registry-list':

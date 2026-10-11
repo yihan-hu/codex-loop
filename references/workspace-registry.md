@@ -47,27 +47,32 @@ reads or writes `~/.codex-loop/workspace-registry.json`. Old files are left unto
 there is no automatic migration or deletion. A new chat starts without its old
 cache or grants. The cache never stores authorization; grant state is separate.
 
-On the pinned local environment, read the current source project locator through
-the controller first, then inspect its directory/realpath through the selected
-connector. Materialize only this verified location (or a current-task directory):
+On the pinned local environment, resolve the project locator from the controller and verify the directory plus the connector-authorized root. **When the current user explicitly authorizes that project**, complete the current conversation's permission setup in one private-runtime call, before any ordinary project file or shell tool:
+
+```bash
+python3 scripts/codex_loop.py workspace-admit \
+  --name epiagent --path "/absolute/path/to/EpiAgent" --kind repository \
+  --session-id CURRENT_ROUTE_SESSION_ID \
+  --host-authorized-root "/host/verified/connector/root" \
+  --authorization-evidence "exact current user authorization" \
+  --current-user-authorization-observed
+```
+
+`CURRENT_ROUTE_SESSION_ID` comes from the current conversation's `route-init` (not a guessed identifier or an earlier chat). `--host-authorized-root` is the root whose connector permission the host has actually observed; supplying an arbitrary path cannot confer connector access. No existing `task_id` is needed to establish this project grant; continue with `resume` for an existing lifecycle, or `bootstrap` for a new objective. If user authorization was already explicit, run this command rather than asking for consent again.
+
+For a read-only lookup that has **not** yet been granted, the lower-level materialization remains available:
 
 ```bash
 python3 scripts/codex_loop.py workspace-materialize \
   --name epiagent --path "/absolute/path/to/EpiAgent" --kind repository
 ```
 
-The first materialization returns `session_id`; retain it only in current chat
-memory. Pass the same nonce to subsequent commands, or supply it through a
-conversation-scoped `CODEX_LOOP_SESSION_ID`. Do not persist it in Host Profile,
+For a lower-level materialization without an existing route ID, the first call returns `session_id`; retain it only in this chat. Otherwise use the existing route's exact session ID for every command. Pass the same nonce explicitly or through a conversation-scoped `CODEX_LOOP_SESSION_ID`. Do not persist it in Host Profile,
 user memory, task/repository state, or any cross-chat store. It is bound to the
 selected environment; never reuse it on another computer.
 
 ```bash
 python3 scripts/codex_loop.py workspace-registry-list --session-id SESSION_NONCE
-
-python3 scripts/codex_loop.py workspace-grant epiagent \
-  --session-id SESSION_NONCE --current-user-authorization-observed \
-  --authorization-evidence "current user authorized this exact directory"
 
 python3 scripts/codex_loop.py workspace-resolve epiagent \
   --session-id SESSION_NONCE \
