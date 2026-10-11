@@ -59,9 +59,9 @@ class InvocationContractTests(unittest.TestCase):
         self.assertIn('icon_small: "./assets/icon.svg"', metadata)
         self.assertIn('icon_large: "./assets/icon.svg"', metadata)
         self.assertIn("allow_implicit_invocation: true", metadata)
-        self.assertIn("bootstrap a new lifecycle or reuse the exact task_id", metadata)
+        self.assertIn("bootstrap only a new lifecycle or resume an existing one", metadata)
         self.assertIn("before any task action", metadata)
-        self.assertIn("never continue outside that lifecycle", metadata)
+        self.assertIn("Never continue outside the lifecycle.", metadata)
 
 
 if __name__ == "__main__":
