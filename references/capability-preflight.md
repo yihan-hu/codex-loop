@@ -103,7 +103,7 @@ Never overwrite, rename, move, or delete a pre-existing user file as a permissio
 
 ### Google Drive deletion
 
-When the task will call Drive `delete_file`, request `google_drive_delete` in addition to any upload/create capability. At admission, create one unique, disposable sentinel in the verified task-owned temporary Drive folder, confirm its ID, **call the same live `delete_file` tool** on that exact sentinel, and confirm it is gone. This delete is intentionally real: a read/list check, simulated deletion, or an upload that uses a different host permission class cannot warm the delete confirmation.
+When the task will call Drive `delete_file`, request `google_drive_delete` in addition to any upload/create capability. At admission, create one unique, disposable **file** sentinel in the verified task-owned temporary Drive area, confirm its ID, **call the same live `delete_file` tool** on that exact sentinel using a supported file URL, and confirm it is gone. Do not pass a Drive folder URL to `delete_file`: the connector may reject that URL form even though folder deletion by ID is technically supported. This delete is intentionally real: a read/list check, simulated deletion, or an upload that uses a different host permission class cannot warm the delete confirmation.
 
 When both `google_drive_write` and `google_drive_delete` are required, use the same sentinel for the upload/read/delete sequence if the actual connector paths match, and record evidence separately for the upload and delete scopes. If no safe sentinel can be created, report that deletion preflight is unproven; never test on a pre-existing user document.
 
