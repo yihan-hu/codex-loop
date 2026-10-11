@@ -30,6 +30,8 @@ class InvocationContractTests(unittest.TestCase):
         self.assertIn("## Mandatory lifecycle admission", skill)
         self.assertIn("Then `bootstrap` must return a `task_id`", skill)
         self.assertIn("`workspace-admit` materializes and grants the project in one step", skill)
+        self.assertIn("Same-chat authorization is sticky", skill)
+        self.assertIn("automatically (re)run `workspace-admit`", skill)
         self.assertIn("use `resume --task-id TASK`", skill)
         self.assertIn("fail closed", skill)
         self.assertIn("do not silently continue the objective as ordinary chat/tool execution", skill)

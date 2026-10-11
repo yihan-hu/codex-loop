@@ -47,18 +47,18 @@ reads or writes `~/.codex-loop/workspace-registry.json`. Old files are left unto
 there is no automatic migration or deletion. A new chat starts without its old
 cache or grants. The cache never stores authorization; grant state is separate.
 
-On the pinned local environment, resolve the project locator from the controller and verify the directory plus the connector-authorized root. **When the current user explicitly authorizes that project**, complete the current conversation's permission setup in one private-runtime call, before any ordinary project file or shell tool:
+On the pinned local environment, resolve the project locator from the controller and verify the directory plus the connector-authorized root. **When the user has explicitly authorized that project anywhere in the current conversation and has not revoked it**, complete the current conversation's permission setup in one private-runtime call, before any ordinary project file or shell tool:
 
 ```bash
 python3 scripts/codex_loop.py workspace-admit \
   --name epiagent --path "/absolute/path/to/EpiAgent" --kind repository \
   --session-id CURRENT_ROUTE_SESSION_ID \
   --host-authorized-root "/host/verified/connector/root" \
-  --authorization-evidence "exact current user authorization" \
+  --authorization-evidence "explicit user authorization in this conversation" \
   --current-user-authorization-observed
 ```
 
-`CURRENT_ROUTE_SESSION_ID` comes from the current conversation's `route-init` (not a guessed identifier or an earlier chat). `--host-authorized-root` is the root whose connector permission the host has actually observed; supplying an arbitrary path cannot confer connector access. No existing `task_id` is needed to establish this project grant; continue with `resume` for an existing lifecycle, or `bootstrap` for a new objective. If user authorization was already explicit, run this command rather than asking for consent again.
+`CURRENT_ROUTE_SESSION_ID` comes from the current conversation's `route-init` (not a guessed identifier or an earlier chat). `--host-authorized-root` is the root whose connector permission the host has actually observed; supplying an arbitrary path cannot confer connector access. No existing `task_id` is needed to establish this project grant; continue with `resume` for an existing lifecycle, or `bootstrap` for a new objective. If user authorization was stated in any earlier turn of this same conversation, it remains valid for the same project and action scope until revoked or narrowed; check the in-chat user messages and automatically run or repeat this command when the technical grant is missing. Do not demand that the latest turn repeat consent. Neither a prior chat's authorization nor a saved project locator supplies consent.
 
 For a read-only lookup that has **not** yet been granted, the lower-level materialization remains available:
 
