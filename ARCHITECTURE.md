@@ -29,7 +29,8 @@ flowchart TD
   OBS -. My Mac first admission .-> MG[Private Codex Loop runtime commands including bootstrap/resume; no task ID yet]
   MG --> LR
   L -. after real task ID .-> WG[Register explicitly authorized project and session grant]
-  WG --> ACCESS
+  WG --> ROUTEGATE[Named My Mac route checks current session project grant]
+  ROUTEGATE --> ACCESS
   MCP -. first-time setup only .-> GUIDE[Local MCP setup tutorial]
   ROUTE --> DISPATCH[route-check verifies intended connector + task permissions]
   DISPATCH --> LR[Same connector: selected computer runtime cache]

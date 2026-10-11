@@ -452,6 +452,10 @@ def route_check(
         missing: list[str] = list(location["requirements"])
         if not workspace_granted:
             missing.append("current_conversation_workspace_grant")
+        if project is not None and state["local_connection"]["connector"] == "My Mac":
+            from .workspace_registry import session_grants
+            if project not in session_grants(session_id=session_id)["granted"]:
+                missing.append("registered_current_conversation_project_grant")
         if action == "repository_mutate" and not local_source_mutation_authorized:
             missing.append("current_task_local_source_mutation_authorization")
         if missing:

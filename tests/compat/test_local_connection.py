@@ -174,12 +174,34 @@ class LocalConnectionTests(unittest.TestCase):
             self.assertEqual(override["local_root"], "/task/explicit")
             if computer == "mac":
                 project = route_check(**args, workspace_granted=True, project="repo")
-                self.assertEqual(project["local_root"], "/mac/project")
+                self.assertFalse(project["allowed"])
+                self.assertIn("registered_current_conversation_project_grant", project["requirements"])
             else:
                 with self.assertRaisesRegex(ValueError, "unknown project"):
                     route_check(**args, workspace_granted=True, project="repo")
                 self.assertEqual(route["local_connection"]["locations"]["runtime_directory"], "/runtime/code")
                 self.assertEqual(route["local_connection"]["locations"]["git_metadata_root"], "/git-meta")
+
+    def test_my_mac_named_project_requires_actual_session_grant(self):
+        from scripts.codex_loop_runtime.workspace_registry import materialize_workspace, grant_workspace
+        from scripts.codex_loop_runtime import workspace_registry
+        with patch.object(workspace_registry, "_session_root", return_value=Path(self.tmp.name) / "sessions"):
+            folder = Path(self.tmp.name) / "authorized-project"
+            folder.mkdir()
+            host_config_set("workspace.environments", {"mac": {"projects": {"research": str(folder)}}})
+            route = route_init(workspace_target="mac", available_connections=["mac-first"])
+            sid = route["session_id"]
+            args = dict(action="local_repository", session_id=sid, dispatch_connector="My Mac",
+                        project="research", workspace_granted=True)
+            self.assertIn("registered_current_conversation_project_grant", route_check(**args)["requirements"])
+            materialize_workspace("research", str(folder), "repository", session_id=sid)
+            self.assertFalse(route_check(**args)["allowed"])
+            grant_workspace("research", "explicit user grant to research project", session_id=sid,
+                            current_user_authorization_observed=True)
+            self.assertTrue(route_check(**args)["allowed"])
+            self.assertFalse(route_check(**{**args, "workspace_granted": False})["allowed"])
+            with self.assertRaises(FileNotFoundError):
+                route_check(**{**args, "session_id": "other-conversation"})
 
     def test_saved_project_is_current_without_moving_existing_route_defaults(self):
         host_config_set("workspace.environments", {"mac": {"default_root": "/first"}})
