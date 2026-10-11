@@ -40,7 +40,7 @@ Use Codex Loop for objectives such as:
 - remembering stable local workspace aliases without turning remembered paths into standing access permission;
 - keeping repository `workspace_mode` independent from browser/computer `interaction_target`;
 - controlling a user's local Chrome through a supported Browser/Chrome bridge attached to the current conversation, with separate host-health and session-capability recovery;
-- resolving GitHub/Drive permissions only when the objective reaches a side-effect boundary that needs them;
+- prewarming the exact GitHub, Drive upload/delete, and selected local write permissions needed by the task with safe live operations at task start;
 - publishing Web-mode workspace source through verified Drive staging + GitHub Actions, or Local-mode source through native Git;
 - packaging ChatGPT Skills;
 - packaging an updated Codex Loop workspace into an official validated `skill.zip`, then exposing the same bytes as `codex-loop.zip` through a fresh current-conversation artifact;
@@ -252,7 +252,7 @@ This path is **not Browser Control** and does not satisfy Browser capability che
 
 ## Capability and permission preflight
 
-Codex Loop resolves external capability checks at the side-effect boundary that actually needs them. Read-only reasoning, inspection, editing, and validation should not trigger unrelated permission probes merely because a later external action is predictable.
+Codex Loop runs bounded **live** permission probes for capabilities already implied by the authorized task at admission, immediately after its lifecycle and route are resolved and before lengthy implementation. If the exact target becomes known only after a small metadata lookup, probe it as soon as it is known. Do not check unrelated integrations or treat a connected indicator as write permission.
 
 When the bundled runtime is available, the host can make that stage explicit:
 
@@ -266,7 +266,7 @@ python3 scripts/codex_loop.py permission-preflight-plan \
 
 The command only plans probes; it does **not** grant or persist permission. ChatGPT must then execute each probe through the live host integration. Seeing a connector in the tool list, reading its schema, or observing a cached `connected=true`-style flag does not count.
 
-Typical probes are deliberately low-risk: Local GitHub publication uses `git push --dry-run`; Web GitHub publication combines live push-capable repository permission readback with one Git-database create-blob/write-object call containing fixed empty content that remains unreferenced, so no tree/commit/ref or source is changed; GitHub Actions uses only an audited read-only/ref-nonmutating workflow job (for this repository, `Workspace Download`, never `Workspace Import`); Drive write access creates one uniquely named non-sensitive sentinel, reads back its exact ID/metadata, and deletes that exact sentinel immediately. A repository permission readback alone may prove access, but does not prove the later host write boundary; probe that boundary only when the side effect is imminent.
+Typical probes are deliberately low-risk: Local GitHub publication uses `git push --dry-run`; Web GitHub publication combines live push-capable repository permission readback with one Git-database create-blob/write-object call containing fixed empty content that remains unreferenced, so no tree/commit/ref or source is changed; GitHub Actions uses only an audited read-only/ref-nonmutating workflow job (for this repository, `Workspace Download`, never `Workspace Import`); Drive write access creates one uniquely named non-sensitive sentinel, reads back its exact ID/metadata, and deletes that exact sentinel immediately. A repository permission readback alone may prove read access, but cannot prove the later host write boundary. A requested Drive deletion additionally probes `google_drive_delete` by calling the real `delete_file` API on a freshly created disposable sentinel; a local edit probes `local_project_write` via the selected My Mac/RDC/WSL file-write or shell tool in the exact authorized project, then verifies cleanup. These safe operations are intended to trigger the host's permission prompt early; a 'this conversation' approval option is host-controlled and may not be offered.
 
 For push-triggered Web publication, the common early host-permission set is `github_push + google_drive_write`; GitHub Actions is proved after the request push by observing the matching run/receipt rather than by requiring a separate Actions write probe. For tasks that do not publish, Codex Loop does not request those permissions just because the integrations exist. Live successful observations may be reused during the current task/session while they remain valid.
 

@@ -264,6 +264,40 @@ class RoutingStateTests(unittest.TestCase):
         finally:
             self.cleanup(state)
 
+    def test_early_live_delete_and_local_write_probes(self):
+        web = permission_preflight_plan(capabilities=["google_drive_write", "google_drive_delete"])
+        self.assertEqual(web["probe_capabilities"], ["google_drive_write", "google_drive_delete"])
+        delete = next(x for x in web["probes"] if x["capability"] == "google_drive_delete")
+        self.assertIn("SAME host delete_file API", delete["preferred_probe"])
+        self.assertTrue(delete["cleanup_required"])
+
+        with self.assertRaisesRegex(ValueError, "resolved local routing session"):
+            permission_preflight_plan(capabilities=["local_project_write"])
+
+        state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
+        try:
+            with self.assertRaisesRegex(ValueError, "resolved local routing session"):
+                permission_preflight_plan(
+                    session_id=state["session_id"], capabilities=["local_project_write"],
+                )
+            route_transition(
+                session_id=state["session_id"], workspace_mode="local",
+                available_connections=["rdc"],
+                selection_evidence="user explicitly chose local execution",
+                current_user_selection_observed=True,
+            )
+            plan = permission_preflight_plan(
+                session_id=state["session_id"], capabilities=["local_project_write"],
+            )
+            self.assertEqual(plan["probe_capabilities"], ["local_project_write"])
+            probe = plan["probes"][0]
+            self.assertIn("same file-write or shell tool", probe["preferred_probe"])
+            self.assertIn("EXACT authorized task directory", probe["preferred_probe"])
+            self.assertTrue(probe["cleanup_required"])
+            self.assertEqual(probe["side_effect_budget"].count("file"), 1)
+        finally:
+            self.cleanup(state)
+
     def test_scoped_permission_observation_reuse_is_expiring_and_route_bound(self):
         state=route_init(session_id=self.sid(),host_surface="chatgpt_web"); sid=state["session_id"]
         try:

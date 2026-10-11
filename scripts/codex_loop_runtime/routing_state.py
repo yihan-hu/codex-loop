@@ -42,6 +42,8 @@ PERMISSION_PROBE_CAPABILITIES = frozenset({
     "github_actions",
     "google_drive_read",
     "google_drive_write",
+    "google_drive_delete",
+    "local_project_write",
 })
 
 
@@ -658,6 +660,8 @@ def permission_preflight_plan(
 
     route = route_show(session_id=session_id) if session_id is not None else None
     workspace_mode = route.get("workspace_mode") if route else None
+    if "local_project_write" in requested and workspace_mode != "local":
+        raise ValueError("local_project_write requires a resolved local routing session")
     probes: list[dict[str, Any]] = []
     reused: list[dict[str, Any]] = []
     scopes = observation_scopes or {}
@@ -740,6 +744,37 @@ def permission_preflight_plan(
                 "cleanup_required": True,
                 "side_effect_budget": "one temporary owned sentinel only",
                 "failure_classification": "GOOGLE_DRIVE_WRITE_PERMISSION_NOT_PROVEN",
+            })
+        elif capability == "google_drive_delete":
+            probes.append({
+                "capability": capability,
+                "probe_kind": "live_host_delete_cleanup_probe",
+                "preferred_probe": (
+                    "Create one new disposable sentinel in the authorized Drive temporary folder, read back its exact ID, "
+                    "invoke the SAME host delete_file API that will be used later on ONLY that sentinel, and verify its "
+                    "absence. If a Drive write probe created a sentinel, share that sentinel rather than creating another. "
+                    "Never delete an existing user file to warm permissions."
+                ),
+                "success_evidence": "the live delete_file operation succeeds for the exact owned sentinel and absence is verified",
+                "cleanup_required": True,
+                "side_effect_budget": "one newly created owned sentinel only; never an existing user file",
+                "failure_classification": "GOOGLE_DRIVE_DELETE_PERMISSION_NOT_PROVEN",
+            })
+        elif capability == "local_project_write":
+            probes.append({
+                "capability": capability,
+                "probe_kind": "live_local_write_cleanup_probe",
+                "preferred_probe": (
+                    "On the selected RDC/My Mac/My WSL connector, after current-conversation project access is granted, "
+                    "create one unique tiny sentinel in the EXACT authorized task directory using the same file-write or "
+                    "shell tool the later task will use. Read it back, remove only that sentinel via the selected connector, "
+                    "and verify its absence. Use the real task and session identifiers where the connector requires them. "
+                    "A read/list/status probe cannot prove the write permission."
+                ),
+                "success_evidence": "the selected connector created and verified a new file in the authorized project and cleaned it up",
+                "cleanup_required": True,
+                "side_effect_budget": "one unique task-owned temporary file inside the authorized project; no source changes",
+                "failure_classification": "LOCAL_PROJECT_WRITE_PERMISSION_NOT_PROVEN",
             })
 
     return {

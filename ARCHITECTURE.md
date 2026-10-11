@@ -54,7 +54,9 @@ flowchart TD
   A -->|runtime temporarily unavailable| REPAIR
 
   L --> RQ[Retained exact request + steers]
-  L --> LS{Lifecycle status}
+  L --> PRE[Task-start live permission probes for required GitHub, Drive and selected local project operations]
+  PRE --> LS{Lifecycle status}
+  PRE -. recoverable permission or connector error .-> REPAIR
   LS -->|active| CC[Continuation contract]
   LS -->|paused| PA[Wait for explicit continuation]
   LS -->|blocked| BL[Wait for user/external change]
@@ -121,6 +123,7 @@ bound to stage + input + instruction + request + generation]
 ## Boundaries
 
 - **The connected user Drive profile is the only persistent preference authority.** Each new conversation imports and verifies that profile exactly once on the controller. The controller resolves the selected connector and environment/project locators, passes an explicit execution snapshot to the local runtime, and the private conversation route pins it. Native runtime/task state is independent; no native host preference file participates.
+- **Permission checks are early live operations, not connector status checks.** After bootstrap/resume and route resolution, probe the access classes already required by the objective before substantive work. In particular, Drive deletion calls the real delete API only on a disposable newly created sentinel; local edits use the selected RDC/My Mac/My WSL write tool to create and clean up a file in the exact authorized project. Actual approval prompts and session-wide choices remain host-owned, and later sensitive actions may require fresh approval.
 - **Technical errors remain visible after recovery.** Report distinct errors with cause certainty, repair, verified retry outcome and follow-up in the final task report; significant recurring errors also enter a normal checkpoint if one is needed. Reporting never pauses execution.
 - **Recoverable technical faults do not end authorized work.** The agent re-observes the original selected connector, refreshes missing route/grant state from explicit unrevoked same-conversation authorization, resumes the existing lifecycle, verifies the original operation, and retries it safely. No new controller or persistent recovery service is introduced. Only a confirmed external dependency, revoked/absent authorization, or exhausted safe recovery path may block. Ambiguous side effects are reconciled before any replay.
 - **My Mac admission grants are current-chat scoped.** Once `route-init` supplies a real session ID, an explicitly authorized project is admitted through one private-runtime `workspace-admit` command before ordinary project tools. Consent from any earlier user message in the current conversation remains effective for its exact project and action scope until revoked or narrowed; a missing technical grant is silently re-established under that consent, not re-asked. It checks the canonical path against a host-observed connector root, records a session-only grant, and needs no task ID. A continuation still resumes its existing lifecycle; no grant is silently inherited from an earlier conversation. The named connector retains its own access enforcement.

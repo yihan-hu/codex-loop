@@ -1,27 +1,24 @@
 # Capability and permission preflight
 
-Use one bounded permission-smoke stage only when an external side effect is imminent and the host permission must be proven before dispatch. On Web, this probe is also an intentional UX prewarm: it may surface the host permission prompt before a long workflow so later authorized work can continue without an avoidable mid-flow interruption. Do not remove it merely because the production action would also exercise the same permission.
+Use one bounded, live permission-smoke stage **at task admission**, immediately after the lifecycle and selected route are available, for external actions already implied by the authorized task. The purpose is to reach the host's real write/delete/command permission prompts early, so the user can choose a session-wide approval if the host supports it. Merely discovering a connector or planning a probe does not trigger that boundary.
 
-Permission preflight is a side-effect-boundary check, not a Skill-admission ritual. Earlier knowledge that a later step may push, write Drive, or use local interaction may inform routing, but it does not authorize or require an early live probe. Preflight does not weaken host security, grant itself permissions, or replace a host-required per-action approval.
+Preflight is a task-scoped first-use check, not a blanket request for every available integration. An explicit task that will push, upload, delete, or edit an authorized local project permits a **minimal reversible smoke operation** for that same permission class. Do not probe permissions unrelated to the task. Preflight does not weaken host security, grant permission itself, or replace a later per-action approval.
 
 ## Mandatory sequencing
 
-At the imminent side-effect boundary, do only the minimum routing needed to identify and prove the required permission class:
+At the beginning of the authorized task, do only the route and narrow target lookup needed to identify the required permission classes:
 
 ```text
-normal lifecycle work
-  -> reach an imminent external side effect
-  -> resolve only the route needed for that side effect
-  -> plan the minimum representative permission probe
-  -> execute the live host permission probe
-  -> satisfy any permission/setup prompt
-  -> dispatch the authorized side effect
-  -> re-observe its result and continue
+bootstrap or resume existing lifecycle
+  -> resolve selected host and exact task targets
+  -> infer required permission classes from request and known deliverables
+  -> plan representative probes
+  -> EXECUTE minimal live host operations, clean up and verify
+  -> user may choose session-wide approval if that option is offered
+  -> begin normal substantive work, retaining host checks on real actions
 ```
 
-If a capability becomes predictable earlier, record the need but defer the live probe until the corresponding external action is imminent.
-
-At that side-effect boundary, call:
+If a target becomes clear only after limited metadata lookup, preflight it at that first opportunity, before substantial work. If a new capability is added later, probe only that newly needed scope. At this early stage, call:
 
 ```bash
 python3 scripts/codex_loop.py permission-preflight-plan \
@@ -33,7 +30,7 @@ python3 scripts/codex_loop.py permission-preflight-plan \
 
 Use only capabilities actually implied by the reviewed workflow. A Drive-only task may omit `--session-id` when no routing-sensitive repository/browser/deployment action exists.
 
-The plan is advisory host-execution structure, not permission state. It intentionally writes no runtime permission record. Its phase label is an implementation detail; the behavioral rule is that the plan is used only at the imminent side-effect boundary.
+The plan is advisory structure, not permission state. It intentionally writes no runtime permission record. **The caller must perform each live probe now**, not mistake the returned plan or read-only connector check for approval.
 
 ## Real-probe contract
 
@@ -104,13 +101,29 @@ Match the probe to the real Drive write path. When the eventual workflow stages 
 
 Never overwrite, rename, move, or delete a pre-existing user file as a permission probe. The sentinel may contain only fixed non-sensitive text such as `codex-loop permission smoke`; do not put repository source, credentials, or task content in it. If cleanup fails, surface the exact sentinel identity and resolve cleanup before creating another probe object.
 
+### Google Drive deletion
+
+When the task will call Drive `delete_file`, request `google_drive_delete` in addition to any upload/create capability. At admission, create one unique, disposable sentinel in the verified task-owned temporary Drive folder, confirm its ID, **call the same live `delete_file` tool** on that exact sentinel, and confirm it is gone. This delete is intentionally real: a read/list check, simulated deletion, or an upload that uses a different host permission class cannot warm the delete confirmation.
+
+When both `google_drive_write` and `google_drive_delete` are required, use the same sentinel for the upload/read/delete sequence if the actual connector paths match, and record evidence separately for the upload and delete scopes. If no safe sentinel can be created, report that deletion preflight is unproven; never test on a pre-existing user document.
+
+### Local project write (My Mac, My WSL, RDC)
+
+For an authorized task that will edit local files, request `local_project_write` after choosing and pinning its one real connector, recovering the original lifecycle, and obtaining its exact project grant. Execute a **real, reversible local write** using the same host permission interface as the planned edits:
+
+- My Mac/RDC file edits: call their real `write_file` tool with verified current task/session identifiers to create a unique short sentinel inside the authorized project; verify with that connector, remove only the sentinel, and verify absence. A `start_process` probe in a separate private runtime directory does not establish that `write_file` on the project is approved.
+- My WSL shell edits: use the selected `wsl_exec` with its current task/session/project grant to create and verify a temporary file **inside that exact project**, then remove it through the same connector and verify absence.
+- If the task will edit only through a shell and not through the file-write tool, probe that actual shell write path instead; do not claim unrelated tool approval.
+
+Use a name with a freshly generated nonce and constant harmless content; never overwrite existing files, follow symlinks outside the project, alter a real source file, or leave probe files after verification. Missing current project access is resolved under the explicit same-conversation user authorization before the write probe. A connector or host may offer `allow for this conversation` or may require later approval for individual actions; Codex Loop cannot force which choice appears.
+
 ## Procedure
 
 A successful live probe may be recorded with `permission-observation-record` as an exact-scope, expiring, route-generation-bound hint. On later same-session continuations, `permission-preflight-plan --reuse-fresh-observations --observation-scope CAPABILITY=SCOPE` may skip only fresh exact-scope probes. This never grants permission or bypasses host approval.
 
-1. When an external action becomes imminent, derive the exact capability from the current user-authorized action and current route.
+1. Immediately after task admission and route selection, derive the needed capabilities from the current user-authorized objective and known deliverables; use narrow target metadata lookup only when necessary.
 2. Initialize/read only the routing state needed to select the representative probe. Capability probing must never create or mutate routing state beyond that ordinary route initialization.
-3. Run `permission-preflight-plan` for the immediately predictable capability set.
+3. Run `permission-preflight-plan` for all already predictable capability classes, including separate delete and local project write when needed.
 4. Execute every returned probe through the real host path. Prefer independent read-only probes in parallel when safe; serialize probe actions that create temporary objects or workflow runs.
 5. If a probe triggers connection/permission UI, satisfy that host flow before dispatching the gated side effect. Batch missing connection/setup requests when the host supports it, and re-run only the failed probe after the host reports that access changed.
 6. Keep concise successful observations in current task/session context so the same live capability is not needlessly re-probed.
@@ -123,12 +136,12 @@ For `local_chrome`, keep `browser_host_health` separate from `browser_session_he
 ## Common capability sets
 
 - Web repository edit only: routing session resolves `workspace_mode=web`; current writable Web workspace; no GitHub/Drive probe unless the reviewed workflow includes publication or another external action.
-- Web-mode GitHub publication: `github_push` + `google_drive_write`. The import workflow is push-triggered, so publication does not call a host Actions write API. Prove Actions execution after the request push by binding the matching workflow run/receipt to that trigger. Request `github_actions` separately only when the host will actually dispatch or rerun a workflow.
+- Web-mode GitHub publication: `github_push` + `google_drive_write` (plus `google_drive_delete` when the workflow will actually use the separate Drive delete API). The import workflow is push-triggered, so publication does not call a host Actions write API. Prove Actions execution after the request push by binding the matching workflow run/receipt to that trigger. Request `github_actions` separately only when the host will actually dispatch or rerun a workflow.
 - ChatGPT Web Skill install/update without source publication: native Skill surface capability only; do not probe Drive/GitHub merely because they are connected.
 - Local native-Git publication: `github_push`; use native `git push --dry-run` from the canonical authorized worktree before substantial work when publication is already part of the reviewed objective.
 - Optional cross-conversation persistence: `google_drive_read` and/or `google_drive_write` only when persistence is enabled or recoverability is an acceptance requirement. Persistence is off by default.
 - Local repository read/inspection: selected local file/shell connector access plus resolved/authorized `LOCAL_ROOT`; this does not authorize source mutation.
-- Local repository edit: the Local read capabilities plus explicit current-task local-source-mutation authorization.
+- Local repository edit: the Local read capabilities plus explicit current-task local-source-mutation authorization **and an early live `local_project_write` sentinel via the actual selected connector**.
 - `local_chrome`: explicit current-task computer-use authorization plus local Chrome host health and a supported Browser/Chrome executor attached to the conversation.
 - `local_mac_gui`: explicit current-task computer-use authorization, RDC, Accessibility, and any Screen Recording permission genuinely needed by the chosen observation transport.
 
@@ -150,6 +163,6 @@ A later sensitive action may still require a fresh approval even after its smoke
 
 ## Failure behavior
 
-If a required probe fails, report the concrete capability before unrelated source mutation when practical and let the user satisfy the host permission/setup flow. Preserve the authoritative routing state and workspace; do not silently change `workspace_mode`, `interaction_target`, `deployment_target`, publication transport, or trust boundary just to avoid the blocker.
+If an early required probe fails, diagnose and retry safe recovery under existing same-chat consent, then report the concrete missing capability before unrelated source mutation when practical and let the user satisfy any real host permission/setup prompt. Preserve the authoritative routing state and workspace; do not silently change `workspace_mode`, `interaction_target`, `deployment_target`, publication transport, or trust boundary just to avoid the blocker.
 
 If no safe representative probe exists, report `*_PERMISSION_NOT_PROVEN` or `*_SAFE_PROBE_UNAVAILABLE` rather than fabricating success. Missing probe capability is not evidence for a route transition and never authorizes a riskier test mutation.
