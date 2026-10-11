@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from scripts.codex_loop_runtime.host_config import host_config_set, host_project_set, host_project_remove
 from scripts.codex_loop_runtime.local_connection import resolve_execution, resolve_local_root
-from scripts.codex_loop_runtime.routing_state import route_check, route_init, route_transition
+from scripts.codex_loop_runtime.routing_state import route_check
+from _routing_fixture import route_init, route_transition
 
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "scripts/codex_loop.py"
@@ -25,7 +26,7 @@ class LocalConnectionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = Path(self.tmp.name) / "home"
-        self.env = patch.dict(os.environ, {"CODEX_LOOP_HOME": str(self.home)})
+        self.env = patch.dict(os.environ, {"CODEX_LOOP_PROFILE_HOME": str(self.home)})
         self.env.start()
         self.routing = patch("scripts.codex_loop_runtime.routing_state._routing_root",
                              return_value=Path(self.tmp.name) / "routes")
@@ -90,7 +91,7 @@ class LocalConnectionTests(unittest.TestCase):
         self.assertEqual(changed["local_connection"]["computer"], "pc")
 
     def test_invalid_profile_cannot_silently_route_to_web(self):
-        path = self.home / "host.json"
+        path = self.home / "session-profile.json"
         path.write_text("invalid JSON")
         with self.assertRaises(RuntimeError):
             resolve_execution()
@@ -120,8 +121,8 @@ class LocalConnectionTests(unittest.TestCase):
                                 workspace_granted=True, local_source_mutation_authorized=True)
             self.assertFalse(wrong["allowed"])
             self.assertFalse(wrong["dispatch_connector_verified"])
-        initialized = subprocess.run([sys.executable, str(CLI), "route-init", "--workspace-target", "mac",
-                                      "--available-connections-json", '["mac-first"]'],
+        initialized = subprocess.run([sys.executable, str(CLI), "route-init", "--resolved-execution-json",
+                                      json.dumps(resolve_execution(target="mac", available_connections=["mac-first"]))],
                                      env=os.environ.copy(), capture_output=True, text=True, check=True)
         cli_state = json.loads(initialized.stdout)["data"]
         self.addCleanup(Path(cli_state["state_path"]).unlink)
@@ -150,7 +151,7 @@ class LocalConnectionTests(unittest.TestCase):
                                workspace_granted=True, local_root="/task/approved")
         self.assertTrue(override["allowed"])
         self.assertEqual(override["local_root"], "/task/approved")
-        raw = json.loads((self.home / "host.json").read_text())
+        raw = json.loads((self.home / "session-profile.json").read_text())
         self.assertNotIn("/task/approved", json.dumps(raw))
         self.assertEqual(resolve_execution()["workspace_mode"], "web")
 
@@ -203,20 +204,22 @@ class LocalConnectionTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 route_check(**{**args, "session_id": "other-conversation"})
 
-    def test_saved_project_is_current_without_moving_existing_route_defaults(self):
-        host_config_set("workspace.environments", {"mac": {"default_root": "/first"}})
+    def test_saved_project_is_frozen_for_current_conversation(self):
+        host_config_set("workspace.environments", {"mac": {"default_root": "/first", "projects": {"demo": "/initial"}}})
         route = route_init(workspace_target="mac", available_connections=["mac-first"])
         selected = route["local_connection"]
-        host_project_set("mac", "demo", "/new/project")
+        self.assertEqual(resolve_local_root(selected, project="demo")["local_root"], "/initial")
         resolved = resolve_local_root(selected, project="demo", workspace_granted=True)
-        self.assertEqual(resolved["local_root"], "/new/project")
+        self.assertEqual(resolved["local_root"], "/initial")
         host_project_set("mac", "demo", "/changed/project")
-        self.assertEqual(resolve_local_root(selected, project="demo")["local_root"], "/changed/project")
+        self.assertEqual(resolve_local_root(selected, project="demo")["local_root"], "/initial")
+        next_chat = route_init(workspace_target="mac", available_connections=["mac-first"])
+        self.assertEqual(resolve_local_root(next_chat["local_connection"], project="demo")["local_root"], "/changed/project")
         self.assertEqual(resolve_local_root(selected)["local_root"], "/first")
         self.assertEqual(resolve_local_root(selected, local_root="/already/bound")["local_root"], "/already/bound")
         host_project_remove("mac", "demo")
         with self.assertRaisesRegex(ValueError, "unknown project"):
-            resolve_local_root(selected, project="demo")
+            resolve_local_root(route_init(workspace_target="mac", available_connections=["mac-first"])["local_connection"], project="demo")
 
     def test_directory_snapshot_survives_preference_save_and_same_environment_transport_change(self):
         host_config_set("workspace.environments", {"mac": {"default_root": "/first"}})
@@ -231,8 +234,8 @@ class LocalConnectionTests(unittest.TestCase):
 
     def test_cli_directory_resolution_and_no_grant_restored_from_profile(self):
         host_config_set("workspace.environments", {"mac": {"default_root": "/mac/work"}})
-        initialized = subprocess.run([sys.executable, str(CLI), "route-init", "--workspace-target", "mac",
-                                      "--available-connections-json", '["mac-first"]'],
+        initialized = subprocess.run([sys.executable, str(CLI), "route-init", "--resolved-execution-json",
+                                      json.dumps(resolve_execution(target="mac", available_connections=["mac-first"]))],
                                      capture_output=True, text=True, check=True)
         route = json.loads(initialized.stdout)["data"]
         self.addCleanup(Path(route["state_path"]).unlink)
@@ -250,7 +253,7 @@ class LocalConnectionTests(unittest.TestCase):
     def test_cli_reads_private_settings_across_processes_and_override(self):
         host_config_set("execution.default_target", "mac")
         command = [sys.executable, str(CLI), "route-init", "--host-surface", "chatgpt_web",
-                   "--workspace-target", "web"]
+                   "--resolved-execution-json", json.dumps(resolve_execution(target="web"))]
         proc = subprocess.run(command, cwd=ROOT, env=os.environ.copy(), text=True, capture_output=True)
         self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
         state = json.loads(proc.stdout)["data"]

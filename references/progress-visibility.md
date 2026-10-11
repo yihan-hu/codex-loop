@@ -35,7 +35,7 @@ A verified missing profile uses defaults. A corrupt, unsafe, or unreadable profi
 
 ## Private configuration
 
-User preferences live in `~/.codex-loop/host.json` (or under `CODEX_LOOP_HOME` when the host overrides that root). This file is host-local/private state: it is outside the repository, outside `skill.zip`, and must never be copied into GitHub source transport artifacts.
+Progress preferences are stored only in the connected user's Google Drive Host Profile. The controller temporarily restores it to a private `CODEX_LOOP_PROFILE_HOME` session directory. Changes become durable only after updating and verifying the same Drive file. Mac/WSL runtimes hold no persistent preference file.
 
 The progress node is part of the unified Private Host Profile schema v4 (see `host-profile.md`):
 

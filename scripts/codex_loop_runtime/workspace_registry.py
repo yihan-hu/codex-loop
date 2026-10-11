@@ -45,7 +45,14 @@ def registry_path(session_id: str | None = None) -> Path:
 
 
 def host_config_path() -> Path:
-    return codex_loop_home() / "host.json"
+    """Controller-only temporary preferences; never read a native host backup."""
+    root = os.environ.get("CODEX_LOOP_PROFILE_HOME")
+    if not root:
+        raise RuntimeError("Drive Host Profile must be loaded into a private controller session; no native host.json fallback")
+    path = Path(root).expanduser()
+    if not path.is_absolute():
+        raise ValueError("CODEX_LOOP_PROFILE_HOME must be an absolute private session directory")
+    return path / "session-profile.json"
 
 
 def _ensure_private_dir(path: Path) -> Path:

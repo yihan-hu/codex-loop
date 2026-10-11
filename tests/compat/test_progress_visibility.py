@@ -13,7 +13,7 @@ CLI = ROOT / "scripts" / "codex_loop.py"
 
 def call(home: Path, *args: str, check: bool = True):
     env = os.environ.copy()
-    env["CODEX_LOOP_HOME"] = str(home)
+    env["CODEX_LOOP_PROFILE_HOME"] = str(home)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     proc = subprocess.run(
         [sys.executable, str(CLI), *args],
@@ -42,7 +42,7 @@ class ProgressVisibilityTests(unittest.TestCase):
             self.assertTrue(data["material_event_updates"])
             self.assertEqual(data["source"], "default")
             self.assertFalse(data["repository_persisted"])
-            self.assertFalse((home / "host.json").exists())
+            self.assertFalse((home / "session-profile.json").exists())
 
             substantive, _ = call(home, "progress-policy", "--work-shape", "substantive")
             self.assertEqual(substantive["data"]["visibility_mode"], "standard")
@@ -59,7 +59,7 @@ class ProgressVisibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"
             home.mkdir()
-            path = home / "host.json"
+            path = home / "session-profile.json"
             path.write_text(json.dumps({"schema_version": 4, "workspace": {"environments": {"laptop": {"default_root": "/work"}}}}))
             os.chmod(path, 0o600)
             saved, _ = call(
@@ -97,7 +97,7 @@ class ProgressVisibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"
             home.mkdir()
-            path = home / "host.json"
+            path = home / "session-profile.json"
             original = "{not-json\n"
             path.write_text(original)
             os.chmod(path, 0o600)
@@ -118,7 +118,7 @@ class ProgressVisibilityTests(unittest.TestCase):
             home.mkdir()
             target = root / "outside.json"
             target.write_text(json.dumps({"schema_version": 1, "progress_visibility": {"mode": "quiet"}}))
-            path = home / "host.json"
+            path = home / "session-profile.json"
             try:
                 path.symlink_to(target)
             except (OSError, NotImplementedError):

@@ -48,7 +48,7 @@ def export_profile(*, drive_root_id: str, output: str) -> dict[str, Any]:
     path = Path(output).expanduser().absolute()
     from .workspace_registry import host_config_path
     if path.resolve() == host_config_path().resolve():
-        raise ValueError("export must not replace host.json with a transport envelope")
+        raise ValueError("export must not replace the controller session profile with a transport envelope")
     _atomic_json_write(path, payload)
     return {"export_path": str(path), "drive_path": PROFILE_DRIVE_PATH,
             "profile_sha256": payload["profile_sha256"], "cross_chat_saved": False,

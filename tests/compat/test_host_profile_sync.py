@@ -21,7 +21,7 @@ class HostProfileSyncTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.home = self.root / 'first-chat'
-        self.env = patch.dict(os.environ, {'CODEX_LOOP_HOME': str(self.home)})
+        self.env = patch.dict(os.environ, {'CODEX_LOOP_PROFILE_HOME': str(self.home)})
         self.env.start()
         self.addCleanup(self.env.stop)
 
@@ -42,7 +42,7 @@ class HostProfileSyncTests(unittest.TestCase):
         self.assertNotIn('drive', envelope['profile'])
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         self.assertFalse(exported['cross_chat_saved'])
-        os.environ['CODEX_LOOP_HOME'] = str(self.root / 'second-chat')
+        os.environ['CODEX_LOOP_PROFILE_HOME'] = str(self.root / 'second-chat')
         imported = import_profile(drive_root_id='current-user-root', input_path=str(path))
         self.assertFalse(imported['tasks_restored'])
         self.assertEqual(resolve_execution(available_connections=['primary', 'backup'])['local_connection']['name'], 'primary')
@@ -58,7 +58,7 @@ class HostProfileSyncTests(unittest.TestCase):
         host_config_set('workspace.environments', locations)
         host_config_set('interaction.language', 'Chinese')
         path, _ = self.export()
-        os.environ['CODEX_LOOP_HOME'] = str(self.root / 'restored-chat')
+        os.environ['CODEX_LOOP_PROFILE_HOME'] = str(self.root / 'restored-chat')
         imported = import_profile(drive_root_id='current-user-root', input_path=str(path))
         self.assertFalse(imported['authorization_restored'])
         self.assertEqual(resolve_execution()['workspace_mode'], 'web')
@@ -72,7 +72,7 @@ class HostProfileSyncTests(unittest.TestCase):
     def test_wrong_account_corruption_unknown_fields_leave_existing_untouched(self):
         host_config_set('execution.default_target', 'web')
         path, _ = self.export()
-        baseline = (self.home / 'host.json').read_bytes()
+        baseline = (self.home / 'session-profile.json').read_bytes()
         with self.assertRaisesRegex(ValueError, 'different Drive account'):
             import_profile(drive_root_id='another-user-root', input_path=str(path))
         payload = json.loads(path.read_text())
@@ -84,11 +84,12 @@ class HostProfileSyncTests(unittest.TestCase):
         path.write_text(json.dumps(payload))
         with self.assertRaisesRegex(ValueError, 'unsupported fields'):
             import_profile(drive_root_id='current-user-root', input_path=str(path))
-        self.assertEqual((self.home / 'host.json').read_bytes(), baseline)
+        self.assertEqual((self.home / 'session-profile.json').read_bytes(), baseline)
 
     def test_defaults_and_native_cache_registry(self):
-        self.assertEqual(resolve_execution()['workspace_mode'], 'web')
-        self.assertEqual(host_config_show()['persistence']['host_profile_backend'], 'auto')
+        with self.assertRaisesRegex(RuntimeError, 'has not been imported'):
+            resolve_execution()
+        self.assertEqual(host_config_show()['persistence']['host_profile_backend'], 'google_drive')
         path, _ = self.export()
         host_config_set('drive.cache_folder_paths', ['ChatGPT-Temporary/native'])
         import_profile(drive_root_id='current-user-root', input_path=str(path))
@@ -107,7 +108,8 @@ class HostProfileSyncTests(unittest.TestCase):
                                      '--drive-root-id', 'current-user-root', flag, str(path)],
                                     capture_output=True, text=True, check=True)
             self.assertTrue(json.loads(result.stdout)['ok'])
-        self.assertEqual(host_config_set('persistence.host_profile_backend', 'local_only')['profile_sync_action'], 'local_only_no_upload')
+        with self.assertRaises(ValueError):
+            host_config_set('persistence.host_profile_backend', 'local_only')
         self.assertEqual(host_config_set('persistence.host_profile_backend', 'google_drive')['profile_sync_action'], 'sync_required_or_report_failure')
 
     def test_export_refuses_credentials_and_profile_overwrite(self):
@@ -116,7 +118,7 @@ class HostProfileSyncTests(unittest.TestCase):
             self.export()
         host_config_set('web_publish.staging_folder_id', None)
         with self.assertRaisesRegex(ValueError, 'must not replace'):
-            export_profile(drive_root_id='current-user-root', output=str(self.home / 'host.json'))
+            export_profile(drive_root_id='current-user-root', output=str(self.home / 'session-profile.json'))
 
 
 if __name__ == '__main__':

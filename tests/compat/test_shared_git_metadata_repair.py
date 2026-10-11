@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -11,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 from codex_loop_runtime import workspace
 from codex_loop_runtime.host_config import configured_git_metadata_for_path
+from codex_loop_runtime.routing_state import route_init
 
 
 def init_external_repo(worktree: Path, git_dir: Path) -> None:
@@ -25,19 +27,26 @@ def init_external_repo(worktree: Path, git_dir: Path) -> None:
     ], check=True)
 
 
+def session_id(home: Path) -> str:
+    return "git-metadata-" + hashlib.sha256(str(home).encode()).hexdigest()
+
+
 def write_profile(home: Path, worktree: Path, metadata_root: Path) -> None:
-    home.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "schema_version": 4,
-        "workspace": {"environments": {"wsl": {
-            "projects": {"demo": str(worktree)},
-            "git_metadata_root": str(metadata_root),
-        }}},
-    }
-    path = home / "host.json"
-    path.write_text(json.dumps(payload))
-    if os.name != "nt":
-        os.chmod(path, 0o600)
+    """No second Host Profile: create the same pinned snapshot as the controller."""
+    loc = {"default_root": None, "projects": {"demo": str(worktree)},
+           "runtime_directory": None, "state_directory": None,
+           "git_metadata_root": str(metadata_root)}
+    route_init(
+        session_id=session_id(home), host_surface="chatgpt_web",
+        resolved_execution={
+            "workspace_mode": "local", "computer": "wsl",
+            "basis": "explicit_user_target", "status": "resolved",
+            "local_connection": {
+                "name": "test-wsl", "computer": "wsl",
+                "connector": "My WSL", "kind": "mcp", "locations": loc
+            }
+        }
+    )
 
 
 class SharedGitMetadataRepairTests(unittest.TestCase):
@@ -51,7 +60,7 @@ class SharedGitMetadataRepairTests(unittest.TestCase):
             (worktree / ".git").write_text("gitdir: /Users/other-host/.git-meta/demo\n")
             home = root / "codex-home"
             write_profile(home, worktree, metadata_root)
-            with patch.dict(os.environ, {"CODEX_LOOP_HOME": str(home)}):
+            with patch.dict(os.environ, {"CODEX_LOOP_SESSION_ID": session_id(home)}):
                 self.assertEqual(configured_git_metadata_for_path(worktree / "tracked.txt")["git_dir"], str(git_dir))
                 self.assertEqual(workspace.repo_root(worktree), worktree.resolve())
                 self.assertEqual((worktree / ".git").read_text(), f"gitdir: {git_dir.resolve()}\n")
@@ -70,7 +79,7 @@ class SharedGitMetadataRepairTests(unittest.TestCase):
             (bad / "HEAD").write_text("ref: refs/heads/master\n")
             home = root / "codex-home"
             write_profile(home, worktree, metadata_root)
-            with patch.dict(os.environ, {"CODEX_LOOP_HOME": str(home)}):
+            with patch.dict(os.environ, {"CODEX_LOOP_SESSION_ID": session_id(home)}):
                 self.assertEqual(workspace.repo_root(worktree), worktree.resolve())
                 backup = metadata_root / ".codex-loop-recovered" / "demo-shared-dotgit"
                 self.assertTrue(backup.is_dir())
@@ -92,7 +101,7 @@ class SharedGitMetadataRepairTests(unittest.TestCase):
                                             capture_output=True).returncode, 0)
             home = root / "codex-home"
             write_profile(home, worktree, metadata_root)
-            with patch.dict(os.environ, {"CODEX_LOOP_HOME": str(home)}):
+            with patch.dict(os.environ, {"CODEX_LOOP_SESSION_ID": session_id(home)}):
                 state = workspace.git_state(worktree, include_content_hashes=False)
                 self.assertEqual(state["head"], subprocess.check_output(
                     ["git", "--git-dir", str(git_dir), "rev-parse", "HEAD"], text=True).strip())
@@ -132,7 +141,7 @@ class SharedGitMetadataRepairTests(unittest.TestCase):
             metadata_root = root / "git-meta"
             write_profile(home, worktree, metadata_root)
             before = marker.stat().st_mtime_ns
-            with patch.dict(os.environ, {"CODEX_LOOP_HOME": str(home)}):
+            with patch.dict(os.environ, {"CODEX_LOOP_SESSION_ID": session_id(home)}):
                 self.assertEqual(workspace.repo_root(worktree), worktree.resolve())
             self.assertTrue(marker.is_dir())
             self.assertEqual(marker.stat().st_mtime_ns, before)
@@ -147,7 +156,7 @@ class SharedGitMetadataRepairTests(unittest.TestCase):
             (worktree / ".git").write_text("gitdir: /missing/other-host/repo\n")
             home = root / "codex-home"
             write_profile(home, worktree, metadata_root)
-            with patch.dict(os.environ, {"CODEX_LOOP_HOME": str(home)}):
+            with patch.dict(os.environ, {"CODEX_LOOP_SESSION_ID": session_id(home)}):
                 with self.assertRaisesRegex(RuntimeError, "must stay outside"):
                     workspace.repo_root(worktree)
 
@@ -160,7 +169,7 @@ class SharedGitMetadataRepairTests(unittest.TestCase):
             home = root / "codex-home"
             write_profile(home, worktree, root / "git-meta")
             before = (worktree / ".git").read_text()
-            with patch.dict(os.environ, {"CODEX_LOOP_HOME": str(home)}):
+            with patch.dict(os.environ, {"CODEX_LOOP_SESSION_ID": session_id(home)}):
                 self.assertEqual(workspace.repo_root(worktree), worktree.resolve())
             self.assertEqual((worktree / ".git").read_text(), before)
 

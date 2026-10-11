@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -10,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .local_connection import resolve_execution, resolve_local_root
+from .local_connection import resolve_local_root
 from .host_config import validate_environment_locations
 
 ROUTING_SCHEMA_VERSION = 3
@@ -217,9 +218,36 @@ def _validate_state(payload: Any) -> dict[str, Any]:
     return payload
 
 
+def _controller_execution(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate the one-time Drive-derived execution snapshot supplied by the controller."""
+    if not isinstance(payload, dict) or payload.get("status") != "resolved":
+        raise RuntimeError("route requires a controller-resolved execution snapshot; native host profile is not a fallback")
+    mode = payload.get("workspace_mode")
+    connection = payload.get("local_connection")
+    if mode not in WORKSPACE_MODES:
+        raise ValueError("invalid controller-resolved workspace mode")
+    if not isinstance(payload.get("basis"), str) or not payload["basis"]:
+        raise ValueError("controller execution is missing its selection basis")
+    if mode == "web":
+        if connection is not None or payload.get("computer") is not None:
+            raise ValueError("Web execution must not carry a local computer or connector")
+    else:
+        if not isinstance(connection, dict) or set(connection) != {"name", "computer", "connector", "kind", "locations"}:
+            raise ValueError("Local controller execution requires the exact selected connection and environment")
+        if not all(isinstance(connection[k], str) and connection[k] for k in ("name", "connector")):
+            raise ValueError("Local controller execution has an invalid connection identifier")
+        computer = connection["computer"]
+        if (computer is None and connection["kind"] != "rdc") or (computer is not None and
+                (not isinstance(computer, str) or not computer)):
+            raise ValueError("Local controller execution has an invalid computer")
+        if connection["kind"] not in {"mcp", "rdc"} or computer != payload.get("computer"):
+            raise ValueError("Local controller execution has an invalid computer/connector binding")
+        validate_environment_locations(connection["locations"])
+    return copy.deepcopy(payload)
+
+
 def route_init(*, session_id: str | None = None, host_surface: str = "unknown",
-               workspace_target: str | None = None, connection: str | None = None,
-               available_connections: list[str] | None = None) -> dict[str, Any]:
+               resolved_execution: dict[str, Any] | None = None) -> dict[str, Any]:
     sid = _session_id(session_id, generate=True)
     assert sid is not None
     path = _routing_path(sid)
@@ -228,11 +256,8 @@ def route_init(*, session_id: str | None = None, host_surface: str = "unknown",
         if host_surface != "unknown" and state["host_surface"] != host_surface:
             raise ValueError("routing session is already bound to a different host surface; start a new routing session")
         return {**state, "session_id": sid, "created": False}
-    execution = resolve_execution(target=workspace_target, connection=connection,
-                                  available_connections=available_connections)
-    if execution["status"] != "resolved":
-        raise RuntimeError("observe usable local connections before route-init")
-    state = _default_state(host_surface, execution)
+    execution = _controller_execution(resolved_execution)
+    state = _validate_state(_default_state(host_surface, execution))
     _atomic_json_write(path, state)
     return {**state, "session_id": sid, "state_path": str(path), "created": True}
 
@@ -260,7 +285,7 @@ def route_transition(
     workspace_mode: str | None = None,
     workspace_target: str | None = None,
     connection: str | None = None,
-    available_connections: list[str] | None = None,
+    resolved_execution: dict[str, Any] | None = None,
     interaction_target: str | None = None,
     deployment_target: str | None = None,
     selection_evidence: str | None = None,
@@ -290,10 +315,13 @@ def route_transition(
             )
         route_changed = workspace_mode != state["workspace_mode"] or workspace_target is not None or connection is not None
         if route_changed:
-            execution = resolve_execution(target=workspace_target or workspace_mode, connection=connection,
-                                          available_connections=available_connections)
-            if execution["status"] != "resolved":
-                raise RuntimeError("observe usable local connections before route-transition")
+            execution = _controller_execution(resolved_execution)
+            if execution["workspace_mode"] != workspace_mode:
+                raise ValueError("controller execution conflicts with the requested workspace mode")
+            if workspace_target is not None and workspace_target not in {"local", "web", execution["computer"]}:
+                raise ValueError("controller execution conflicts with the requested computer")
+            if connection is not None and (execution["local_connection"] is None or connection != execution["local_connection"]["name"]):
+                raise ValueError("controller execution conflicts with the requested connection")
             previous = state["local_connection"]
             selected = execution["local_connection"]
             if (previous is not None and selected is not None
@@ -409,11 +437,10 @@ def route_check(
 
     if action == "local_host_config":
         result.update({
-            "allowed": True,
-            "config_role": "codex_loop_bootstrap_read_only",
-            "allowed_config_paths": ["~/.codex-loop/host.json"],
-            "config_mutation_allowed": False,
-            "rule": "Local connector host-config reads are routed Codex Loop bootstrap actions, not an authorization bypass; mutation requires a separate explicit host-administration task",
+            "allowed": False,
+            "requirements": ["use_drive_restored_controller_session_profile"],
+            "config_role": "controller_only",
+            "rule": "Native runtimes do not read or maintain Host Profile preferences",
         })
         return result
 

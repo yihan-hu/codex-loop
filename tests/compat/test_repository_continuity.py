@@ -45,7 +45,7 @@ class RepositoryContinuityTests(unittest.TestCase):
             root = Path(tmp) / "repo"
             head, tree = init_repo(root)
             route = subprocess.run(
-                ["python3", str(CLI), "route-init", "--host-surface", "chatgpt_web"],
+                ["python3", str(CLI), "route-init", "--host-surface", "chatgpt_web", "--resolved-execution-json", json.dumps({"workspace_mode": "web", "computer": None, "local_connection": None, "basis": "explicit_user_target", "status": "resolved"})],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

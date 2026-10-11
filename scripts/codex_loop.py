@@ -774,11 +774,11 @@ def _cmd_route_init(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py route-init')
     p.add_argument('--session-id')
     p.add_argument('--host-surface', choices=sorted(HOST_SURFACES), default='unknown')
-    _execution_arguments(p)
+    p.add_argument('--resolved-execution-json', help='exact controller execution-resolve JSON from this conversation')
     args = p.parse_args(argv[1:])
+    execution = json.loads(args.resolved_execution_json) if args.resolved_execution_json is not None else None
     emit_ok(route_init(session_id=args.session_id, host_surface=args.host_surface,
-                       workspace_target=args.workspace_target, connection=args.connection,
-                       available_connections=_available_connections(args)))
+                       resolved_execution=execution))
     return 0
 
 
@@ -794,7 +794,9 @@ def _cmd_route_transition(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog='codex_loop.py route-transition')
     p.add_argument('--session-id')
     p.add_argument('--workspace-mode', choices=sorted(WORKSPACE_MODES))
-    _execution_arguments(p)
+    p.add_argument('--workspace-target', help='requested Web or computer target')
+    p.add_argument('--connection', help='selected current-user connection name')
+    p.add_argument('--resolved-execution-json', help='exact controller execution-resolve JSON for a route change')
     p.add_argument('--interaction-target', choices=sorted(ROUTING_INTERACTION_TARGETS))
     p.add_argument('--deployment-target', choices=sorted(DEPLOYMENT_TARGETS | {'none'}))
     p.add_argument('--selection-evidence')
@@ -808,7 +810,7 @@ def _cmd_route_transition(argv: list[str]) -> int:
         workspace_mode=args.workspace_mode,
         workspace_target=args.workspace_target,
         connection=args.connection,
-        available_connections=_available_connections(args),
+        resolved_execution=json.loads(args.resolved_execution_json) if args.resolved_execution_json is not None else None,
         interaction_target=args.interaction_target,
         deployment_target=args.deployment_target,
         selection_evidence=args.selection_evidence,

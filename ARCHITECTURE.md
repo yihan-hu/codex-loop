@@ -5,13 +5,14 @@ flowchart TD
   U[Codex Loop selected + exact user request] --> A[Mandatory lifecycle admission]
   A --> DRIVE[First invocation: current connected user My Drive]
   DRIVE --> PROFILE[Fixed codex-loop/settings/host-profile.json]
-  PROFILE --> PREFER[Validate account and restore private preferences]
+  PROFILE --> PREFER[Validate account and restore controller-only session profile]
   SAVE[User asks to remember a project] --> EDIT[host-project edits one source locator on controller]
   PREFER --> EDIT
   EDIT -->|Drive-backed| UPDATE[Export and update original Drive file ID + readback]
-  EDIT -->|local_only| PRIVATE[Private profile on its own host]
   UPDATE --> PROFILE
-  PREFER --> LOOKUP[Current project locator for pinned environment]
+  PREFER --> RESOLVE[Controller selects connector using session profile]
+  RESOLVE --> SNAP[One validated execution snapshot per conversation]
+  SNAP --> LOOKUP[Selected environment locator from snapshot]
   LOOKUP --> CACHE[Selected connector verifies and materializes conversation cache]
   CACHE --> GRANT[Exact path authority + connector boundary]
   GRANT --> ACCESS
@@ -19,8 +20,7 @@ flowchart TD
   WREG --> WGRANT[Explicit user scope: idle-expiring bearer grant]
   WGRANT --> ACCESS
   WGRANT -. expiry or explicit revoke .-> WKILL[Stop grant commands; retain project files]
-  DRIVE -->|Absent or unconnected| DEFAULT[Fresh Web defaults / own native profile]
-  DEFAULT --> PREFER
+  DRIVE -->|Missing or unconnected| PROFILEFAIL
   PROFILE -->|Error or duplicate| PROFILEFAIL[Report recovery failure]
   PREFER --> S{Explicit target / saved default / Web}
   S -->|Web/default| HR[Installed ChatGPT runtime]
@@ -32,11 +32,11 @@ flowchart TD
   WG --> ROUTEGATE[Named My Mac route checks current session project grant]
   ROUTEGATE --> ACCESS
   MCP -. first-time setup only .-> GUIDE[Local MCP setup tutorial]
-  ROUTE --> DISPATCH[route-check verifies intended connector + task permissions]
+  ROUTE --> DISPATCH[route-check uses snapshot and current task permissions]
   DISPATCH --> LR[Same connector: selected computer runtime cache]
   OBS -->|unavailable| Z[Fail closed]
-  OBS --> LOC[Snapshot selected environment default/runtime/state locations]
-  LOC --> ROUTE[Private conversation route pins connection + locations]
+  OBS --> LOC[Controller supplies selected environment and project paths]
+  LOC --> ROUTE[Private temporary route pins connection and environment, no native profile]
   ROUTE -. directory-dependent work .-> ROOT[Task directory / named project / environment default]
   ROOT -->|missing or denied| Z
   ROOT --> ACCESS[Host verifies task authority + real directory + connector roots]
@@ -114,7 +114,7 @@ bound to stage + input + instruction + request + generation]
 
 ## Boundaries
 
-- **Execution preferences are private locators.** `host.json` stores an ordered connection list, default Web/environment target, and per-environment workspace/project/runtime/state locations outside Git and packages. Explicit task choice wins; saved defaults initialize new conversation routes. Custom MCPs precede RDC, manual connection selection never silently falls back, and observed capabilities remain host-owned. Conversation routing pins the selected computer/connection; a running lifecycle cannot move because preferences changed. Profile reads and connection resolution are narrow pre-admission routing. See `references/local-connections.md`; first-time setup uses `references/local-mcp-tutorial.md`.
+- **The connected user Drive profile is the only persistent preference authority.** Each new conversation imports and verifies that profile exactly once on the controller. The controller resolves the selected connector and environment/project locators, passes an explicit execution snapshot to the local runtime, and the private conversation route pins it. Native runtime/task state is independent; no native host preference file participates.
 - **WSL temporary directories stay host-enforced.** The optional adapter has a private local project allowlist, separate from Host Profile locators. After explicit user authorization, the conversation receives a bearer grant reusable across tasks; only commands carrying that capability mount the extra project. Grant-backed execution/polling renews three days of idle validity; optional task labels do not bind authorization. The backend cannot identify the web chat, so the chat must retain its private capability. Protocol reconnection does not clear an unexpired grant, backend restart does. Expiry/revocation stops dependent commands and preserves durable files. Chat identity is not independently authenticated, and grants never enter saved preferences or shared task state. See `integrations/wsl-mcp/README.md`.
 - **Lifecycle admission remains mandatory.** Once selected, Codex Loop must create or resume its lifecycle before any substantive task action. This invariant is not optimized away.
 - **Exact user authority is canonical.** The initial request plus later steers define what the agent is authorized to do. A model-written task objective or acceptance restatement is not created for the same task.
@@ -144,4 +144,4 @@ Host Profile recovery is independent of task resume. The host Drive connector ow
 
 Local lifecycle dispatch has its own `local_lifecycle` route check, including bootstrap and resume. The host supplies the actual owning connector before dispatch; mismatches fail. This validates caller-provided identity, not interception of arbitrary host tool calls. Initialization recovery stays on the selected connector; only explicit user transition can change a pinned transport.
 
-Environment identifiers represent distinct filesystems: Mac and WSL never share a default root merely because they share hardware. Empty current profiles use Web, no connections/locations, follow-user language, standard material progress, cloud browser preference without local fallback, and task persistence off. Missing files use defaults without writes; malformed/unsafe/unreadable/unsupported profiles fail. `route-check` resolves task/default roots from a route snapshot and named projects from the current controller profile and blocks missing directory or path authority; the host observes remote existence, realpath, and connector roots before supplying the grant flag. Runtime validation cannot intercept arbitrary host tools or verify a remote filesystem from Web. Saved project paths are authoritative in the profile; native registry entries are temporary conversation grant lookup under the platform temp directory, never a second editable source. Old persistent registry files are neither read nor deleted. `host-project` edits one project source entry, preserving unrelated preferences; saving a remote locator does not require a native runtime upgrade or replacing its profile. Drive discovery enumerates actual parent children before proving absence, and saves update the existing verified file ID in place.
+Environment identifiers represent distinct filesystems. Native runtimes do not independently restore or read Host Profile preferences. Missing or unreachable Drive profile blocks admission; no local/default preference fallback exists. Workspace project lookups read the route snapshot, and permissions remain separately scoped to this conversation. Project path changes take effect in a new conversation.

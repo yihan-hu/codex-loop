@@ -5,7 +5,8 @@ import unittest
 import uuid
 from pathlib import Path
 
-from scripts.codex_loop_runtime.routing_state import route_check, route_init, route_transition
+from scripts.codex_loop_runtime.routing_state import route_check
+from _routing_fixture import route_init, route_transition
 
 ROOT = Path(__file__).resolve().parents[2]
 

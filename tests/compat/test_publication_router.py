@@ -6,12 +6,11 @@ from pathlib import Path
 
 from scripts.codex_loop_runtime.publication_router import publication_enter
 from scripts.codex_loop_runtime.release_lineage import capture_workspace_binding
+from _routing_fixture import route_init, route_transition
 from scripts.codex_loop_runtime.routing_state import (
     record_permission_observation,
     route_check,
-    route_init,
     route_show,
-    route_transition,
 )
 from scripts.codex_loop_runtime.state import StateStore
 from scripts.codex_loop_runtime.web_publish import web_local_sync_plan

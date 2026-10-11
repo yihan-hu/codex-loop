@@ -15,7 +15,7 @@ CLI = ROOT / "scripts" / "codex_loop.py"
 
 def call(home: Path, *args: str, check: bool = True):
     env = os.environ.copy()
-    env["CODEX_LOOP_HOME"] = str(home)
+    env["CODEX_LOOP_PROFILE_HOME"] = str(home)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     proc = subprocess.run([sys.executable, str(CLI), *args], cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     payload = json.loads(proc.stdout) if proc.stdout.strip() else None
@@ -34,13 +34,13 @@ class HostConfigTests(unittest.TestCase):
             self.assertEqual(data["progress_visibility"]["mode"], "standard")
             self.assertEqual(data["browser"]["preferred_target"], "cloud_browser")
             self.assertEqual(data["persistence"]["task_backend"], "off")
-            self.assertEqual(data["persistence"]["host_profile_backend"], "auto")
-            self.assertFalse((home / "host.json").exists())
+            self.assertEqual(data["persistence"]["host_profile_backend"], "google_drive")
+            self.assertFalse((home / "session-profile.json").exists())
 
     def test_unsupported_schema_requires_explicit_upgrade_without_overwrite(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"; home.mkdir()
-            path = home / "host.json"
+            path = home / "session-profile.json"
             for version in (1, 2, 3):
                 path.write_text(json.dumps({"schema_version": version}))
                 os.chmod(path, 0o600)
@@ -55,7 +55,7 @@ class HostConfigTests(unittest.TestCase):
     def test_empty_object_defaults_and_invalid_environment_fields_do_not_overwrite(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"; home.mkdir()
-            path = home / "host.json"
+            path = home / "session-profile.json"
             path.write_text("{}"); os.chmod(path, 0o600)
             shown, _ = call(home, "host-config", "show")
             data = shown["data"]
@@ -76,7 +76,7 @@ class HostConfigTests(unittest.TestCase):
     def test_project_edit_preserves_original_profile_and_handles_remote_locator(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "controller"; home.mkdir()
-            path = home / "host.json"
+            path = home / "session-profile.json"
             original = {
                 "schema_version": 4,
                 "execution": {"default_target": "web"},
@@ -108,7 +108,7 @@ class HostConfigTests(unittest.TestCase):
 
     def test_project_edit_handles_empty_workspace_and_rejects_old_profile_without_overwrite(self):
         with tempfile.TemporaryDirectory() as td:
-            home = Path(td); path = home / "host.json"
+            home = Path(td); path = home / "session-profile.json"
             path.write_text('{"schema_version": 4, "workspace": null}'); os.chmod(path, 0o600)
             call(home, "host-project", "set", "--computer", "mac", "--name", "demo", "--path", "/remote/demo")
             self.assertEqual(json.loads(path.read_text())["workspace"]["environments"]["mac"]["projects"], {"demo": "/remote/demo"})
@@ -142,7 +142,7 @@ class HostConfigTests(unittest.TestCase):
     def test_wrong_permissions_fail_closed_on_read_and_write(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"; home.mkdir()
-            path = home / "host.json"
+            path = home / "session-profile.json"
             path.write_text(json.dumps({"schema_version": 2, "browser": {"preferred_target": "local_chrome"}}))
             os.chmod(path, 0o644)
             shown, proc = call(home, "host-config", "show", check=False)
@@ -158,7 +158,7 @@ class HostConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td); home = root / "home"; home.mkdir()
             outside = root / "outside.json"; outside.write_text(json.dumps({"schema_version": 2}))
-            path = home / "host.json"
+            path = home / "session-profile.json"
             try:
                 path.symlink_to(outside)
             except OSError:
@@ -174,13 +174,20 @@ class HostConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"
             call(home, "host-config", "set", "workspace.environments", '{"laptop":{"default_root":"/work"}}')
-            path = home / "host.json"
+            path = home / "session-profile.json"
             if os.name != "nt":
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             self.assertEqual(json.loads(path.read_text())["schema_version"], 4)
 
 
 class BrowserRoutingTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        profile = unittest.mock.patch.dict(os.environ, {"CODEX_LOOP_PROFILE_HOME": temp.name})
+        profile.start()
+        self.addCleanup(profile.stop)
+
     def test_web_interaction_defaults_cloud_browser(self):
         result = resolve_interaction_target(requires_web_interaction=True, available_targets=["cloud_browser", "local_chrome"])
         self.assertEqual(result["target"], "cloud_browser")

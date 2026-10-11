@@ -16,7 +16,7 @@ HOST_CONFIG_MAX_BYTES = 64 * 1024
 PROGRESS_MODES = frozenset({"quiet", "standard", "enhanced"})
 BROWSER_TARGETS = frozenset({"cloud_browser", "local_chrome"})
 TASK_PERSISTENCE_BACKENDS = frozenset({"off", "google_drive"})
-PROFILE_PERSISTENCE_BACKENDS = frozenset({"auto", "local_only", "google_drive"})
+PROFILE_PERSISTENCE_BACKENDS = frozenset({"google_drive"})
 DRIVE_CACHE_MAX_FOLDERS = 64
 
 DEFAULT_PROGRESS_CONFIG: dict[str, Any] = {
@@ -50,7 +50,7 @@ DEFAULT_HOST_PROFILE: dict[str, Any] = {
     },
     "persistence": {
         "task_backend": "off",
-        "host_profile_backend": "auto",
+        "host_profile_backend": "google_drive",
     },
 }
 _TOP_LEVEL_KEYS = frozenset(DEFAULT_HOST_PROFILE)
@@ -339,14 +339,23 @@ def environment_locations(computer: str | None) -> dict[str, Any]:
 
 
 def configured_git_metadata_for_path(path: str | os.PathLike[str]) -> dict[str, str] | None:
-    """Resolve a registered project to this host profile's external Git metadata location.
+    """Resolve the pinned session's registered project to host-local Git metadata.
 
-    The lookup is path-only and local: it does not grant access, infer a project, or mutate Git.
+    The lookup requires a route session; no native profile is consulted or repaired without explicit session context.
     It is used only after a normal Git probe fails.
     """
     target = Path(path).resolve()
-    raw, _, _ = _load_raw_host_config()
-    environments = _validate_section("workspace", raw.get("workspace"))["environments"]
+    # A normal Git probe runs first. Repair may use only an explicitly pinned
+    # conversation route: a stale native host.json is never an input.
+    session_id = os.environ.get("CODEX_LOOP_SESSION_ID")
+    if not session_id:
+        return None
+    from .routing_state import route_show
+    state = route_show(session_id=session_id)
+    connection = state["local_connection"]
+    if connection is None:
+        return None
+    environments = {connection["computer"]: connection["locations"]}
     matches: list[tuple[int, dict[str, str]]] = []
     for computer, locations in environments.items():
         metadata_root = locations.get("git_metadata_root")
@@ -386,8 +395,10 @@ def host_config_show() -> dict[str, Any]:
 
 
 def execution_config() -> dict[str, Any]:
-    # Routing must not silently change machines when a profile is malformed.
-    raw, _, _ = _load_raw_host_config()
+    # Controller must have imported the connected user's Drive profile this session.
+    raw, _, exists = _load_raw_host_config()
+    if not exists:
+        raise RuntimeError("Drive Host Profile has not been imported for this controller session")
     return _validate_section("execution", raw.get("execution"))
 
 
@@ -408,11 +419,7 @@ def _profile_save_status() -> dict[str, Any]:
     return {
         "saved": True,
         "cross_chat_saved": False,
-        "profile_sync_action": {
-            "auto": "sync_if_current_drive_connected",
-            "google_drive": "sync_required_or_report_failure",
-            "local_only": "local_only_no_upload",
-        }[backend],
+        "profile_sync_action": "sync_required_or_report_failure",
     }
 
 

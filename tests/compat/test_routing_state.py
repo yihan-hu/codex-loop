@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 import subprocess
@@ -7,14 +8,13 @@ import uuid
 from unittest.mock import patch
 from pathlib import Path
 
+from _routing_fixture import _resolved, route_init, route_transition
 from scripts.codex_loop_runtime.routing_state import (
     permission_observation_status,
     permission_preflight_plan,
     record_permission_observation,
     route_check,
-    route_init,
     route_show,
-    route_transition,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -220,17 +220,13 @@ class RoutingStateTests(unittest.TestCase):
         finally:
             self.cleanup(state)
 
-    def test_local_host_config_is_a_routed_read_only_action(self):
+    def test_native_host_config_access_is_denied(self):
         state = route_init(session_id=self.sid(), host_surface="chatgpt_web")
         try:
             result = route_check(action="local_host_config", session_id=state["session_id"])
-            self.assertTrue(result["allowed"])
-            self.assertEqual(result["config_role"], "codex_loop_bootstrap_read_only")
-            self.assertFalse(result["config_mutation_allowed"])
-            self.assertEqual(result["allowed_config_paths"], [
-                "~/.codex-loop/host.json",
-            ])
-            self.assertIn("not an authorization bypass", result["rule"])
+            self.assertFalse(result["allowed"])
+            self.assertEqual(result["config_role"], "controller_only")
+            self.assertIn("use_drive_restored_controller_session_profile", result["requirements"])
         finally:
             self.cleanup(state)
 
@@ -355,10 +351,10 @@ class RoutingStateTests(unittest.TestCase):
     def test_cli_exposes_permission_preflight_plan(self):
         sid = self.sid()
         proc = subprocess.run(
-            [sys.executable, str(CLI), "route-init", "--session-id", sid, "--host-surface", "chatgpt_web"],
+            [sys.executable, str(CLI), "route-init", "--session-id", sid, "--host-surface", "chatgpt_web",
+             "--resolved-execution-json", json.dumps(_resolved("web"))],
             cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
         )
-        import json
         state = json.loads(proc.stdout)["data"]
         try:
             planned = subprocess.run(
@@ -375,14 +371,14 @@ class RoutingStateTests(unittest.TestCase):
     def test_cli_exposes_routing_primitives(self):
         sid = self.sid()
         proc = subprocess.run(
-            [sys.executable, str(CLI), "route-init", "--session-id", sid, "--host-surface", "chatgpt_web"],
+            [sys.executable, str(CLI), "route-init", "--session-id", sid, "--host-surface", "chatgpt_web",
+             "--resolved-execution-json", json.dumps(_resolved("web"))],
             cwd=ROOT,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=True,
         )
-        import json
         state = json.loads(proc.stdout)["data"]
         try:
             checked = subprocess.run(

@@ -102,7 +102,7 @@ Once Local mode is selected, later repository tasks in the same conversation kee
 
 Codex Loop uses the host’s standard progress cadence for substantive multi-step work, with concise material findings and blockers. An explicit enhanced preference uses an approximate **15-second / 3-substantive-tool-call** cadence. Lightweight tasks remain low-noise. This is host-facing guidance: ChatGPT owns actual message timing and tool dispatch.
 
-The preference is user-specific and is never committed. `python3 scripts/codex_loop.py progress-config` shows the effective values; `progress-config --mode enhanced --interval-seconds 20 --tool-call-interval 4` writes overrides atomically to `~/.codex-loop/host.json` (or `CODEX_LOOP_HOME/host.json`). The supported modes are `enhanced`, `standard`, and `quiet`; upfront planning and material-event updates can be toggled independently. `progress-config --reset` removes only the progress override and returns to built-in defaults. See `references/progress-visibility.md`.
+Progress preferences live in the connected user's Drive Host Profile. The controller temporarily imports them under CODEX_LOOP_PROFILE_HOME; progress-config edits this session copy and requires a verified update of the original Drive file before they become durable. Mac/WSL runtimes retain no separate preference copy. The supported modes are enhanced, standard and quiet. See references/progress-visibility.md.
 
 The host config is private runtime state outside the repository and outside `skill.zip`. It may coexist with non-sensitive workspace locators/preferences, but it does not store current `workspace_mode`, `interaction_target`, or `deployment_target`; those live in the conversation routing file. Host config must never contain credentials, approval/session tokens, or other secrets.
 
@@ -133,7 +133,7 @@ Choose one absolute default workspace directory for each execution environment (
 C:\Users\Alice\PiWork
 ```
 
-`LOCAL_ROOT` is a runtime placeholder, not a path baked into the distributed Skill and not necessarily an operating-system environment variable. Confirm that the selected local connection permits that directory. You may provide it when selecting Local mode, or persist a non-sensitive default in `~/.codex-loop/host.json` so later conversations can reuse it after explicit or saved Local selection.
+LOCAL_ROOT is a runtime placeholder, not a path baked into the Skill. Persist its per-environment default only in the connected user's Drive Host Profile. The selected connection must independently verify the concrete directory and current-task authorization; no local host.json is used.
 
 A root locator alone does not select Local mode. Save `execution.default_target` as `web`, `local` (automatic computer selection), or a configured computer ID to initialize new conversation routes. Current-task Web/computer/connection wording overrides that preference; an existing lifecycle keeps its original computer.
 
@@ -147,7 +147,7 @@ See `references/local-mode-setup.md` for the exact agent-side resolution and saf
 
 Start with the [local MCP setup tutorial](references/local-mcp-tutorial.md) to connect and verify your computer. Then register the connection and choose a default below. The tutorial distinguishes the observed no-top-up setup from any guarantee about other accounts or future pricing.
 
-`~/.codex-loop/host.json` is outside the repository and is never pushed or included in the Skill ZIP. It stores connector locators, their priority, a default execution environment, and per-environment workspace/project/runtime/state locations plus an optional host-local `git_metadata_root`; it contains no API keys or permission grants. Existing `host-config` commands edit it, and ordinary language such as “remember this Mac as my default”, “use Web this time”, or “use my second MCP this time” maps to saving or overriding those settings.
+The connected user's Google Drive Host Profile is the single persistent store of connection priorities, default environment, and per-environment project/runtime/state locators. The controller imports it once per conversation into a private session profile, resolves execution, then passes the chosen connection and project snapshot to Mac/WSL. No local persistent Host Profile is consulted. Controller preference edits must update and verify the same Drive file; current-task path grants remain separate.
 
 ```bash
 python3 scripts/codex_loop.py host-config set execution.connections '[

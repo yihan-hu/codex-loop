@@ -2,11 +2,11 @@
 
 For first-time setup, follow [the local MCP tutorial](local-mcp-tutorial.md): connect a private file/shell server through Secure MCP Tunnel, verify it from ChatGPT, then register it here. This document defines the runtime selection contract.
 
-The user's private `~/.codex-loop/host.json` stores connection locators and an execution default. It lives outside the repository and is excluded from Git, source bundles, task persistence, and Skill ZIPs. Never store API keys, endpoint credentials, grants, or online/authorized claims in it. The connected MCP app owns authentication.
+The connected user's Google Drive Host Profile is the sole persistent preference and locator source. The controller restores it once per conversation into a private temporary session profile and supplies a selected execution snapshot to Mac/WSL. Native runtimes never read or write Host Profile preferences. Credentials and access permission remain host-owned.
 
 ## Configuration
 
-Use the existing `host-config` command. `execution.connections` is an ordered list; unique `name` identifies a connection, `computer` groups connections to the same execution environment/filesystem (give Mac, Windows, and each WSL distribution distinct IDs), `connector` is its exact host-exposed app name or ID, `kind` is `mcp` or `rdc`; paths belong only to `workspace.environments[computer]`, never to individual connections. This includes the optional host-local `git_metadata_root` used to repair a registered shared project's host-specific `.git` pointer after a failed normal Git probe.
+Use the existing `host-config` command. `execution.connections` is an ordered list; unique `name` identifies a connection, `computer` groups connections to the same execution environment/filesystem (give Mac, Windows, and each WSL distribution distinct IDs), `connector` is its exact host-exposed app name or ID, `kind` is `mcp` or `rdc`; paths belong only to `workspace.environments[computer]`, never to individual connections.
 
 ```bash
 python3 scripts/codex_loop.py host-config set execution.connections '[
@@ -23,9 +23,9 @@ Save settings when the user asks to remember/change them. A one-task request suc
 
 ## Read preferences before lifecycle admission
 
-Every new conversation first follows [Drive-first profile recovery](host-profile-drive.md). Restore from the current connected user's fixed private `codex-loop/settings/host-profile.json` before resolving execution. No author account or local machine is a default profile owner. Web uses a fresh session preference home; disconnected Drive or a verified absent file uses built-in defaults. Errors and duplicate matches stop recovery. A persistent native host may retain its own private settings when Drive is unavailable.
+Every new conversation must restore and validate the connected user's Drive Host Profile before execution resolution. Missing, disconnected, unsafe, or ambiguous Drive profiles stop routing; the Mac/WSL native runtime must not fall back to its own configuration. The controller uses a private temporary session profile only.
 
-Retain that preference cache for Web selection/configuration calls only. Local lifecycle commands run on the selected computer's own runtime home. Saving user-requested preferences must synchronize through the connected user's Drive and verify the provider result; do not write a native computer's profile just to use it as an execution connection. An explicit one-task override and an existing conversation route remain separate from stored defaults.
+Retain the profile only in the controller's private temporary session. Mac/WSL run lifecycle code and retain independent task state, not Host Profile preferences. Any user-requested preference save must update and verify the original Google Drive file; running a local objective never copies the profile onto that computer.
 
 ## Selection and actual execution
 
@@ -39,15 +39,12 @@ Retain that preference cache for Web selection/configuration calls only. Local l
 python3 scripts/codex_loop.py execution-resolve --workspace-target local \
   --available-connections-json '["my-mac","rdc-mac"]'
 python3 scripts/codex_loop.py route-init --host-surface chatgpt_web \
-  --workspace-target mac --connection second-mac-link \
-  --available-connections-json '["second-mac-link"]'
+  --session-id SESSION --resolved-execution-json "$CONTROLLER_EXECUTION_JSON"
 ```
-
-For the project-gated My Mac HTTP bridge, local lifecycle creation is a special private-runtime call: pin the exact Mac connector, use its canonical Codex Loop runtime path, include the current conversation `session_id`, and issue the normal `bootstrap --request-anchor '…'` command without fabricating a `task_id`. The bridge's existing private `.codex-loop` runtime exception is intentionally not restricted to an allowlist of bootstrap commands; normal terminal and file tools still require both a real `task_id` and an explicit conversation workspace grant. Register a current-user-authorized project through `workspace-materialize` and `workspace-grant` after bootstrap (or, if already registered, call `workspace-grant` directly). The named My Mac `route-check` now verifies that actual current-session grant, not only the caller-provided `--workspace-granted` flag. Preserve that same session ID for normal work. `resume --last` and `resume --task-id` in the private runtime similarly recover the lifecycle without granting new project access. An existing connection permission is not a second project authorization request.
 
 Use the returned `local_connection` for **all** Local lifecycle, file, shell, native Git, and transfer calls. Connection-specific schemas stay host-owned. The `local_repository`, `local_transfer`, and `local_host_config` action classes apply equally to custom MCP and RDC. Browser/GUI capability remains separate: a file/shell MCP does not provide Browser Control merely because it can run a terminal command.
 
-`route-init` consumes preferences once and records the selected connection in the private conversation session. Repeated `route-init` for that session returns the same route. For an explicitly requested change use `route-transition --workspace-target COMPUTER --connection NAME --current-user-selection-observed --selection-evidence 'exact user selection'` with the same live observations. An existing task cannot move its lifecycle to another computer; complete/cancel it or obtain an explicitly scoped new objective there. A same-computer transport change must first re-observe that computer and its lifecycle.
+The controller resolves execution using its Drive-restored session profile and passes the exact resolved JSON to `route-init`; that runtime stores the selected connection and environment-project snapshot for the conversation. Subsequent project lookups use the same snapshot, never a native profile. Explicit `route-transition` requires a newly controller-resolved JSON payload and user selection evidence. An existing lifecycle cannot move computers; same-computer transport changes retain the initial environment snapshot.
 
 Availability selection happens before dispatch. Once a write, command, or publish was dispatched, an error or missing return value requires inspecting that exact operation's status/output. Do not resend it through another connector to escape ambiguity. Connection preferences select location/transport; current task scope, path grants, host confirmations, and existing execution safety checks still govern the action. A saved Local default plus an explicit edit/fix request is Local intent for that request, not permission for unrelated paths or future unrelated writes.
 

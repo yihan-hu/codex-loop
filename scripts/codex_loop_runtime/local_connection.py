@@ -68,7 +68,7 @@ def resolve_local_root(selected: dict[str, Any], *, local_root: str | None = Non
         root = validate_absolute_locator(local_root, "task local_root")
         basis = "current_task_directory"
     elif project is not None:
-        projects = environment_locations(selected["computer"])["projects"]
+        projects = locations["projects"]
         if project not in projects:
             raise ValueError(f"unknown project {project!r} on environment {selected['computer']!r}")
         root = projects[project]

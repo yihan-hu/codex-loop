@@ -5,7 +5,8 @@ import uuid
 from pathlib import Path
 
 from scripts.codex_loop_runtime.release_lineage import capture_workspace_binding
-from scripts.codex_loop_runtime.routing_state import route_init, record_permission_observation
+from scripts.codex_loop_runtime.routing_state import record_permission_observation
+from _routing_fixture import route_init
 from scripts.codex_loop_runtime.state import StateStore
 from scripts.codex_loop_runtime.web_publish import (
     begin_web_publish_continuation,
