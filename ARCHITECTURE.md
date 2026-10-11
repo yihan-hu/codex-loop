@@ -31,21 +31,27 @@ flowchart TD
   MG -. explicit unrevoked authorization earlier in current chat; no task ID required .-> WG[workspace-admit: verify scoped root, materialize + grant current session]
   WG --> ROUTEGATE[Named My Mac route checks current session project grant]
   ROUTEGATE --> ACCESS
+  ROUTEGATE -. missing or stale grant .-> REPAIR
   MCP -. first-time setup only .-> GUIDE[Local MCP setup tutorial]
   ROUTE --> DISPATCH[route-check uses snapshot and current task permissions]
   DISPATCH --> LR[Same connector: selected computer runtime cache]
-  OBS -->|unavailable| Z[Fail closed]
+  OBS -->|temporary transport failure| REPAIR[Same-chat scoped technical recovery]
+  REPAIR -->|re-observe original connection| OBS
+  REPAIR -->|grant or route rebuilt + verified| DISPATCH
+  REPAIR -->|genuine external or authorization blocker| Z[Fail closed]
+  REPAIR -. incident details .-> REPORT[Summarize fixed and unresolved errors at completion]
   OBS --> LOC[Controller supplies selected environment and project paths]
   LOC --> ROUTE[Private temporary route pins connection and environment, no native profile]
   ROUTE -. directory-dependent work .-> ROOT[Task directory / named project / environment default]
   ROOT -->|missing or denied| Z
   ROOT --> ACCESS[Host verifies task authority + real directory + connector roots]
   ACCESS --> DISPATCH
+  DISPATCH -. transient failure or lost session .-> REPAIR
   HR --> L[bootstrap -> task_id]
   LR --> L
   A -->|known lifecycle| L
   A -->|identity/context lost| RR[resume same lifecycle]
-  A -->|runtime unavailable| Z[Fail closed]
+  A -->|runtime temporarily unavailable| REPAIR
 
   L --> RQ[Retained exact request + steers]
   L --> LS{Lifecycle status}
@@ -115,6 +121,8 @@ bound to stage + input + instruction + request + generation]
 ## Boundaries
 
 - **The connected user Drive profile is the only persistent preference authority.** Each new conversation imports and verifies that profile exactly once on the controller. The controller resolves the selected connector and environment/project locators, passes an explicit execution snapshot to the local runtime, and the private conversation route pins it. Native runtime/task state is independent; no native host preference file participates.
+- **Technical errors remain visible after recovery.** Report distinct errors with cause certainty, repair, verified retry outcome and follow-up in the final task report; significant recurring errors also enter a normal checkpoint if one is needed. Reporting never pauses execution.
+- **Recoverable technical faults do not end authorized work.** The agent re-observes the original selected connector, refreshes missing route/grant state from explicit unrevoked same-conversation authorization, resumes the existing lifecycle, verifies the original operation, and retries it safely. No new controller or persistent recovery service is introduced. Only a confirmed external dependency, revoked/absent authorization, or exhausted safe recovery path may block. Ambiguous side effects are reconciled before any replay.
 - **My Mac admission grants are current-chat scoped.** Once `route-init` supplies a real session ID, an explicitly authorized project is admitted through one private-runtime `workspace-admit` command before ordinary project tools. Consent from any earlier user message in the current conversation remains effective for its exact project and action scope until revoked or narrowed; a missing technical grant is silently re-established under that consent, not re-asked. It checks the canonical path against a host-observed connector root, records a session-only grant, and needs no task ID. A continuation still resumes its existing lifecycle; no grant is silently inherited from an earlier conversation. The named connector retains its own access enforcement.
 - **WSL temporary directories stay host-enforced.** The optional adapter has a private local project allowlist, separate from Host Profile locators. After explicit user authorization, the conversation receives a bearer grant reusable across tasks; only commands carrying that capability mount the extra project. Grant-backed execution/polling renews three days of idle validity; optional task labels do not bind authorization. The backend cannot identify the web chat, so the chat must retain its private capability. Protocol reconnection does not clear an unexpired grant, backend restart does. Expiry/revocation stops dependent commands and preserves durable files. Chat identity is not independently authenticated, and grants never enter saved preferences or shared task state. See `integrations/wsl-mcp/README.md`.
 - **Lifecycle admission remains mandatory.** Once selected, Codex Loop must create or resume its lifecycle before any substantive task action. This invariant is not optimized away.

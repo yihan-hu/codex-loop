@@ -42,6 +42,19 @@ class InvocationContractTests(unittest.TestCase):
         self.assertIn("Run tests/build/lint/typecheck directly through normal host tools", skill)
         self.assertIn("Lifecycle validation receipts are optional durability metadata", skill)
 
+    def test_technical_failure_recovers_under_same_chat_authority(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        routing = (ROOT / "references" / "local-connections.md").read_text(encoding="utf-8")
+        drive = (ROOT / "references" / "host-profile-drive.md").read_text(encoding="utf-8")
+        self.assertIn("## Automatic technical recovery under existing authorization", skill)
+        self.assertIn("No Codex Loop grant for this conversation", skill)
+        self.assertIn("re-execute the original blocked step", skill)
+        self.assertIn("Before repeating a failed or timed-out write", skill)
+        self.assertIn("**Error reporting:** Keep a concise record", skill)
+        self.assertIn("including those fixed automatically", skill)
+        self.assertIn("same-connector reinitialization", routing)
+        self.assertIn("refresh/reinitialize that **same** connector", drive)
+
     def test_scope_contract_does_not_let_plan_expand_authority(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("The user owns **what** may change; the model owns **how**", skill)

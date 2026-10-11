@@ -16,7 +16,7 @@ For repository/filesystem work, run one cheap `orient` before first mutation. Lo
 
 ## Act and observe
 
-Work directly through normal host tools. Take the smallest coherent useful action, inspect its real result, repair resolvable failures, and continue. Do not call lifecycle `next` as a heartbeat or wrap ordinary edits/tests in lifecycle bookkeeping.
+Work directly through normal host tools. Take the smallest coherent useful action, inspect its real result, repair resolvable failures, **retry the original action when safe**, and continue. Existing same-chat authorization remains valid for its exact scope; a lost grant, route, or task identity is a technical recovery problem, not a reason to request the same consent again. Reconcile potentially executed side effects before retrying them. Keep a concise summary of distinct technical errors, including fixed ones, for the final report; place significant recurring errors in normal task checkpoints when one is already needed. Reporting must not pause execution. Reserve `blocked` for confirmed external/user dependencies after bounded repair, not first-attempt failures. Do not call lifecycle `next` as a heartbeat or wrap ordinary edits/tests in lifecycle bookkeeping.
 
 ## Verify
 
