@@ -84,14 +84,24 @@ retain prior blocker for recheck]
   PW --> H
 
   H <--> T[Inspect / act / observe / test / repair]
-  H -. same-host local parallel development .-> LC[Local Worktree Collaboration]
-  LC --> REG[Host-local SQLite: runs, slots, messages, delegations, integration and serial ownership]
-  LC --> CW[Git: independent detached or private-branch worktrees]
-  REG --> CLAIM[Atomic claim / dynamic join / last-finisher election]
-  CW --> CLAIM
-  CLAIM --> DEL[Direct and pooled delegation: offer, accept/reject, reoffer/cancel, result + commit]
-  DEL -->|all subtasks resolved| CLAIM
-  CLAIM -->|all slots and subtasks done; last active worker| INTEG[Target-branch cherry-pick + conflict repair + integration tests]
+  H -. same-host local parallel development .-> LC[Local Worktree DAG Collaboration]
+  LC --> REG[Host-local SQLite: runs, workers, task keys/pools/deps, receipts, delegations]
+  LC --> CW[Git: one authorized worktree per Chat task_id]
+  REG --> READY[Compute Ready tasks from completed upstream keys]
+  READY --> FAIR[Atomic fair claim: prioritize under-served ready pools, no hard caps]
+  CW --> FAIR
+  FAIR --> EXEC[One Chat executes bounded task on owned worktree]
+  EXEC --> FIN[finish verifies own commit delta + Git cleanliness]
+  FIN --> UNLOCK[Mark done and unlock downstream tasks immediately]
+  UNLOCK --> READY
+  FIN --> NEXT{Another Ready task?}
+  NEXT -->|Yes| FAIR
+  NEXT -->|No; other tasks active| WAITPOOL[Chat may exit; no wakeup daemon]
+  UNLOCK --> DEPS[Cross-worker dependency Git materialization: verified task deltas]
+  DEPS --> EXEC
+  FIN --> ELECTION{All DAG tasks and delegations done?}
+  ELECTION -->|No| READY
+  ELECTION -->|Yes; atomic last-finisher| INTEG[Topological own-delta cherry-pick into clean target + tests]
   INTEG --> SERIAL{Prewritten serial tail registered?}
   SERIAL -->|Yes| AUTO[Atomic owner assignment to same Integrator task_id]
   AUTO --> STEPS[Same Chat executes full serial chain and distinct planned gates]
@@ -139,7 +149,7 @@ bound to stage + input + instruction + request + generation]
 
 ## Boundaries
 
-- **Local worktree collaboration is opt-in and same-host.** The host-local registry also tracks direct/pool task delegation and recipient acceptance, rejection, reassignment, cancellation and result/commit receipts; pending delegations hold back integration. The new `collab` CLI coordinates planned slots and spontaneously joined compatible tasks through a host-local SQLite database. Each task still binds to one canonical Git worktree; worker worktrees use detached HEAD or owned private feature branches. The database stores messages/ownership/commit IDs, never source truth or host authorization. Normal `next`/`resume` exposes unacknowledged messages and any currently owned post-integration serial tail. Atomic completion elects one last active worker to cherry-pick into the sole authorized clean target-branch checkout, resolve conflicts and run tests. When a planned Run has a serial-tail file, successful `integration-complete` atomically claims that **single uninterrupted chain** for the same integrator task ID. The active Chat executes all of its gates without a new Slot; `serial-complete` verifies a clean target checkout descending from the integration commit, records its final HEAD, and lifts the lifecycle blocker. Integration and serial work remain verified model/host actions, not a background daemon. Web and cross-computer chats do not participate; a copied prompt never substitutes for current-chat permission.
+- **Local worktree collaboration is an opt-in same-host DAG scheduler, not a general background workflow engine.** Planned tasks declare stable keys, logical Pools and explicit predecessors. The host-local SQLite registry atomically releases only ready tasks and fairly chooses across Pools (favor few active workers and least recently served), without a hard concurrency limit or global Wave barrier. Each Chat retains one worktree and Codex Loop `task_id` across sequential task claims. Completing a task records its verified own commit delta, unlocks descendants and can immediately return the next ready task. Cross-worker inputs are materialized by Git cherry-picking only verified predecessor task deltas; final integration cherry-picks those deltas in topological order, not whole inherited worker histories. This does not change host authorization or wake an inactive Chat. Direct/pooled delegation messages and receipts remain tracked, and pending delegations block last-finisher election. `next`/`resume` expose messages and an Integrator-owned post-global-integration serial chain. Integration and post-integration semantic gates are still performed by the live Chat, never by a daemon. SQLite stores ownership/metadata; Git and the host own source truth and permission.
 - **Detached HEAD continuity has explicit provenance.** Workers may use detached HEAD only when the recorded target branch is supported by verified source provenance; the workspace lease distinguishes `branch` (intended target) from `checked_out_branch` (None on detached workers). Unverified detached work is never silently promoted to HOT mutation authority.
 
 - **The connected user Drive profile is the only persistent preference authority.** Each new conversation imports and verifies that profile exactly once on the controller. The controller resolves the selected connector and environment/project locators, passes an explicit execution snapshot to the local runtime, and the private conversation route pins it. Native runtime/task state is independent; no native host preference file participates.

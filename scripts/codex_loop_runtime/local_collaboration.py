@@ -41,9 +41,23 @@ CREATE TABLE IF NOT EXISTS slots (
   title TEXT NOT NULL, instructions TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'available', task_id TEXT,
   worktree TEXT, commit_sha TEXT,
+  task_key TEXT, pool_id TEXT NOT NULL DEFAULT 'default',
+  depends_on TEXT NOT NULL DEFAULT '[]', start_commit TEXT, completed_by TEXT,
   PRIMARY KEY(run_id, number), UNIQUE(run_id, task_id), UNIQUE(run_id, worktree)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS unique_active_task ON slots(task_id) WHERE task_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS workers (
+  run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL,
+  worktree TEXT NOT NULL, last_commit TEXT, PRIMARY KEY(run_id, task_id), UNIQUE(run_id, worktree)
+);
+CREATE TABLE IF NOT EXISTS worker_inputs (
+  run_id TEXT NOT NULL, task_id TEXT NOT NULL, source_slot INTEGER NOT NULL,
+  PRIMARY KEY(run_id, task_id, source_slot)
+);
+CREATE TABLE IF NOT EXISTS pool_dispatch (
+  run_id TEXT NOT NULL, pool_id TEXT NOT NULL, last_claim INTEGER NOT NULL,
+  PRIMARY KEY(run_id,pool_id)
+);
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
   sender TEXT NOT NULL, recipient TEXT, body TEXT NOT NULL,
@@ -155,6 +169,20 @@ def _connection(*, write: bool = False) -> Iterator[sqlite3.Connection]:
     conn.execute('PRAGMA busy_timeout=20000')
     conn.execute('PRAGMA foreign_keys=ON')
     conn.executescript(SCHEMA)
+    # Previously created host-local runs retain their slots; add DAG fields in place.
+    existing = {row['name'] for row in conn.execute('PRAGMA table_info(slots)')}
+    for field, definition in {
+        'task_key': 'TEXT', 'pool_id': "TEXT NOT NULL DEFAULT 'default'",
+        'depends_on': "TEXT NOT NULL DEFAULT '[]'", 'start_commit': 'TEXT',
+        'completed_by': 'TEXT',
+    }.items():
+        if field not in existing:
+            try:
+                conn.execute(f'ALTER TABLE slots ADD COLUMN {field} {definition}')
+            except sqlite3.OperationalError as exc:
+                if 'duplicate column' not in str(exc).lower():
+                    raise
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS unique_task_key ON slots(run_id,task_key) WHERE task_key IS NOT NULL')
     if write:
         conn.execute('BEGIN IMMEDIATE')
     try:
@@ -178,7 +206,10 @@ def _run(conn: sqlite3.Connection, run_id: str) -> sqlite3.Row:
 
 
 def _slot(conn: sqlite3.Connection, run_id: str, task_id: str) -> sqlite3.Row:
-    row = conn.execute('SELECT * FROM slots WHERE run_id=? AND task_id=?', (run_id, task_id)).fetchone()
+    row = conn.execute("""SELECT * FROM slots WHERE run_id=? AND
+                (task_id=? OR completed_by=?)
+                ORDER BY (status='claimed') DESC, number DESC LIMIT 1""",
+                (run_id, task_id, task_id)).fetchone()
     if row is None:
         raise KeyError(f'task {task_id!r} has not claimed a slot in run {run_id!r}')
     return row
@@ -186,6 +217,107 @@ def _slot(conn: sqlite3.Connection, run_id: str, task_id: str) -> sqlite3.Row:
 
 def _task(task_id: str) -> str:
     return _identifier(task_id, 'Codex Loop task id', TASK_RE)
+
+
+def _task_specs(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not tasks or len(tasks) > 10000:
+        raise ValueError('planned run requires 1-10000 bounded tasks')
+    result = []
+    for i, task in enumerate(tasks, 1):
+        if not isinstance(task, dict) or not {'title', 'instructions'} <= set(task) or \
+                set(task) - {'title', 'instructions', 'key', 'pool', 'depends_on'}:
+            raise ValueError('task must contain title/instructions and optional key/pool/depends_on')
+        key = _identifier(task.get('key', f'task-{i}'), 'task key', RUN_RE)
+        pool = _identifier(task.get('pool', 'default'), 'pool name', RUN_RE)
+        deps = task.get('depends_on', [])
+        if not isinstance(deps, list) or any(not isinstance(d, str) or not RUN_RE.fullmatch(d) for d in deps):
+            raise ValueError(f'task {key}: depends_on must be a list of task keys')
+        if len(deps) != len(set(deps)) or key in deps:
+            raise ValueError(f'task {key}: duplicate or self dependency')
+        result.append({'key': key, 'pool': pool, 'depends_on': deps,
+                       'title': _text(task['title'], 'task title', 200),
+                       'instructions': _text(task['instructions'], 'task instructions', 60000)})
+    by_key = {task['key']: task for task in result}
+    if len(by_key) != len(result):
+        raise ValueError('task keys must be unique')
+    pending = {key: set(item['depends_on']) for key, item in by_key.items()}
+    for key, deps in pending.items():
+        for source in deps:
+            if source not in by_key:
+                raise ValueError(f'unknown task dependency: {source}')
+    removed = set()
+    while len(removed) < len(pending):
+        ready = {key for key, deps in pending.items() if key not in removed and deps <= removed}
+        if not ready:
+            raise ValueError('cycle in task dependencies')
+        removed.update(ready)
+    return result
+
+
+def _ordered_slots(db: sqlite3.Connection, run_id: str) -> list[sqlite3.Row]:
+    slots = db.execute('SELECT * FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
+    by_key = {slot['task_key'] or f'task-{slot["number"]}': slot for slot in slots}
+    ordered, visited = [], set()
+    while len(visited) < len(slots):
+        completed_keys = {x['task_key'] or f'task-{x["number"]}' for x in ordered}
+        ready = [row for row in slots if row['number'] not in visited and
+                 set(json.loads(row['depends_on'])).issubset(completed_keys)]
+        if not ready:
+            raise RuntimeError('stored collaboration task DAG is invalid')
+        ordered.extend(ready)
+        visited.update(row['number'] for row in ready)
+    return ordered
+
+
+def _ready_slots(db: sqlite3.Connection, run_id: str) -> list[sqlite3.Row]:
+    slots = db.execute('SELECT * FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
+    done = {slot['task_key'] or f'task-{slot["number"]}' for slot in slots if slot['status'] == 'done'}
+    return [slot for slot in slots if slot['status'] == 'available' and
+            set(json.loads(slot['depends_on'])).issubset(done)]
+
+
+def _choose_slot(db: sqlite3.Connection, run_id: str) -> sqlite3.Row | None:
+    ready = _ready_slots(db, run_id)
+    if not ready:
+        return None
+    active = {r['pool_id']: r['n'] for r in db.execute(
+        "SELECT pool_id,COUNT(*) n FROM slots WHERE run_id=? AND status='claimed' GROUP BY pool_id", (run_id,))}
+    last = {r['pool_id']: r['last_claim'] for r in db.execute(
+        'SELECT pool_id,last_claim FROM pool_dispatch WHERE run_id=?', (run_id,))}
+    # No capacity ceiling: protect a ready pool with zero active workers first,
+    # then rotate under-served pools, while using every available Chat.
+    chosen = min(ready, key=lambda slot: (active.get(slot['pool_id'], 0),
+                                          last.get(slot['pool_id'], 0), slot['number']))
+    next_seq = 1 + max(last.values(), default=0)
+    db.execute('INSERT INTO pool_dispatch(run_id,pool_id,last_claim) VALUES(?,?,?) '
+               'ON CONFLICT(run_id,pool_id) DO UPDATE SET last_claim=excluded.last_claim',
+               (run_id, chosen['pool_id'], next_seq))
+    return chosen
+
+
+def _ancestors(db: sqlite3.Connection, run_id: str, target: sqlite3.Row) -> list[sqlite3.Row]:
+    ordered = _ordered_slots(db, run_id)
+    by_key = {slot['task_key'] or f'task-{slot["number"]}': slot for slot in ordered}
+    required = set()
+    frontier = list(json.loads(target['depends_on']))
+    while frontier:
+        key = frontier.pop()
+        if key not in required:
+            required.add(key)
+            frontier.extend(json.loads(by_key[key]['depends_on']))
+    return [slot for slot in ordered if (slot['task_key'] or f'task-{slot["number"]}') in required]
+
+
+def _own_commits(root: Path, slot: sqlite3.Row) -> list[str]:
+    if not slot['start_commit'] or not slot['commit_sha']:
+        raise RuntimeError(f'slot {slot["number"]} lacks verified start or final commit')
+    if run_git(root, ['merge-base', '--is-ancestor', slot['start_commit'], slot['commit_sha']]).returncode:
+        raise RuntimeError(f'slot {slot["number"]} rewritten its source history')
+    commits = _git(root, 'rev-list', '--reverse', f'{slot["start_commit"]}..{slot["commit_sha"]}').splitlines()
+    for commit in commits:
+        if len(_git(root, 'rev-list', '--parents', '-n', '1', commit).split()) != 2:
+            raise RuntimeError('merge commit in worker history requires manual integration')
+    return commits
 
 
 def _make_run(conn: sqlite3.Connection, identity: dict[str, str], *, goal: str, strategy: str,
@@ -212,25 +344,21 @@ def create_run(repo: str, target_branch: str, worktree_parent: str,
     parent = Path(worktree_parent).expanduser().resolve(strict=True)
     if parent == Path(identity['repo']) or parent.is_relative_to(Path(identity['repo'])):
         raise ValueError('worktree parent must be outside the target-branch checkout')
-    if not tasks or len(tasks) > 32:
-        raise ValueError('planned run requires 1-32 tasks')
-    for task in tasks:
-        if not isinstance(task, dict) or set(task) != {'title', 'instructions'}:
-            raise ValueError('each task must have exactly title and instructions')
-        _text(task['title'], 'task title', 200)
-        _text(task['instructions'], 'task instructions', 60000)
+    specs = _task_specs(tasks)
     if serial_tail is not None:
         serial_tail = _text(serial_tail, 'post-integration serial chain', 60000)
     with _connection(write=True) as db:
         run = _make_run(db, identity, goal=goal_key, strategy=strategy,
                         parent=parent, planned=True, run_id=run_id)
-        for i, task in enumerate(tasks, 1):
-            db.execute('INSERT INTO slots(run_id,number,title,instructions) VALUES(?,?,?,?)',
-                       (run, i, task['title'], task['instructions']))
+        for i, task in enumerate(specs, 1):
+            db.execute('''INSERT INTO slots(run_id,number,title,instructions,task_key,pool_id,depends_on)
+                          VALUES(?,?,?,?,?,?,?)''',
+                       (run, i, task['title'], task['instructions'], task['key'], task['pool'],
+                        json.dumps(task['depends_on'])))
         if serial_tail is not None:
             db.execute('INSERT INTO serial_tails(run_id,instructions) VALUES(?,?)',
                        (run, serial_tail))
-    return {'run_id': run, 'slots': len(tasks), 'strategy': strategy,
+    return {'run_id': run, 'slots': len(specs), 'pools': sorted({t['pool'] for t in specs}), 'strategy': strategy,
             'target_branch': target_branch, 'base_commit': identity['base_commit'],
             'worktree_parent': str(parent), 'serial_tail_planned': serial_tail is not None,
             'launch': 'use the identical run-id launch prompt in each fresh chat'}
@@ -256,8 +384,8 @@ def dynamic_join(repo: str, target_branch: str, worktree_parent: str, *, goal_ke
         # Recover the original run for the same durable task even after its cohort closed.
         run = db.execute('''SELECT r.* FROM runs r JOIN slots s ON s.run_id=r.id
                             WHERE r.repo_key=? AND r.target_branch=? AND r.goal_key=?
-                              AND r.planned=0 AND s.task_id=? ORDER BY r.rowid DESC LIMIT 1''',
-                         (identity['repo_key'], identity['target_branch'], _text(goal_key, 'goal key', 200), task_id)).fetchone()
+                              AND r.planned=0 AND (s.task_id=? OR s.completed_by=?) ORDER BY r.rowid DESC LIMIT 1''',
+                         (identity['repo_key'], identity['target_branch'], _text(goal_key, 'goal key', 200), task_id, task_id)).fetchone()
         if run is None:
             run = db.execute("SELECT * FROM runs WHERE repo_key=? AND target_branch=? AND goal_key=? AND planned=0 AND state='open' ORDER BY rowid DESC LIMIT 1",
                              (identity['repo_key'], identity['target_branch'], goal_key)).fetchone()
@@ -268,7 +396,7 @@ def dynamic_join(repo: str, target_branch: str, worktree_parent: str, *, goal_ke
             if run['strategy'] != strategy or run['worktree_parent'] != str(parent):
                 raise ValueError('existing collaboration uses a different strategy or worktree parent')
             run_id = run['id']
-        existing = db.execute('SELECT * FROM slots WHERE run_id=? AND task_id=?', (run_id, task_id)).fetchone()
+        existing = db.execute('SELECT * FROM slots WHERE run_id=? AND (task_id=? OR completed_by=?) ORDER BY number DESC LIMIT 1', (run_id, task_id, task_id)).fetchone()
         if existing is not None:
             number = existing['number']
         else:
@@ -281,85 +409,150 @@ def dynamic_join(repo: str, target_branch: str, worktree_parent: str, *, goal_ke
 def claim(run_id: str, task_id: str, *, worktree_parent: str,
           existing_worktree: str | None = None) -> dict[str, Any]:
     task_id = _task(task_id)
-    # Atomic assignment, but Git setup runs outside SQLite's write transaction.
+    # One Codex Loop task_id/Chat owns one worktree, but can finish and pull many
+    # independent DAG tasks; SQLite selects a ready task fairly across pools.
     with _connection(write=True) as db:
         run = _run(db, run_id)
         parent = Path(worktree_parent).expanduser().resolve(strict=True)
         if str(parent) != run['worktree_parent']:
-            raise PermissionError('worktree parent differs from the registered host-authorized parent')
-        slot = db.execute('SELECT * FROM slots WHERE run_id=? AND task_id=?', (run_id, task_id)).fetchone()
+            raise PermissionError('worktree parent differs from registered authorized parent')
+        worker = db.execute('SELECT * FROM workers WHERE run_id=? AND task_id=?',
+                            (run_id, task_id)).fetchone()
+        slot = db.execute("SELECT * FROM slots WHERE run_id=? AND task_id=? AND status='claimed'",
+                          (run_id, task_id)).fetchone()
         if slot is None:
-            if run['state'] != 'open' or not run['planned']:
-                raise RuntimeError('run is not accepting planned slot claims')
-            slot = db.execute("SELECT * FROM slots WHERE run_id=? AND status='available' ORDER BY number LIMIT 1", (run_id,)).fetchone()
+            if run['state'] != 'open':
+                if worker:
+                    last = _slot(db, run_id, task_id)
+                    return {'run_id': run_id, 'task_id': task_id, 'slot': last['number'],
+                            'status': last['status'], 'worktree': worker['worktree'],
+                            'registered': True, 'run_state': run['state']}
+                raise RuntimeError('run is not accepting slot claims')
+            if not run['planned']:
+                raise RuntimeError('unplanned participants must register through collab join')
+            slot = _choose_slot(db, run_id)
             if slot is None:
-                # The predefined slots remain immutable. A later worker may claim
-                # an explicitly offered pool subtask as an additional physical slot.
+                if db.execute("SELECT 1 FROM slots WHERE run_id=? AND status='available' LIMIT 1", (run_id,)).fetchone():
+                    raise RuntimeError('no ready task: remaining tasks are waiting for declared dependencies')
                 offer = db.execute("""SELECT * FROM delegations WHERE run_id=? AND status='offered'
-                                       AND recipient IS NULL ORDER BY id LIMIT 1""", (run_id,)).fetchone()
+                                       AND recipient IS NULL AND sender!=? ORDER BY id LIMIT 1""", (run_id, task_id)).fetchone()
                 if offer is None:
-                    raise RuntimeError('no unclaimed slot or open delegation remains in this run')
+                    raise RuntimeError('no unclaimed slot or pool delegation remains in this run')
                 number = int(db.execute('SELECT COALESCE(MAX(number),0)+1 FROM slots WHERE run_id=?',
                                         (run_id,)).fetchone()[0])
-                db.execute("INSERT INTO slots(run_id,number,title,instructions,status,task_id) VALUES(?,?,?,?, 'claimed', ?)",
-                           (run_id, number, offer['title'], offer['instructions'], task_id))
+                db.execute("""INSERT INTO slots(run_id,number,title,instructions,status,task_id,task_key)
+                           VALUES(?,?,?,?,'claimed',?,?)""",
+                           (run_id, number, offer['title'], offer['instructions'], task_id, f'delegation-{number}'))
                 db.execute("""UPDATE delegations SET status='accepted',recipient=?,updated_at=CURRENT_TIMESTAMP
                               WHERE id=?""", (task_id, offer['id']))
                 slot = _slot(db, run_id, task_id)
             else:
                 db.execute("UPDATE slots SET task_id=?,status='claimed' WHERE run_id=? AND number=? AND status='available'",
                            (task_id, run_id, slot['number']))
-        number = slot['number']
-        title, instructions = slot['title'], slot['instructions']
-        stored = slot['worktree']
-        base = run['base_commit']
-        strategy = run['strategy']
-        repo = Path(run['repo'])
-    path = (Path(existing_worktree).expanduser().resolve(strict=True)
-            if existing_worktree else parent / f'{run_id}-slot-{number}')
-    if stored and stored != str(path):
-        raise RuntimeError('task already owns a different worktree; resume the original worktree')
+        number, stored = slot['number'], slot['worktree']
+        repo, base, strategy = Path(run['repo']), run['base_commit'], run['strategy']
+        worktree = worker['worktree'] if worker else str(parent / f'{run_id}-slot-{number}')
+        if existing_worktree:
+            path = Path(existing_worktree).expanduser().resolve(strict=True)
+            if worker and str(path) != worker['worktree']:
+                raise RuntimeError('Chat already owns a different worktree')
+            if not worker:
+                worktree = str(path)
+        else:
+            path = Path(worktree)
+        if stored and stored != str(path):
+            raise RuntimeError('task has a different registered worktree; resume it')
+        if worker and worker['last_commit'] and slot['start_commit'] is None:
+            expected_previous_head = worker['last_commit']
+        else:
+            expected_previous_head = None
     if existing_worktree:
         _verify_same_repo(path, run)
-        if path != repo and path == parent:
-            raise ValueError('existing worker worktree cannot equal the worktree parent')
+        if path == parent:
+            raise ValueError('existing worktree cannot equal worktree parent')
     elif not path.exists():
         if strategy == 'detached':
             _git(repo, 'worktree', 'add', '--detach', str(path), base)
         else:
-            branch = f'codex-loop/{run_id}/slot-{number}'
-            _git(repo, 'worktree', 'add', '-b', branch, str(path), base)
+            _git(repo, 'worktree', 'add', '-b', f'codex-loop/{run_id}/slot-{number}', str(path), base)
     _verify_same_repo(path, run)
-    if not stored and _git(path, 'rev-parse', '--verify', 'HEAD') != base and not existing_worktree:
+    resumed_active = bool(stored and slot['start_commit'])
+    resumed_legacy = bool(stored and not slot['start_commit'] and not slot['task_key'])
+    if not resumed_active and not resumed_legacy and _git(path, 'status', '--porcelain', '--untracked-files=all'):
+        raise RuntimeError('worker worktree has uncommitted work; preserve or resolve it before claiming')
+    head = _git(path, 'rev-parse', '--verify', 'HEAD')
+    if expected_previous_head and head != expected_previous_head:
+        raise RuntimeError('worker HEAD changed after its previous completed task; reconcile before claiming')
+    if not worker and not existing_worktree and not stored and head != base:
         raise RuntimeError('new worker worktree base differs from recorded run base')
-    with _connection(write=True) as db:
-        current = _slot(db, run_id, task_id)
-        if current['worktree'] and current['worktree'] != str(path):
-            raise RuntimeError('slot was concurrently assigned another worktree')
-        competing = db.execute('''SELECT s.task_id,r.id FROM slots s JOIN runs r ON r.id=s.run_id
-                       WHERE s.worktree=? AND s.task_id!=? AND r.state IN ('open','integrating')''',
-                       (str(path), task_id)).fetchone()
-        if competing:
-            raise RuntimeError(f'worktree is already owned by active task {competing["task_id"]}')
-        db.execute('UPDATE slots SET worktree=? WHERE run_id=? AND number=?', (str(path), run_id, number))
+    if not slot['start_commit']:
+        if resumed_legacy:
+            # Existing pre-DAG workers can resume dirty or committed in-flight work.
+            # Their full branch delta still starts from the recorded Run baseline.
+            head = base
+        with _connection() as db:
+            current = db.execute('SELECT * FROM slots WHERE run_id=? AND number=?', (run_id, number)).fetchone()
+            sources = [] if resumed_legacy else _ancestors(db, run_id, current)
+            applied = {row['source_slot'] for row in db.execute(
+                'SELECT source_slot FROM worker_inputs WHERE run_id=? AND task_id=?', (run_id, task_id))}
+        for source in sources:
+            if source['number'] in applied:
+                continue
+            if source['status'] != 'done':
+                raise RuntimeError('dependency was invalidated before its materialization')
+            commits = _own_commits(repo, source)
+            if source['completed_by'] == task_id:
+                if run_git(path, ['merge-base','--is-ancestor', source['commit_sha'], head]).returncode:
+                    raise RuntimeError('worker lost a previous dependency commit')
+            else:
+                # Re-entry after an interrupted write: recognize -x trailers
+                # rather than replaying an ambiguous cherry-pick.
+                messages = _git(path, 'log', '--format=%B', f'{base}..HEAD')
+                missing = [sha for sha in commits if
+                           f'(cherry picked from commit {sha})' not in messages]
+                if len(missing) != len(commits) and missing:
+                    raise RuntimeError('partial dependency cherry-pick; inspect and reconcile Git history')
+                if missing:
+                    try:
+                        _git(path, 'cherry-pick', '-x', *missing)
+                    except Exception as exc:
+                        raise RuntimeError(f'dependency materialization interrupted: {exc}; '
+                                           'resolve native Git state, then retry claim') from exc
+            head = _git(path, 'rev-parse', '--verify', 'HEAD')
+            with _connection(write=True) as db:
+                db.execute('INSERT OR IGNORE INTO worker_inputs(run_id,task_id,source_slot) VALUES(?,?,?)',
+                           (run_id, task_id, source['number']))
+        with _connection(write=True) as db:
+            existing_worker = db.execute('SELECT * FROM workers WHERE run_id=? AND task_id=?',
+                                         (run_id, task_id)).fetchone()
+            if not existing_worker:
+                competing = db.execute("""SELECT w.task_id FROM workers w JOIN runs r ON r.id=w.run_id
+                                       WHERE w.worktree=? AND w.task_id!=? AND r.state IN ('open','integrating')""",
+                                       (str(path), task_id)).fetchone()
+                if competing:
+                    raise RuntimeError(f'worktree already belongs to active task {competing["task_id"]}')
+                db.execute('INSERT INTO workers(run_id,task_id,worktree) VALUES(?,?,?)',
+                           (run_id, task_id, str(path)))
+            db.execute('UPDATE slots SET worktree=?,start_commit=? WHERE run_id=? AND number=? AND task_id=?',
+                       (str(path), head, run_id, number, task_id))
     source = capture_workspace_binding(repo)
     origin = str(source.get('origin_hint') or '')
     provenance = None
     if origin.startswith('github.com/'):
-        provenance = {
-            'schema_version': 1, 'kind': 'codex_loop_source_provenance',
-            'repository': origin[len('github.com/'):], 'origin_hint': origin,
-            'branch': run['target_branch'], 'base_commit': base,
-            'base_tree': _git(repo, 'rev-parse', f'{base}^{{tree}}'),
-            'path_bound': False, 'verified': True,
-            'verification_basis': 'local_collaboration_target_branch_at_run_creation',
-        }
+        provenance = {'schema_version': 1, 'kind': 'codex_loop_source_provenance',
+                      'repository': origin[len('github.com/'):], 'origin_hint': origin,
+                      'branch': run['target_branch'], 'base_commit': base,
+                      'base_tree': _git(repo, 'rev-parse', f'{base}^{{tree}}'),
+                      'path_bound': False, 'verified': True,
+                      'verification_basis': 'local_collaboration_target_branch_at_run_creation'}
     return {'run_id': run_id, 'slot': number, 'task_id': task_id,
-            'title': title, 'instructions': instructions,
+            'task_key': slot['task_key'] or f'task-{number}', 'pool': slot['pool_id'],
+            'depends_on': json.loads(slot['depends_on']),
+            'title': slot['title'], 'instructions': slot['instructions'],
             'worktree': str(path), 'strategy': strategy, 'base_commit': base,
             'target_branch': run['target_branch'], 'source_provenance': provenance,
             'registered': True,
-            'communication': 'read pending messages at next/resume, before editing shared interfaces, and before completion'}
+            'communication': 'read pending messages at next/resume and before shared interface edits'}
 
 
 def post_message(run_id: str, task_id: str, body: str, *, recipient_task: str | None = None) -> dict[str, Any]:
@@ -404,7 +597,7 @@ def inbox_for_task(task_id: str) -> list[dict[str, Any]]:
     if not db_path().exists():
         return []
     with _connection() as db:
-        runs = db.execute('SELECT run_id FROM slots WHERE task_id=?', (task_id,)).fetchall()
+        runs = db.execute('SELECT run_id FROM workers WHERE task_id=?', (task_id,)).fetchall()
     return [inbox(row['run_id'], task_id) for row in runs]
 
 
@@ -598,24 +791,43 @@ def _elect(db: sqlite3.Connection, run_id: str, task_id: str) -> dict[str, Any]:
             'integration_owner': run['integrator_task'], 'run_state': run['state'], 'counts': counts, 'pending_delegations': pending}
 
 
-def finish(run_id: str, task_id: str, *, commit_sha: str) -> dict[str, Any]:
+def finish(run_id: str, task_id: str, *, commit_sha: str, auto_claim: bool = True, slot_number: int | None = None) -> dict[str, Any]:
     task_id = _task(task_id)
     if not REF_RE.fullmatch(commit_sha):
         raise ValueError('commit SHA must be a full hexadecimal Git object id')
     with _connection() as db:
         run = _run(db, run_id)
-        slot = _slot(db, run_id, task_id)
-    if not slot['worktree']:
-        raise RuntimeError('no registered worker worktree')
+        # Retried finish after an ambiguous response must never finish the next
+        # task accidentally, even if the Chat already auto-claimed it.
+        active = db.execute("SELECT * FROM slots WHERE run_id=? AND task_id=? AND status='claimed'",
+                            (run_id, task_id)).fetchone()
+        if slot_number is not None and (not isinstance(slot_number, int) or slot_number < 1):
+            raise ValueError('slot number must be a positive integer')
+        prior = db.execute("""SELECT * FROM slots WHERE run_id=? AND completed_by=?
+                              AND commit_sha=? AND status='done' AND (? IS NULL OR number=?)
+                              ORDER BY number DESC LIMIT 1""",
+                           (run_id, task_id, commit_sha, slot_number, slot_number)).fetchone()
+        if slot_number is not None and active and slot_number != active['number'] and not prior:
+            raise RuntimeError('slot number differs from the current claimed task')
+        if prior:
+            if slot_number is None and active and active['start_commit']==commit_sha:
+                raise RuntimeError('ambiguous no-op finish: pass the claimed --slot number')
+            return {'run_id': run_id, 'task_id': task_id, 'commit_sha': commit_sha,
+                    'already_finished': True, 'continue_now': bool(active),
+                    'next_slot': active['number'] if active else None,
+                    'integrate_now': run['state']=='integrating' and run['integrator_task']==task_id}
+        slot = active
+    if not slot or not slot['worktree'] or not slot['start_commit']:
+        raise RuntimeError('no materialized, claimed task is registered for this worker')
     worktree = Path(slot['worktree'])
     _verify_same_repo(worktree, run)
     observed = _git(worktree, 'rev-parse', '--verify', 'HEAD')
     if observed != commit_sha:
         raise ValueError(f'commit must equal current worktree HEAD: {observed}')
-    if run_git(worktree, ['merge-base', '--is-ancestor', run['base_commit'], observed]).returncode:
-        raise ValueError('worker HEAD does not descend from shared base')
+    if run_git(worktree, ['merge-base', '--is-ancestor', slot['start_commit'], observed]).returncode:
+        raise ValueError('worker output no longer descends from its verified task inputs')
     if _git(worktree, 'status', '--porcelain', '--untracked-files=all'):
-        raise RuntimeError('worktree contains uncommitted or untracked work; preserve or resolve before finishing')
+        raise RuntimeError('worktree contains uncommitted or untracked work; preserve before finishing')
     with _connection() as db:
         reported_commits = db.execute("""SELECT id,commit_sha FROM delegations WHERE run_id=? AND
                                 recipient=? AND status='completed' AND commit_sha IS NOT NULL""",
@@ -623,26 +835,40 @@ def finish(run_id: str, task_id: str, *, commit_sha: str) -> dict[str, Any]:
     for record in reported_commits:
         if run_git(worktree, ['merge-base', '--is-ancestor', record['commit_sha'], observed]).returncode:
             raise RuntimeError(f'delegation #{record["id"]} commit is missing from final worker HEAD')
-    # Keep detached commits reachable after worker worktree is removed.
     ref = f'refs/codex-loop/collab/{run_id}/slot-{slot["number"]}'
     _git(worktree, 'update-ref', ref, observed)
     with _connection(write=True) as db:
-        current = _slot(db, run_id, task_id)
+        current = db.execute("SELECT * FROM slots WHERE run_id=? AND task_id=? AND status='claimed'",
+                             (run_id, task_id)).fetchone()
+        if not current or current['number'] != slot['number']:
+            raise RuntimeError('task ownership changed during finish; reconcile state')
         incomplete = db.execute("""SELECT COUNT(*) FROM delegations WHERE run_id=? AND recipient=?
                                    AND status IN ('offered','accepted')""", (run_id, task_id)).fetchone()[0]
         if incomplete:
-            raise RuntimeError(f'{incomplete} delegated task(s) assigned to this worker remain unfinished')
-        if current['status'] == 'done':
-            if current['commit_sha'] != observed:
-                raise RuntimeError('completed slot SHA changed; manual reconciliation required')
-        elif current['status'] == 'claimed':
-            if _run(db, run_id)['state'] != 'open':
-                raise RuntimeError('run was closed before this task finished')
-            db.execute("UPDATE slots SET status='done',commit_sha=? WHERE run_id=? AND task_id=?", (observed, run_id, task_id))
-        else:
-            raise RuntimeError(f'cannot finish slot in state {current["status"]}')
+            raise RuntimeError(f'{incomplete} delegated task(s) remain unfinished')
+        if _run(db, run_id)['state'] != 'open':
+            raise RuntimeError('run was closed before this task finished')
+        db.execute("""UPDATE slots SET status='done',commit_sha=?,completed_by=?,task_id=NULL,worktree=NULL
+                      WHERE run_id=? AND number=? AND status='claimed'""",
+                   (observed, task_id, run_id, current['number']))
+        db.execute('UPDATE workers SET last_commit=? WHERE run_id=? AND task_id=?',
+                   (observed, run_id, task_id))
+        db.execute('INSERT OR IGNORE INTO worker_inputs(run_id,task_id,source_slot) VALUES(?,?,?)',
+                   (run_id, task_id, current['number']))
         result = _elect(db, run_id, task_id)
-    return {'run_id': run_id, 'task_id': task_id, 'commit_sha': observed, **result}
+        parent = _run(db, run_id)['worktree_parent']
+    answer = {'run_id': run_id, 'task_id': task_id, 'commit_sha': observed, **result}
+    if not result['integrate_now'] and run['planned'] and auto_claim:
+        try:
+            # Claim after the committed finish; no idle Chat or extra lifecycle.
+            following = claim(run_id, task_id, worktree_parent=parent)
+        except RuntimeError as exc:
+            if 'no unclaimed slot' not in str(exc) and 'no ready task' not in str(exc):
+                answer['next_task_blocked'] = str(exc)
+                answer['action'] = 'finish is committed; inspect/recover claimed worktree then call collab claim'
+        else:
+            answer.update({'continue_now': True, 'next_task': following})
+    return answer
 
 
 def elect(run_id: str, task_id: str) -> dict[str, Any]:
@@ -661,7 +887,7 @@ def prepare_integration(run_id: str, task_id: str, *, integration_worktree: str)
             raise PermissionError('only the elected integrator can merge this run')
         if run['integration_attempted']:
             raise RuntimeError('integration was already attempted; inspect and reconcile Git state before any retry')
-        slots = db.execute('SELECT * FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
+        slots = _ordered_slots(db, run_id)
     root = Path(integration_worktree).expanduser().resolve(strict=True)
     _verify_same_repo(root, run)
     if _git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD') != run['target_branch']:
@@ -675,11 +901,7 @@ def prepare_integration(run_id: str, task_id: str, *, integration_worktree: str)
     for slot in slots:
         if slot['status'] != 'done' or not slot['commit_sha']:
             raise RuntimeError('all slots must be finished and committed')
-        commits = _git(root, 'rev-list', '--reverse', f'{run["base_commit"]}..{slot["commit_sha"]}').splitlines()
-        for commit in commits:
-            if len(_git(root, 'rev-list', '--parents', '-n', '1', commit).split()) != 2:
-                raise RuntimeError('merge commit in worker history requires manual integration')
-        batches.append((slot['number'], commits))
+        batches.append((slot['number'], _own_commits(root, slot)))
     # Persist the write intent BEFORE changing the Git index or branch.
     with _connection(write=True) as db:
         fresh = _run(db, run_id)
@@ -721,10 +943,10 @@ def integration_resolved(run_id: str, task_id: str, *, integration_worktree: str
     # -x trailers survive ordinary conflict resolution and prevent prematurely
     # marking a partially cherry-picked run as integrated.
     with _connection() as db:
-        slots = db.execute('SELECT commit_sha FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
+        slots = _ordered_slots(db, run_id)
     expected = []
     for slot in slots:
-        expected.extend(_git(root, 'rev-list', '--reverse', f'{run["base_commit"]}..{slot["commit_sha"]}').splitlines())
+        expected.extend(_own_commits(root, slot))
     merged_messages = _git(root, 'log', '--format=%B', f'{run["integration_start_head"]}..HEAD')
     missing = [sha for sha in expected if f'(cherry picked from commit {sha})' not in merged_messages]
     if missing:
@@ -816,10 +1038,18 @@ def serial_complete(run_id: str, task_id: str, *, integration_worktree: str,
 def status(run_id: str) -> dict[str, Any]:
     with _connection() as db:
         run = _run(db, run_id)
-        rows = db.execute('SELECT number,title,status,task_id,worktree,commit_sha FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
+        rows = db.execute('SELECT number,title,task_key,pool_id,depends_on,status,COALESCE(task_id,completed_by) task_id,commit_sha,worktree,start_commit FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
         delegations = db.execute('SELECT * FROM delegations WHERE run_id=? ORDER BY id', (run_id,)).fetchall()
         serial = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
+        ready = {slot['number'] for slot in _ready_slots(db, run_id)}
+    pools: dict[str, dict[str, int]] = {}
+    for row in rows:
+        counters = pools.setdefault(row['pool_id'], {'ready':0, 'waiting':0, 'claimed':0, 'done':0})
+        state = ('ready' if row['number'] in ready else
+                 'waiting' if row['status']=='available' else row['status'])
+        counters[state] += 1
     return {'run_id': run_id, 'state': run['state'], 'target_branch': run['target_branch'],
+            'pools': pools,
             'goal_key': run['goal_key'], 'integrator_task': run['integrator_task'],
             'candidate_head': run['candidate_head'], 'slots': [dict(row) for row in rows],
             'delegations': [dict(row) for row in delegations],
@@ -830,8 +1060,10 @@ def completion_obstacle(task_id: str) -> str | None:
     if not db_path().exists():
         return None
     with _connection() as db:
-        rows = db.execute('''SELECT r.id,r.state,r.integrator_task,s.status FROM slots s JOIN runs r ON r.id=s.run_id
-                                  WHERE s.task_id=?''', (task_id,)).fetchall()
+        rows = db.execute("""SELECT r.id,r.state,r.integrator_task,
+                         COALESCE((SELECT status FROM slots WHERE run_id=r.id AND task_id=? AND status='claimed'), 'done') status
+                         FROM runs r JOIN workers w ON w.run_id=r.id WHERE w.task_id=?""",
+                         (task_id, task_id)).fetchall()
         unsettled = {r['id']: db.execute('''SELECT COUNT(*) FROM delegations WHERE run_id=? AND sender=?
                               AND status NOT IN ('completed','cancelled')''', (r['id'], task_id)).fetchone()[0]
                      for r in rows}

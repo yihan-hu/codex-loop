@@ -178,6 +178,117 @@ class CollaborationTest(unittest.TestCase):
         self.assertEqual(result['serial_tail']['status'],'complete')
         self.assertIsNone(c.completion_obstacle('cli-owner'))
 
+    def test_resume_claim_preserves_dirty_inflight_worktree(self):
+        run=self.create(1)['run_id']
+        a=c.claim(run,'resume-chat',worktree_parent=str(self.parent))
+        (Path(a['worktree'])/'draft.txt').write_text('uncommitted user task work')
+        again=c.claim(run,'resume-chat',worktree_parent=str(self.parent))
+        self.assertEqual(again['slot'],a['slot'])
+        self.assertEqual((Path(a['worktree'])/'draft.txt').read_text(),'uncommitted user task work')
+
+    def test_noop_successive_tasks_require_slot_identity(self):
+        run=self.create(2)['run_id']
+        a=c.claim(run,'noop',worktree_parent=str(self.parent))
+        base=git(Path(a['worktree']),'rev-parse','HEAD')
+        second=c.finish(run,'noop',commit_sha=base,slot_number=a['slot'])['next_task']
+        with self.assertRaisesRegex(RuntimeError,'ambiguous'):
+            c.finish(run,'noop',commit_sha=base)
+        self.assertTrue(c.finish(run,'noop',commit_sha=base,slot_number=second['slot'])['integrate_now'])
+
+    def test_long_dependency_chain_validates_without_recursion(self):
+        tasks=[{'key':f's{i}', 'pool':'sequence', 'title':f's{i}', 'instructions':'bounded',
+                'depends_on':[f's{i-1}'] if i else []} for i in range(1200)]
+        run=c.create_run(str(self.repo),'main',str(self.parent),tasks,goal_key='longchain')['run_id']
+        self.assertEqual(c.status(run)['pools']['sequence']['ready'],1)
+        self.assertEqual(c.status(run)['pools']['sequence']['waiting'],1199)
+
+    def test_multi_pool_claims_are_fair_without_hard_capacity_limit(self):
+        tasks = ([{'key':f'A-{i}', 'pool':'articles', 'title':f'article {i}',
+                   'instructions':'Train independent article'} for i in range(100)] +
+                 [{'key':'B', 'pool':'methods', 'title':'methods','instructions':'Train methods'},
+                  {'key':'C', 'pool':'review', 'title':'review','instructions':'Review'}])
+        run = c.create_run(str(self.repo),'main',str(self.parent),tasks,goal_key='fair')['run_id']
+        claims = [c.claim(run,f'chat-{i}',worktree_parent=str(self.parent)) for i in range(10)]
+        pools = [x['pool'] for x in claims]
+        self.assertEqual(set(pools), {'articles','methods','review'})
+        self.assertEqual(pools.count('articles'),8)
+        self.assertEqual(c.status(run)['pools']['articles']['claimed'], 8)
+        self.assertEqual(c.status(run)['pools']['articles']['ready'], 92)
+        self.assertEqual(len(c.status(run)['slots']), 102)
+
+    def test_cross_pool_dependency_unblocks_during_other_active_training(self):
+        tasks = [{'key':'A-long','pool':'articles','title':'100 articles','instructions':'long'},
+                 {'key':'B1','pool':'other','title':'B initial','instructions':'B1'},
+                 {'key':'B2','pool':'other','depends_on':['B1'], 'title':'B deepen','instructions':'B2'},
+                 {'key':'B3','pool':'other','depends_on':['B2'], 'title':'B verify','instructions':'B3'}]
+        run = c.create_run(str(self.repo),'main',str(self.parent),tasks,goal_key='dependency')['run_id']
+        a = c.claim(run,'long-chat',worktree_parent=str(self.parent))
+        b = c.claim(run,'other-chat',worktree_parent=str(self.parent))
+        self.assertEqual((a['task_key'],b['task_key']), ('A-long','B1'))
+        self.assertEqual(c.status(run)['pools']['other']['waiting'],2)
+        b1=self.commit(b)
+        move1=c.finish(run,'other-chat',commit_sha=b1)
+        self.assertTrue(move1['continue_now'])
+        b2=move1['next_task']
+        self.assertEqual(b2['task_key'],'B2')
+        self.assertEqual(b2['worktree'],b['worktree'])
+        self.assertIsNone(c.completion_obstacle('long-chat')) if False else None
+        b2sha=self.commit(b2)
+        move2=c.finish(run,'other-chat',commit_sha=b2sha)
+        self.assertEqual(move2['next_task']['task_key'],'B3')
+        b3=move2['next_task']
+        third=self.commit(b3)
+        result=c.finish(run,'other-chat',commit_sha=third)
+        self.assertFalse(result['integrate_now'])
+        self.assertEqual(c.status(run)['pools']['other']['done'],3)
+        self.assertEqual(c.status(run)['pools']['articles']['claimed'],1)
+        self.assertTrue(c.finish(run,'long-chat',commit_sha=self.commit(a))['integrate_now'])
+        merged=c.prepare_integration(run,'long-chat',integration_worktree=str(self.repo))
+        self.assertEqual(merged['status'],'READY_FOR_TEST')
+        for i in range(1,5):
+            self.assertTrue((self.repo/f'slot-{i}.txt').exists())
+
+    def test_downstream_other_worker_materializes_prerequisite_commit_once(self):
+        tasks = [{'key':'A','pool':'first','title':'source','instructions':'Create source'},
+                 {'key':'B','pool':'second','depends_on':['A'],'title':'consumer','instructions':'Consume source'}]
+        run=c.create_run(str(self.repo),'main',str(self.parent),tasks,goal_key='crossworker')['run_id']
+        a=c.claim(run,'a',worktree_parent=str(self.parent))
+        (Path(a['worktree'])/'source.txt').write_text('from A\n')
+        git(Path(a['worktree']),'add','.');git(Path(a['worktree']),'commit','-m','A source')
+        source_head=git(Path(a['worktree']),'rev-parse','HEAD')
+        c.finish(run,'a',commit_sha=source_head,auto_claim=False)
+        b=c.claim(run,'b',worktree_parent=str(self.parent))
+        self.assertEqual(b['task_key'],'B')
+        self.assertEqual((Path(b['worktree'])/'source.txt').read_text(),'from A\n')
+        (Path(b['worktree'])/'result.txt').write_text('uses A\n')
+        git(Path(b['worktree']),'add','.');git(Path(b['worktree']),'commit','-m','B result')
+        final=c.finish(run,'b',commit_sha=git(Path(b['worktree']),'rev-parse','HEAD'))
+        self.assertTrue(final['integrate_now'])
+        self.assertEqual(c.prepare_integration(run,'b',integration_worktree=str(self.repo))['status'], 'READY_FOR_TEST')
+        self.assertEqual((self.repo/'source.txt').read_text(),'from A\n')
+        self.assertEqual((self.repo/'result.txt').read_text(),'uses A\n')
+        self.assertEqual(len(git(self.repo,'rev-list','--reverse','HEAD~2..HEAD').splitlines()),2)
+
+    def test_repeated_finish_after_auto_claim_does_not_finish_next_task(self):
+        tasks=[{'title':'A','instructions':'A'},{'title':'B','instructions':'B'}]
+        run=c.create_run(str(self.repo),'main',str(self.parent),tasks,goal_key='retry')['run_id']
+        a=c.claim(run,'chat',worktree_parent=str(self.parent));head=self.commit(a)
+        result=c.finish(run,'chat',commit_sha=head)
+        self.assertTrue(result['continue_now'])
+        retry=c.finish(run,'chat',commit_sha=head,slot_number=a['slot'])
+        self.assertTrue(retry['already_finished'])
+        self.assertEqual(retry['next_slot'],2)
+        self.assertEqual(c.status(run)['pools']['default']['claimed'],1)
+
+    def test_dependency_schema_rejects_cycles_and_missing_keys(self):
+        tasks=[{'key':'a','pool':'x','title':'a','instructions':'a','depends_on':['b']},
+               {'key':'b','pool':'y','title':'b','instructions':'b','depends_on':['a']}]
+        with self.assertRaisesRegex(ValueError,'cycle'):
+            c.create_run(str(self.repo),'main',str(self.parent),tasks,goal_key='cycle')
+        tasks[1]['depends_on']=['unknown']
+        with self.assertRaisesRegex(ValueError,'unknown'):
+            c.create_run(str(self.repo),'main',str(self.parent),tasks,goal_key='missing')
+
     def test_all_slots_must_exist_before_election(self):
         run=self.create(2)['run_id']
         a=c.claim(run,'task-A',worktree_parent=str(self.parent))

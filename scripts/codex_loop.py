@@ -1462,7 +1462,7 @@ def _cmd_collab(argv: list[str]) -> int:
     c.add_argument('--run-id')
     c = sub.add_parser('discover', help='show compatible open local runs for model review')
     c.add_argument('--repo', required=True); c.add_argument('--branch', required=True)
-    c = sub.add_parser('claim', help='claim first available planned slot; idempotent by task ID')
+    c = sub.add_parser('claim', help='claim a ready DAG task fairly across pools; reuse current Chat worktree')
     c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
     c.add_argument('--worktree-parent', required=True); c.add_argument('--existing-worktree')
     c = sub.add_parser('join', help='join/create unplanned cohort with exact goal key')
@@ -1499,6 +1499,7 @@ def _cmd_collab(argv: list[str]) -> int:
     c.add_argument('--commit-sha')
     c = sub.add_parser('finish'); c.add_argument('--run-id', required=True)
     c.add_argument('--task-id', required=True); c.add_argument('--commit-sha', required=True)
+    c.add_argument('--slot', type=int, help='claimed slot number; disambiguates retried or no-op finishes')
     c = sub.add_parser('elect'); c.add_argument('--run-id', required=True)
     c.add_argument('--task-id', required=True)
     c = sub.add_parser('integrate'); c.add_argument('--run-id', required=True)
@@ -1556,7 +1557,7 @@ def _cmd_collab(argv: list[str]) -> int:
         result=collab.complete_delegation(a.run_id,a.task_id,delegation_id=a.delegation_id,
                                          result=a.result,commit_sha=a.commit_sha)
     elif action == 'finish':
-        result=collab.finish(a.run_id,a.task_id,commit_sha=a.commit_sha)
+        result=collab.finish(a.run_id,a.task_id,commit_sha=a.commit_sha,slot_number=a.slot)
     elif action == 'elect':
         result=collab.elect(a.run_id,a.task_id)
     elif action == 'integrate':
