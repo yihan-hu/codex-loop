@@ -9,7 +9,7 @@ Use only after Codex Loop admission on the **selected, pinned Local computer**. 
 - An orchestrated run has N predefined, immutable task slots; **one identical user-visible launcher** can be pasted into N new Chats. Registration order determines the slot, not copy/paste order. Unclaimed slots prevent integration.
 - An unplanned Chat may discover compatible open runs with `collab discover`, and intentionally join/create an unplanned cohort with one exact semantic `goal_key`. **Same repository/target branch alone does not imply a shared objective.** An already closed cohort cannot accept new participants. Unplanned runs elect after the current registered cohort finishes; a genuinely later new task creates a new cohort.
 - Messages reside in the same SQLite file. Codex Loop exposes unread messages in `next` and `resume` without marking them read; use `collab inbox --ack ID` after consumption. A file cannot wake an idle or closed ChatGPT conversation. A participant must resume for unread messages to be acted upon.
-- Last finisher is elected atomically only when every registered slot is `done`. A crash, dirty checkout, missing task, unlaunched planned slot, or Git conflict never counts as completion. If the integrator is interrupted, its **same Codex Loop lifecycle** resumes the existing integration; never replay an ambiguous cherry-pick.
+- Last finisher is elected atomically only when every registered slot is `done` and every delegation is completed or explicitly cancelled. A crash, dirty checkout, missing task, unlaunched planned slot, or Git conflict never counts as completion. If the integrator is interrupted, its **same Codex Loop lifecycle** resumes the existing integration; never replay an ambiguous cherry-pick.
 
 ## Planned same-host run
 
@@ -35,6 +35,35 @@ python3 scripts/codex_loop.py collab join --repo REPO --branch TARGET \
 ```
 
 Omit `--existing-worktree` only when the caller has verified authority to create a new worktree under the authorized parent. An existing task always resumes its recorded slot, including if the run closed while it was paused. When registering a new task after integration starts, a fresh unplanned cohort is created under the same goal key.
+
+## Subtask delegation between Worktrees
+
+No coordinator process is required. **A Chat that already owns a claimed, worktree-bound Slot** may offer a bounded, separately tracked task to another active participant or to the unassigned pool. Both Chats must remain in the same run and their own previously authorized paths. An SQLite entry is **not** permission to edit another worker's checkout and it never wakes a stopped Chat.
+
+```bash
+# Worker A offers to B (or omit --to-task for a future worker to claim).
+python3 scripts/codex_loop.py collab delegate --run-id RUN --task-id A \
+  --request-key stable-task-key --title 'Update training API' \
+  --instructions 'Change only the authorized training worktree and verify contract' --to-task B
+# B reads the next/resume context or the explicit inbox, then accepts/rejects.
+python3 scripts/codex_loop.py collab inbox --run-id RUN --task-id B
+python3 scripts/codex_loop.py collab delegation-accept --run-id RUN --task-id B --delegation-id ID
+python3 scripts/codex_loop.py collab delegation-complete --run-id RUN --task-id B \
+  --delegation-id ID --result 'Implemented and tested' --commit-sha FULL_COMMIT
+# Alternative: reject (with reason); A must reoffer or explicitly cancel.
+python3 scripts/codex_loop.py collab delegation-reject --run-id RUN --task-id B \
+  --delegation-id ID --reason 'Cannot own this interface'
+python3 scripts/codex_loop.py collab delegation-reoffer --run-id RUN --task-id A \
+  --delegation-id ID --to-task OTHER_ACTIVE_WORKER
+python3 scripts/codex_loop.py collab delegation-cancel --run-id RUN --task-id A \
+  --delegation-id ID --reason 'No longer required'
+```
+
+`--request-key` is a stable idempotency key: retrying the same offer after an ambiguous tool outcome returns the same delegation instead of creating duplicate work. Once accepted, the recipient owns the subtask. Completing it returns a result and optional **verified reachable commit SHA**. For code changes, commit the result and supply the SHA; the worker's own final `collab finish` must still include all work. The recipient cannot finish their Slot while an assigned delegation is incomplete. A sender's own lifecycle cannot complete while its delegated work is still open, accepted or rejected, but the sender can continue other useful work and its Slot can be finished. Rejected work does not silently disappear: the sender reoffers it or explicitly cancels it with a reason. This prevents an apparent last-finisher from integrating an incomplete run.
+
+For a pool offer, an already-running worker can explicitly accept it. On a planned run **after all original slots are claimed**, a fresh Chat using the same authorized run launcher can `collab claim` an unassigned pool offer: the registry atomically creates one additional worker Slot and marks the offer accepted. No process or new Chat is spawned by SQLite; the user still starts any required Chat. No auto-claim occurs solely because someone reads their inbox. A rejected accepted subtask must not leave undocumented, unreviewed partial code in its worker's final commit; preserve and review any partial changes instead of discarding them.
+
+Delegation offers, assignments, results and rejection reasons appear in `collab status` and the relevant `next`/`resume` inbox context. They are separate from ordinary messages: reading/acknowledging a message does not accept a delegation. An elected Integrator does not begin until every delegation is completed or explicitly cancelled and every registered Slot is `done`. A sender cancelling the final rejected offer after all workers finished can become the elected Integrator in the same transaction. No automatic Git push is authorized.
 
 ## Safety and recovery
 

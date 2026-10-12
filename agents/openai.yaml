@@ -8,7 +8,7 @@ interface:
     ordinary project tools; check all earlier user turns in the current chat and automatically
     re-admit the same authorized project if needed; never re-ask unchanged consent
     or invent a session/task ID. Immediately after lifecycle admission and route selection,
-    use live safe operations to prewarm only required GitHub push, Drive upload/delete,
+    BEFORE substantive source work use actual write tools to preflight required GitHub blob/tree/commit/ref, Drive upload/delete,
     and selected My Mac/My WSL/RDC project write permissions; mere connection checks
     do not suffice and host approval choices remain host-owned. On a technical failure,
     diagnose, restore the existing connector/route/grant/task as needed, verify and

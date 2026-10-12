@@ -58,19 +58,21 @@ git push --dry-run <intended-remote> <intended-refspec>
 
 Run it through the normal host-visible Git path. Success must show that the remote was reached and the dry run was push-capable without moving a ref. Do not create a throwaway branch merely to test permission.
 
-For **Web mode**, a repository permission readback plus empty-blob write is still insufficient when the eventual publish path moves a persistent Git ref. Use three bounded observations on the exact target repository and target branch:
+For **Web mode**, test the actual host tools that the later GitHub publication will use, **at admission before substantive work**. A generic `github_push` capability check and an empty Blob do not prewarm the `create_tree`, `create_commit`, `update_ref` or `update_file` tool interfaces. Use this safe, ref-nonmutating sequence against the exact intended repository:
 
 ```text
-live repository permission readback -> require push-capable access
-  -> create fixed empty Git blob and leave it unreferenced
-  -> read exact current target ref SHA
-  -> call the host ref-update primitive with that same SHA and force=false
-  -> require the ref to remain unchanged
+read repository push permission and current target HEAD/tree
+  -> create_blob with fixed empty content (leave unreferenced)
+  -> create_tree with a NONEMPTY tree_elements array referencing a verified existing
+     file SHA in the current base tree (or an unreferenced harmless file for an empty repo)
+  -> create_commit with the original tree and current HEAD as parent, leave unreferenced
+  -> update_ref with sha=expected_sha=current target HEAD, force=false
+  -> read back exact target ref and confirm it did not move
 ```
 
-The empty blob reaches the Git-object write boundary. The idempotent same-SHA ref update reaches the persistent-ref write boundary without moving the branch. Use only the already-observed current target SHA; never create a throwaway branch, commit, tag, issue, PR, or source mutation just to obtain approval. If the host lacks either bounded primitive, classify that permission class as not proven rather than substituting a real ref move.
+This creates only unreferenced Git objects and does **not** create a feature branch, move a ref, alter a tracked source file, or push a disposable commit. An empty `tree_elements` array may return HTTP 422 and is not a meaningful permission test. A same-SHA `update_ref` result is a bounded write-interface observation, not a guarantee that the host displayed an approval popup. Use the same `create_tree → create_commit → update_ref` interface later for publication rather than switching to `update_file` near the end; if the real workflow requires `update_file`, there is no safe ref-nonmutating `update_file` preflight and its host approval remains unproven. Do not perform a real source mutation merely to trigger a dialog.
 
-Repository push capability does not prove GitHub Actions write capability; probe Actions separately when the workflow depends on it.
+**Ordering is observable:** log the first live write-tool invocation for each needed host action and ensure it precedes repository modification, test execution, and packaging. `permission-preflight-plan` returns instructions but **never calls GitHub/Drive tools itself**; receiving its JSON is not a completed preflight. Only the host can present an approval dialog and only the user can verify whether and when it appeared. Report API success separately from UI visibility and never claim approval was prompted or cached from a tool return alone.
 
 ### GitHub Actions
 
@@ -89,7 +91,7 @@ Run a live list/search/metadata operation in the exact Drive scope needed by the
 
 ### Google Drive write
 
-When later workflow steps require Drive creation/upload/delete capability, use one uniquely named non-sensitive sentinel owned by this preflight under `ChatGPT-Temporary/<skill-or-purpose>/smoke` (see `drive-storage.md`):
+At admission, BEFORE source inspection/edits/tests, when later workflow steps require Drive creation/upload/delete capability, use one uniquely named non-sensitive sentinel owned by this preflight under `ChatGPT-Temporary/<skill-or-purpose>/smoke` (see `drive-storage.md`):
 
 ```text
 create sentinel
@@ -124,7 +126,7 @@ A successful live probe may be recorded with `permission-observation-record` as 
 1. Immediately after task admission and route selection, derive the needed capabilities from the current user-authorized objective and known deliverables; use narrow target metadata lookup only when necessary.
 2. Initialize/read only the routing state needed to select the representative probe. Capability probing must never create or mutate routing state beyond that ordinary route initialization.
 3. Run `permission-preflight-plan` for all already predictable capability classes, including separate delete and local project write when needed.
-4. Execute every returned probe through the real host path. Prefer independent read-only probes in parallel when safe; serialize probe actions that create temporary objects or workflow runs.
+4. Execute every returned probe through the real host path **now, before any substantive source work**. Do not consider a returned plan, cached connector metadata, or a model-written claim a completed probe. Prefer independent read-only probes in parallel when safe; serialize probe actions that create temporary objects or workflow runs.
 5. If a probe triggers connection/permission UI, satisfy that host flow before dispatching the gated side effect. Batch missing connection/setup requests when the host supports it, and re-run only the failed probe after the host reports that access changed.
 6. Keep concise successful observations in current task/session context so the same live capability is not needlessly re-probed.
 7. Re-run a probe only if the workflow expands to a new capability, the selected route changes, the connector/native session becomes unavailable, or current evidence is otherwise stale.

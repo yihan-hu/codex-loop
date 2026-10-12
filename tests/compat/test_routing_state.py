@@ -253,9 +253,12 @@ class RoutingStateTests(unittest.TestCase):
             self.assertIn("current live host observation", plan["completion_rule"])
             probes = {item["capability"]: item for item in plan["probes"]}
             self.assertIn("unreferenced empty-blob write", probes["github_push"]["success_evidence"])
+            self.assertIn("unreferenced commit write", probes["github_push"]["success_evidence"])
             self.assertIn("same-SHA target-ref update", probes["github_push"]["success_evidence"])
-            self.assertIn("no tree/commit/ref movement", probes["github_push"]["side_effect_budget"])
+            self.assertIn("no target ref movement", probes["github_push"]["side_effect_budget"])
             self.assertIn("fixed empty content", probes["github_push"]["preferred_probe"])
+            self.assertIn("NONEMPTY tree_elements", probes["github_push"]["preferred_probe"])
+            self.assertIn("BEFORE inspecting or changing source", probes["github_push"]["preferred_probe"])
             self.assertIn("force=false", probes["github_push"]["preferred_probe"])
             self.assertIn("audited", probes["github_actions"]["preferred_probe"])
             self.assertTrue(probes["google_drive_write"]["cleanup_required"])

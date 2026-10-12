@@ -54,7 +54,7 @@ flowchart TD
   A -->|runtime temporarily unavailable| REPAIR
 
   L --> RQ[Retained exact request + steers]
-  L --> PRE[Task-start live permission probes for required GitHub, Drive and selected local project operations]
+  L --> PRE[Immediate live host write probes BEFORE source work: GitHub blob/tree/commit/ref, Drive upload/delete, local files]
   PRE --> LS{Lifecycle status}
   PRE -. recoverable permission or connector error .-> REPAIR
   LS -->|active| CC[Continuation contract]
@@ -85,11 +85,13 @@ retain prior blocker for recheck]
 
   H <--> T[Inspect / act / observe / test / repair]
   H -. same-host local parallel development .-> LC[Local Worktree Collaboration]
-  LC --> REG[Host-local SQLite: runs, slots, queued messages, integration lease]
+  LC --> REG[Host-local SQLite: runs, slots, queued messages, delegated subtasks, integration lease]
   LC --> CW[Git: independent detached or private-branch worktrees]
   REG --> CLAIM[Atomic claim / dynamic join / last-finisher election]
   CW --> CLAIM
-  CLAIM -->|last finished active worker| INTEG[Target-branch cherry-pick + conflict repair + integration tests]
+  CLAIM --> DEL[Direct and pooled delegation: offer, accept/reject, reoffer/cancel, result + commit]
+  DEL -->|all subtasks resolved| CLAIM
+  CLAIM -->|all slots and subtasks done; last active worker| INTEG[Target-branch cherry-pick + conflict repair + integration tests]
   INTEG --> F
   H -. live task-owned work .-> VW[Verified wait: observe existing handle]
   VW --> H
@@ -129,11 +131,11 @@ bound to stage + input + instruction + request + generation]
 
 ## Boundaries
 
-- **Local worktree collaboration is opt-in and same-host.** The new `collab` CLI coordinates planned slots and spontaneously joined compatible tasks through a host-local SQLite database. Each task still binds to one canonical Git worktree; worker worktrees use detached HEAD or owned private feature branches. The database stores messages/ownership/commit IDs, never source truth or host authorization. Normal `next`/`resume` exposes unacknowledged messages. Atomic completion elects one last active worker to cherry-pick into the sole authorized clean target-branch checkout, resolve conflicts and run tests. Integration completion remains a verified human/model action, not a background daemon. Web and cross-computer chats do not participate; a copied prompt never substitutes for current-chat permission.
+- **Local worktree collaboration is opt-in and same-host.** The host-local registry also tracks direct/pool task delegation and recipient acceptance, rejection, reassignment, cancellation and result/commit receipts; pending delegations hold back integration. The new `collab` CLI coordinates planned slots and spontaneously joined compatible tasks through a host-local SQLite database. Each task still binds to one canonical Git worktree; worker worktrees use detached HEAD or owned private feature branches. The database stores messages/ownership/commit IDs, never source truth or host authorization. Normal `next`/`resume` exposes unacknowledged messages. Atomic completion elects one last active worker to cherry-pick into the sole authorized clean target-branch checkout, resolve conflicts and run tests. Integration completion remains a verified human/model action, not a background daemon. Web and cross-computer chats do not participate; a copied prompt never substitutes for current-chat permission.
 - **Detached HEAD continuity has explicit provenance.** Workers may use detached HEAD only when the recorded target branch is supported by verified source provenance; the workspace lease distinguishes `branch` (intended target) from `checked_out_branch` (None on detached workers). Unverified detached work is never silently promoted to HOT mutation authority.
 
 - **The connected user Drive profile is the only persistent preference authority.** Each new conversation imports and verifies that profile exactly once on the controller. The controller resolves the selected connector and environment/project locators, passes an explicit execution snapshot to the local runtime, and the private conversation route pins it. Native runtime/task state is independent; no native host preference file participates.
-- **Permission checks are early live operations, not connector status checks.** After bootstrap/resume and route resolution, probe the access classes already required by the objective before substantive work. In particular, Drive deletion calls the real delete API only on a disposable newly created sentinel; local edits use the selected RDC/My Mac/My WSL write tool to create and clean up a file in the exact authorized project. Actual approval prompts and session-wide choices remain host-owned, and later sensitive actions may require fresh approval.
+- **Permission checks are early live operations, not connector status checks.** The GitHub Web publishing path should prewarm each actual write tool (`create_blob`, nonempty `create_tree`, unreferenced `create_commit`, same-SHA `update_ref`) before source changes; Drive upload/delete uses the actual `upload_file` and `delete_file` tools. UI popup timing remains host-owned, not inferable from API responses. After bootstrap/resume and route resolution, probe the access classes already required by the objective before substantive work. In particular, Drive deletion calls the real delete API only on a disposable newly created sentinel; local edits use the selected RDC/My Mac/My WSL write tool to create and clean up a file in the exact authorized project. Actual approval prompts and session-wide choices remain host-owned, and later sensitive actions may require fresh approval.
 - **Technical errors remain visible after recovery.** Report distinct errors with cause certainty, repair, verified retry outcome and follow-up in the final task report; significant recurring errors also enter a normal checkpoint if one is needed. Reporting never pauses execution.
 - **Recoverable technical faults do not end authorized work.** The agent re-observes the original selected connector, refreshes missing route/grant state from explicit unrevoked same-conversation authorization, resumes the existing lifecycle, verifies the original operation, and retries it safely. No new controller or persistent recovery service is introduced. Only a confirmed external dependency, revoked/absent authorization, or exhausted safe recovery path may block. Ambiguous side effects are reconciled before any replay.
 - **My Mac admission grants are current-chat scoped.** Once `route-init` supplies a real session ID, an explicitly authorized project is admitted through one private-runtime `workspace-admit` command before ordinary project tools. Consent from any earlier user message in the current conversation remains effective for its exact project and action scope until revoked or narrowed; a missing technical grant is silently re-established under that consent, not re-asked. It checks the canonical path against a host-observed connector root, records a session-only grant, and needs no task ID. A continuation still resumes its existing lifecycle; no grant is silently inherited from an earlier conversation. The named connector retains its own access enforcement.

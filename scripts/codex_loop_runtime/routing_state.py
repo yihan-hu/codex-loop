@@ -683,21 +683,26 @@ def permission_preflight_plan(
                 side_effect_budget = "none"
             else:
                 preferred = (
-                    "Read live permissions for the exact target repository and require push-capable access. Then invoke a "
-                    "GitHub Git-database blob/write-object primitive with fixed empty content and leave that blob unreferenced. "
-                    "Finally read the exact current target-branch ref and invoke the host's ref-update primitive with that same "
-                    "current SHA and force=false. The same-SHA ref write must not move the branch; its purpose is only to cross "
-                    "the persistent-ref write approval boundary that the later Web publish path will use. Do not create a tree, "
-                    "commit, tag, throwaway branch, or source mutation for preflight. If either bounded primitive is unavailable, "
-                    "report the corresponding push permission class as not prewarmed rather than substituting a real ref move."
+                    "At lifecycle admission, BEFORE inspecting or changing source, run the actual host write tools for "
+                    "the intended publication path: read push-capable permissions for the exact repository; "
+                    "create_blob with fixed empty content (unreferenced); create_tree with a NONEMPTY tree_elements "
+                    "array referencing an already verified existing file/blob and base_tree_sha from current HEAD "
+                    "(or a harmless unreferenced sentinel blob if the repository has no tracked files); "
+                    "create_commit with the original HEAD tree and current HEAD as parent, keeping the new commit "
+                    "unreferenced; then read the target ref and call update_ref with sha=expected_sha=current SHA, "
+                    "force=false. Re-read to verify that the target branch did not move. Never use update_file as "
+                    "the later publication path on the assumption that these distinct primitives prewarmed it: "
+                    "either publish via create_tree/create_commit/update_ref or report update_file as unproven. "
+                    "Tool success cannot prove when the host showed an approval UI."
                 )
                 evidence = (
-                    "push-capable repository access is observed, the host accepts an unreferenced empty-blob write, and an "
-                    "idempotent same-SHA target-ref update is accepted without moving the ref"
+                    "push-capable access plus host-accepted unreferenced empty-blob write, safe nonempty tree write, "
+                    "unreferenced commit write, and idempotent same-SHA target-ref update, all before substantive work; "
+                    "target-ref SHA is unchanged; popup visibility/timing is user-observed only"
                 )
                 side_effect_budget = (
-                    "one unreferenced empty Git blob plus one idempotent same-SHA target-ref update; no tree/commit/ref movement "
-                    "or source mutation"
+                    "unreferenced Git blob/tree/commit objects and one idempotent same-SHA ref update; "
+                    "no target ref movement, no source mutation, no throwaway branch"
                 )
             probes.append({
                 "capability": capability,

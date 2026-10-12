@@ -499,3 +499,19 @@ See `ATTRIBUTION.md`, `LICENSE`, and `NOTICE` for provenance and licensing infor
 At the first Codex Loop invocation in each new chat, connected Google Drive restores preferences from the fixed private path **My Drive → `codex-loop/settings/host-profile.json`**, then selects Web or the saved computer. Names are fixed; only the connected user's Drive and settings differ. With no Drive or no saved profile, Web uses defaults. Recovery failures and duplicate files are reported. Tasks are never automatically resumed by preference recovery. See [setup, recovery, and save verification](references/host-profile-drive.md). Local user settings and credentials are excluded from Git and Skill packages.
 
 Private Host Profile schema v4 uses `workspace.environments[computer]` for directory locators and `interaction.language` for language preference. Empty profiles default to Web with no connections or workspace paths. Local directory-dependent work blocks without a task directory or environment default, and all chosen paths still require current task authority and actual connector access. See [host-profile.md](references/host-profile.md) for the configuration contract.
+
+
+### Local Worktree delegation and early permission probes
+
+Same-host workers can delegate subtasks inside their existing Codex Loop run using
+`collab delegate`, `delegation-accept`, `delegation-reject`, `delegation-reoffer`,
+`delegation-cancel`, and `delegation-complete`. An unassigned offer can be claimed
+by a newly registered local worker; unresolved offers prevent final integration.
+See [`references/local-worktree-collaboration.md`](references/local-worktree-collaboration.md).
+
+For tasks that will publish through GitHub or upload to Drive, admission-time
+preflight uses the **actual future write tools** before any code changes.
+The approved same-SHA Git ref operation and unreferenced Git objects leave the
+target branch unchanged; an authenticated Drive sentinel upload is verified
+and cleaned up. The host—not this skill—controls approval dialogs; API success
+does not establish when a dialog was shown.

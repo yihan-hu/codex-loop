@@ -225,5 +225,135 @@ class CollaborationTest(unittest.TestCase):
         self.assertIsNone(result['workspace_lease']['checked_out_branch'])
 
 
+    def test_delegation_directed_accept_complete_idempotent_and_election(self):
+        run=self.create(2)['run_id']
+        a=c.claim(run,'task-A',worktree_parent=str(self.parent))
+        b=c.claim(run,'task-B',worktree_parent=str(self.parent))
+        item=c.delegate(run,'task-A',request_key='share-1',title='training interface',
+                        instructions='Implement a compatible training adapter',recipient_task='task-B')
+        self.assertEqual(item['status'],'offered')
+        self.assertEqual(c.delegate(run,'task-A',request_key='share-1',title='training interface',
+                        instructions='Implement a compatible training adapter',recipient_task='task-B')['id'],item['id'])
+        with self.assertRaises(RuntimeError):
+            c.delegate(run,'task-A',request_key='share-1',title='changed work',instructions='different')
+        self.assertEqual(c.inbox(run,'task-B')['delegations'][0]['id'],item['id'])
+        self.assertEqual(c.accept_delegation(run,'task-B',delegation_id=item['id'])['status'],'accepted')
+        self.assertEqual(c.accept_delegation(run,'task-B',delegation_id=item['id'])['status'],'accepted')
+        with self.assertRaises(RuntimeError):
+            c.finish(run,'task-B',commit_sha=git(Path(b['worktree']),'rev-parse','HEAD'))
+        self.assertIn('await completion',c.completion_obstacle('task-A'))
+        self.assertFalse(c.finish(run,'task-A',commit_sha=self.commit(a))['integrate_now'])
+        sha=self.commit(b)
+        self.assertEqual(c.complete_delegation(run,'task-B',delegation_id=item['id'],
+                                              result='adapter committed',commit_sha=sha)['status'],'completed')
+        self.assertEqual(c.complete_delegation(run,'task-B',delegation_id=item['id'],
+                                              result='adapter committed',commit_sha=sha)['status'],'completed')
+        self.assertIsNone(c.completion_obstacle('task-A'))
+        self.assertTrue(c.finish(run,'task-B',commit_sha=sha)['integrate_now'])
+        self.assertTrue(c.inbox(run,'task-A')['messages'])
+        self.assertEqual(c.status(run)['state'],'integrating')
+
+    def test_delegation_reject_reoffer_then_cancel_after_finished_slots_elects(self):
+        run=self.create(2)['run_id']
+        a=c.claim(run,'task-A',worktree_parent=str(self.parent))
+        b=c.claim(run,'task-B',worktree_parent=str(self.parent))
+        item=c.delegate(run,'task-A',request_key='share-rej',title='analyze issue',
+                        instructions='Inspect source and report',recipient_task='task-B')
+        did=item['id']
+        self.assertEqual(c.reject_delegation(run,'task-B',delegation_id=did,reason='wrong expertise')['status'],'rejected')
+        with self.assertRaises(PermissionError):
+            c.reoffer_delegation(run,'task-B',delegation_id=did)
+        self.assertEqual(c.reoffer_delegation(run,'task-A',delegation_id=did)['status'],'offered')
+        with self.assertRaises(PermissionError):
+            c.cancel_delegation(run,'task-B',delegation_id=did,reason='not needed')
+        self.assertEqual(c.accept_delegation(run,'task-B',delegation_id=did)['status'],'accepted')
+        self.assertEqual(c.reject_delegation(run,'task-B',delegation_id=did,reason='cannot finish')['status'],'rejected')
+        c.finish(run,'task-A',commit_sha=self.commit(a))
+        outcome=c.finish(run,'task-B',commit_sha=self.commit(b))
+        self.assertFalse(outcome['integrate_now'])
+        self.assertEqual(c.status(run)['state'],'open')
+        self.assertTrue(outcome['pending_delegations'])
+        withdrawn=c.cancel_delegation(run,'task-A',delegation_id=did,reason='not necessary')
+        self.assertEqual(withdrawn['status'],'cancelled')
+        self.assertTrue(withdrawn['election']['integrate_now'])
+        self.assertEqual(c.status(run)['integrator_task'],'task-A')
+        self.assertIn('integrator has not completed', c.completion_obstacle('task-A'))
+
+    def test_pool_delegate_claims_new_worktree_after_planned_slots_taken(self):
+        run=self.create(1)['run_id']
+        a=c.claim(run,'task-A',worktree_parent=str(self.parent))
+        item=c.delegate(run,'task-A',request_key='pool-1',title='second worker',
+                        instructions='Separate test or source change')
+        self.assertIsNone(item['recipient'])
+        result=c.finish(run,'task-A',commit_sha=self.commit(a))
+        self.assertFalse(result['integrate_now'])
+        b=c.claim(run,'task-B',worktree_parent=str(self.parent))
+        self.assertEqual(b['title'],'second worker')
+        self.assertNotEqual(b['worktree'],a['worktree'])
+        self.assertEqual(c.status(run)['delegations'][0]['recipient'],'task-B')
+        self.assertEqual(c.status(run)['delegations'][0]['status'],'accepted')
+        self.assertTrue(c.inbox_for_task('task-B')[0]['delegations'])
+        sha=self.commit(b)
+        c.complete_delegation(run,'task-B',delegation_id=item['id'],result='done',commit_sha=sha)
+        self.assertTrue(c.finish(run,'task-B',commit_sha=sha)['integrate_now'])
+
+    def test_delegation_concurrent_claim_one_winner_and_auth_boundary(self):
+        run=self.create(3)['run_id']
+        a,b,cc=[c.claim(run,k,worktree_parent=str(self.parent)) for k in ('task-A','task-B','task-C')]
+        item=c.delegate(run,'task-A',request_key='race',title='test race',instructions='Review')
+        did=item['id']
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fs=[pool.submit(c.accept_delegation,run,k,delegation_id=did) for k in ('task-B','task-C')]
+            outcomes=[]
+            for f in fs:
+                try: outcomes.append(f.result())
+                except (RuntimeError,PermissionError): pass
+        self.assertEqual(len(outcomes),1)
+        owner=outcomes[0]['recipient']
+        other='task-C' if owner=='task-B' else 'task-B'
+        with self.assertRaises(PermissionError):
+            c.complete_delegation(run,other,delegation_id=did,result='fraud')
+        with self.assertRaises(RuntimeError):
+            c.complete_delegation(run,owner,delegation_id=did,result='fraud',commit_sha='f'*40)
+        with self.assertRaises(KeyError):
+            c.delegate(run,'task-A',request_key='different-recipient',title='work',
+                       instructions='Read',recipient_task='not-in-run')
+
+    def test_completed_delegation_commit_must_survive_worker_finish(self):
+        run=self.create(2)['run_id']
+        a=c.claim(run,'task-A',worktree_parent=str(self.parent))
+        b=c.claim(run,'task-B',worktree_parent=str(self.parent))
+        offer=c.delegate(run,'task-A',request_key='must-survive',title='create artifact',
+                         instructions='Write and commit an artifact',recipient_task='task-B')
+        c.accept_delegation(run,'task-B',delegation_id=offer['id'])
+        reported=self.commit(b)
+        c.complete_delegation(run,'task-B',delegation_id=offer['id'],result='finished',commit_sha=reported)
+        git(Path(b['worktree']),'reset','--hard',git(self.repo,'rev-parse','main'))
+        with self.assertRaisesRegex(RuntimeError,'missing from final worker HEAD'):
+            c.finish(run,'task-B',commit_sha=git(Path(b['worktree']),'rev-parse','HEAD'))
+
+    def test_delegation_cli_end_to_end(self):
+        import json
+        cli=SCRIPT/'codex_loop.py'
+        def call(*args):
+            p=subprocess.run([sys.executable,str(cli),'collab',*args],capture_output=True,text=True,env=os.environ.copy())
+            if p.returncode:
+                raise AssertionError(f'CLI {args} failed: {p.stderr} {p.stdout}')
+            return json.loads(p.stdout)['data']
+        run=self.create(2)['run_id']
+        a=call('claim','--run-id',run,'--task-id','task-A','--worktree-parent',str(self.parent))
+        b=call('claim','--run-id',run,'--task-id','task-B','--worktree-parent',str(self.parent))
+        item=call('delegate','--run-id',run,'--task-id','task-A','--request-key','cli-job',
+                  '--title','update code','--instructions','Implement and test','--to-task','task-B')
+        self.assertEqual(call('delegation-accept','--run-id',run,'--task-id','task-B',
+                              '--delegation-id',str(item['id']))['status'],'accepted')
+        sha=self.commit(b)
+        self.assertEqual(call('delegation-complete','--run-id',run,'--task-id','task-B',
+                              '--delegation-id',str(item['id']),'--result','committed',
+                              '--commit-sha',sha)['status'],'completed')
+        self.assertEqual(call('status','--run-id',run)['delegations'][0]['status'],'completed')
+        self.assertTrue(call('inbox','--run-id',run,'--task-id','task-A')['messages'])
+
+
 if __name__=='__main__':
     unittest.main()

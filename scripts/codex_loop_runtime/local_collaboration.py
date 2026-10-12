@@ -49,6 +49,17 @@ CREATE TABLE IF NOT EXISTS messages (
   sender TEXT NOT NULL, recipient TEXT, body TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS delegations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL REFERENCES runs(id), sender TEXT NOT NULL,
+  request_key TEXT NOT NULL, recipient TEXT, title TEXT NOT NULL,
+  instructions TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'offered',
+  result TEXT, commit_sha TEXT, reject_reason TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(run_id, sender, request_key)
+);
+CREATE INDEX IF NOT EXISTS pending_delegations ON delegations(run_id,status,recipient);
 CREATE TABLE IF NOT EXISTS receipts (
   message_id INTEGER NOT NULL, task_id TEXT NOT NULL,
   PRIMARY KEY(message_id, task_id)
@@ -269,9 +280,22 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                 raise RuntimeError('run is not accepting planned slot claims')
             slot = db.execute("SELECT * FROM slots WHERE run_id=? AND status='available' ORDER BY number LIMIT 1", (run_id,)).fetchone()
             if slot is None:
-                raise RuntimeError('no unclaimed slot remains in this run; do not duplicate work')
-            db.execute("UPDATE slots SET task_id=?,status='claimed' WHERE run_id=? AND number=? AND status='available'",
-                       (task_id, run_id, slot['number']))
+                # The predefined slots remain immutable. A later worker may claim
+                # an explicitly offered pool subtask as an additional physical slot.
+                offer = db.execute("""SELECT * FROM delegations WHERE run_id=? AND status='offered'
+                                       AND recipient IS NULL ORDER BY id LIMIT 1""", (run_id,)).fetchone()
+                if offer is None:
+                    raise RuntimeError('no unclaimed slot or open delegation remains in this run')
+                number = int(db.execute('SELECT COALESCE(MAX(number),0)+1 FROM slots WHERE run_id=?',
+                                        (run_id,)).fetchone()[0])
+                db.execute("INSERT INTO slots(run_id,number,title,instructions,status,task_id) VALUES(?,?,?,?, 'claimed', ?)",
+                           (run_id, number, offer['title'], offer['instructions'], task_id))
+                db.execute("""UPDATE delegations SET status='accepted',recipient=?,updated_at=CURRENT_TIMESTAMP
+                              WHERE id=?""", (task_id, offer['id']))
+                slot = _slot(db, run_id, task_id)
+            else:
+                db.execute("UPDATE slots SET task_id=?,status='claimed' WHERE run_id=? AND number=? AND status='available'",
+                           (task_id, run_id, slot['number']))
         number = slot['number']
         title, instructions = slot['title'], slot['instructions']
         stored = slot['worktree']
@@ -355,7 +379,8 @@ def inbox(run_id: str, task_id: str, *, ack: list[int] | None = None) -> dict[st
           LEFT JOIN receipts a ON a.message_id=m.id AND a.task_id=?
           WHERE m.run_id=? AND m.sender!=? AND (m.recipient IS NULL OR m.recipient=?)
             AND a.message_id IS NULL ORDER BY m.id''', (task_id, run_id, task_id, task_id)).fetchall()
-        return {'run_id': run_id, 'slot': slot['number'], 'messages': [dict(row) for row in rows]}
+        return {'run_id': run_id, 'slot': slot['number'], 'messages': [dict(row) for row in rows],
+                'delegations': _delegations_for(db, run_id, task_id)}
 
 
 def inbox_for_task(task_id: str) -> list[dict[str, Any]]:
@@ -367,15 +392,194 @@ def inbox_for_task(task_id: str) -> list[dict[str, Any]]:
     return [inbox(row['run_id'], task_id) for row in runs]
 
 
+def _delegation(db: sqlite3.Connection, run_id: str, delegation_id: int) -> sqlite3.Row:
+    row = db.execute('SELECT * FROM delegations WHERE run_id=? AND id=?',
+                     (run_id, delegation_id)).fetchone()
+    if row is None:
+        raise KeyError(f'unknown delegation {delegation_id} in run {run_id}')
+    return row
+
+
+def _available_recipient(db: sqlite3.Connection, run_id: str, task_id: str) -> None:
+    slot = _slot(db, run_id, task_id)
+    if slot['status'] != 'claimed' or not slot['worktree']:
+        raise RuntimeError('delegation recipient must be an active, worktree-bound participant')
+
+
+def _notice(db: sqlite3.Connection, run_id: str, sender: str, recipient: str, body: str) -> None:
+    db.execute('INSERT INTO messages(run_id,sender,recipient,body) VALUES(?,?,?,?)',
+               (run_id, sender, recipient, body))
+
+
+def delegate(run_id: str, task_id: str, *, request_key: str, title: str,
+             instructions: str, recipient_task: str | None = None) -> dict[str, Any]:
+    # A stable request key makes retries idempotent across interrupted host calls.
+    task_id = _task(task_id)
+    request_key = _identifier(request_key, 'delegation request key', RUN_RE)
+    title = _text(title, 'delegation title', 200)
+    instructions = _text(instructions, 'delegation instructions', 60000)
+    if recipient_task is not None:
+        recipient_task = _task(recipient_task)
+        if recipient_task == task_id:
+            raise ValueError('a worker cannot delegate to itself')
+    with _connection(write=True) as db:
+        run = _run(db, run_id)
+        source = _slot(db, run_id, task_id)
+        existing = db.execute('SELECT * FROM delegations WHERE run_id=? AND sender=? AND request_key=?',
+                              (run_id, task_id, request_key)).fetchone()
+        if existing is not None:
+            if (existing['title'], existing['instructions']) != (title, instructions):
+                raise RuntimeError('delegation request key reused for different work')
+            # Subsequent accept/reassign operations must not be undone by a caller retry.
+            return dict(existing)
+        if run['state'] != 'open' or source['status'] != 'claimed' or not source['worktree']:
+            raise RuntimeError('only an active worker may delegate before integration')
+        if recipient_task:
+            _available_recipient(db, run_id, recipient_task)
+        cur = db.execute('''INSERT INTO delegations(run_id,sender,request_key,recipient,title,instructions)
+                            VALUES(?,?,?,?,?,?)''',
+                         (run_id, task_id, request_key, recipient_task, title, instructions))
+        return dict(_delegation(db, run_id, cur.lastrowid))
+
+
+def accept_delegation(run_id: str, task_id: str, *, delegation_id: int) -> dict[str, Any]:
+    task_id = _task(task_id)
+    with _connection(write=True) as db:
+        run = _run(db, run_id)
+        item = _delegation(db, run_id, delegation_id)
+        if item['status'] == 'accepted' and item['recipient'] == task_id:
+            return dict(item)
+        if run['state'] != 'open' or item['status'] != 'offered':
+            raise RuntimeError('delegation is not open for acceptance')
+        if item['sender'] == task_id or (item['recipient'] is not None and item['recipient'] != task_id):
+            raise PermissionError('delegation is not offered to this worker')
+        _available_recipient(db, run_id, task_id)
+        db.execute('''UPDATE delegations SET status='accepted',recipient=?,updated_at=CURRENT_TIMESTAMP
+                      WHERE id=?''', (task_id, delegation_id))
+        _notice(db, run_id, task_id, item['sender'],
+                f'Delegation #{delegation_id} accepted by {task_id}: {item["title"]}')
+        return dict(_delegation(db, run_id, delegation_id))
+
+
+def reject_delegation(run_id: str, task_id: str, *, delegation_id: int, reason: str) -> dict[str, Any]:
+    task_id = _task(task_id)
+    reason = _text(reason, 'rejection reason', 5000)
+    with _connection(write=True) as db:
+        item = _delegation(db, run_id, delegation_id)
+        if item['recipient'] != task_id:
+            raise PermissionError('only the assigned recipient may reject this delegation')
+        if item['status'] == 'rejected':
+            return dict(item)
+        if item['status'] not in ('offered', 'accepted') or _run(db, run_id)['state'] != 'open':
+            raise RuntimeError('delegation cannot be rejected in this state')
+        db.execute('''UPDATE delegations SET status='rejected',reject_reason=?,updated_at=CURRENT_TIMESTAMP
+                      WHERE id=?''', (reason, delegation_id))
+        _notice(db, run_id, task_id, item['sender'],
+                f'Delegation #{delegation_id} rejected by {task_id}: {reason}. Reoffer or cancel.')
+        return dict(_delegation(db, run_id, delegation_id))
+
+
+def reoffer_delegation(run_id: str, task_id: str, *, delegation_id: int,
+                       recipient_task: str | None = None) -> dict[str, Any]:
+    task_id = _task(task_id)
+    if recipient_task is not None:
+        recipient_task = _task(recipient_task)
+        if recipient_task == task_id:
+            raise ValueError('a worker cannot delegate to itself')
+    with _connection(write=True) as db:
+        item = _delegation(db, run_id, delegation_id)
+        if item['sender'] != task_id:
+            raise PermissionError('only the originating worker may reoffer work')
+        if _run(db, run_id)['state'] != 'open':
+            raise RuntimeError('cannot reoffer work after integration started')
+        if item['status'] == 'offered' and item['recipient'] == recipient_task:
+            return dict(item)
+        if item['status'] != 'rejected':
+            raise RuntimeError('only rejected work can be reoffered')
+        if recipient_task:
+            _available_recipient(db, run_id, recipient_task)
+        db.execute('''UPDATE delegations SET status='offered',recipient=?,reject_reason=NULL,
+                      updated_at=CURRENT_TIMESTAMP WHERE id=?''', (recipient_task, delegation_id))
+        return dict(_delegation(db, run_id, delegation_id))
+
+
+def cancel_delegation(run_id: str, task_id: str, *, delegation_id: int, reason: str) -> dict[str, Any]:
+    task_id = _task(task_id)
+    reason = _text(reason, 'cancellation reason', 5000)
+    with _connection(write=True) as db:
+        item = _delegation(db, run_id, delegation_id)
+        if item['sender'] != task_id:
+            raise PermissionError('only the originating worker can withdraw delegated work')
+        if item['status'] == 'cancelled':
+            return dict(item)
+        if _run(db, run_id)['state'] != 'open' or item['status'] not in ('offered', 'rejected'):
+            raise RuntimeError('accepted or completed work cannot be cancelled; ask recipient to reject first')
+        db.execute('''UPDATE delegations SET status='cancelled',result=?,updated_at=CURRENT_TIMESTAMP
+                      WHERE id=?''', (reason, delegation_id))
+        cleared = dict(_delegation(db, run_id, delegation_id))
+        if _slot(db, run_id, task_id)['status'] == 'done':
+            cleared['election'] = _elect(db, run_id, task_id)
+        return cleared
+
+
+def complete_delegation(run_id: str, task_id: str, *, delegation_id: int,
+                        result: str, commit_sha: str | None = None) -> dict[str, Any]:
+    # A source-changing result can cite a commit reachable from recipient HEAD.
+    task_id = _task(task_id)
+    result = _text(result, 'delegation result', 10000)
+    if commit_sha is not None and not REF_RE.fullmatch(commit_sha):
+        raise ValueError('delegation commit SHA must be a full Git object ID')
+    with _connection() as db:
+        run = _run(db, run_id)
+        item = _delegation(db, run_id, delegation_id)
+        slot = _slot(db, run_id, task_id)
+    if item['recipient'] != task_id:
+        raise PermissionError('only the accepted worker can complete this delegation')
+    if item['status'] == 'completed':
+        if (item['result'], item['commit_sha']) != (result, commit_sha):
+            raise RuntimeError('completed delegation result changed; inspect before retry')
+        return dict(item)
+    if run['state'] != 'open' or item['status'] != 'accepted' or slot['status'] != 'claimed':
+        raise RuntimeError('delegation is not accepted by an active worker')
+    if commit_sha:
+        worktree = Path(slot['worktree'])
+        _verify_same_repo(worktree, run)
+        if run_git(worktree, ['merge-base', '--is-ancestor', commit_sha, 'HEAD']).returncode:
+            raise RuntimeError('delegation commit is not in recipient worktree HEAD')
+        if run_git(worktree, ['merge-base', '--is-ancestor', run['base_commit'], commit_sha]).returncode:
+            raise RuntimeError('delegation commit is not descended from shared base')
+    with _connection(write=True) as db:
+        item = _delegation(db, run_id, delegation_id)
+        if item['status'] == 'completed' and (item['result'], item['commit_sha']) == (result, commit_sha):
+            return dict(item)
+        if item['status'] != 'accepted' or item['recipient'] != task_id or _run(db, run_id)['state'] != 'open':
+            raise RuntimeError('delegation changed while result was checked')
+        db.execute('''UPDATE delegations SET status='completed',result=?,commit_sha=?,
+                      updated_at=CURRENT_TIMESTAMP WHERE id=?''', (result, commit_sha, delegation_id))
+        _notice(db, run_id, task_id, item['sender'],
+                f'Delegation #{delegation_id} completed by {task_id}: {result[:500]}')
+        return dict(_delegation(db, run_id, delegation_id))
+
+
+def _delegations_for(db: sqlite3.Connection, run_id: str, task_id: str) -> list[dict[str, Any]]:
+    # Include current open-pool offers so any already-running worker can claim them.
+    rows = db.execute('''SELECT * FROM delegations WHERE run_id=? AND
+          (sender=? OR recipient=? OR (status='offered' AND recipient IS NULL)) ORDER BY id''',
+          (run_id, task_id, task_id)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _elect(db: sqlite3.Connection, run_id: str, task_id: str) -> dict[str, Any]:
     run = _run(db, run_id)
     states = db.execute('SELECT status,COUNT(*) count FROM slots WHERE run_id=? GROUP BY status', (run_id,)).fetchall()
     counts = {r['status']: r['count'] for r in states}
-    if run['state'] == 'open' and counts and set(counts) == {'done'}:
+    pending = db.execute("SELECT COUNT(*) FROM delegations WHERE run_id=? AND status NOT IN ('completed','cancelled')",
+                         (run_id,)).fetchone()[0]
+    if run['state'] == 'open' and counts and set(counts) == {'done'} and not pending:
         db.execute("UPDATE runs SET state='integrating',integrator_task=? WHERE id=? AND state='open'", (task_id, run_id))
-        return {'integrate_now': True, 'integration_owner': task_id, 'run_state': 'integrating', 'counts': counts}
+        return {'integrate_now': True, 'integration_owner': task_id, 'run_state': 'integrating', 'counts': counts, 'pending_delegations': 0}
     return {'integrate_now': run['state'] == 'integrating' and run['integrator_task'] == task_id,
-            'integration_owner': run['integrator_task'], 'run_state': run['state'], 'counts': counts}
+            'integration_owner': run['integrator_task'], 'run_state': run['state'], 'counts': counts, 'pending_delegations': pending}
 
 
 def finish(run_id: str, task_id: str, *, commit_sha: str) -> dict[str, Any]:
@@ -396,11 +600,22 @@ def finish(run_id: str, task_id: str, *, commit_sha: str) -> dict[str, Any]:
         raise ValueError('worker HEAD does not descend from shared base')
     if _git(worktree, 'status', '--porcelain', '--untracked-files=all'):
         raise RuntimeError('worktree contains uncommitted or untracked work; preserve or resolve before finishing')
+    with _connection() as db:
+        reported_commits = db.execute("""SELECT id,commit_sha FROM delegations WHERE run_id=? AND
+                                recipient=? AND status='completed' AND commit_sha IS NOT NULL""",
+                                      (run_id, task_id)).fetchall()
+    for record in reported_commits:
+        if run_git(worktree, ['merge-base', '--is-ancestor', record['commit_sha'], observed]).returncode:
+            raise RuntimeError(f'delegation #{record["id"]} commit is missing from final worker HEAD')
     # Keep detached commits reachable after worker worktree is removed.
     ref = f'refs/codex-loop/collab/{run_id}/slot-{slot["number"]}'
     _git(worktree, 'update-ref', ref, observed)
     with _connection(write=True) as db:
         current = _slot(db, run_id, task_id)
+        incomplete = db.execute("""SELECT COUNT(*) FROM delegations WHERE run_id=? AND recipient=?
+                                   AND status IN ('offered','accepted')""", (run_id, task_id)).fetchone()[0]
+        if incomplete:
+            raise RuntimeError(f'{incomplete} delegated task(s) assigned to this worker remain unfinished')
         if current['status'] == 'done':
             if current['commit_sha'] != observed:
                 raise RuntimeError('completed slot SHA changed; manual reconciliation required')
@@ -535,18 +750,25 @@ def status(run_id: str) -> dict[str, Any]:
     with _connection() as db:
         run = _run(db, run_id)
         rows = db.execute('SELECT number,title,status,task_id,worktree,commit_sha FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
+        delegations = db.execute('SELECT * FROM delegations WHERE run_id=? ORDER BY id', (run_id,)).fetchall()
     return {'run_id': run_id, 'state': run['state'], 'target_branch': run['target_branch'],
             'goal_key': run['goal_key'], 'integrator_task': run['integrator_task'],
-            'candidate_head': run['candidate_head'], 'slots': [dict(row) for row in rows]}
+            'candidate_head': run['candidate_head'], 'slots': [dict(row) for row in rows],
+            'delegations': [dict(row) for row in delegations]}
 
 
 def completion_obstacle(task_id: str) -> str | None:
     if not db_path().exists():
         return None
     with _connection() as db:
-        rows = db.execute('''SELECT r.state,r.integrator_task,s.status FROM slots s JOIN runs r ON r.id=s.run_id
+        rows = db.execute('''SELECT r.id,r.state,r.integrator_task,s.status FROM slots s JOIN runs r ON r.id=s.run_id
                                   WHERE s.task_id=?''', (task_id,)).fetchall()
+        unsettled = {r['id']: db.execute('''SELECT COUNT(*) FROM delegations WHERE run_id=? AND sender=?
+                              AND status NOT IN ('completed','cancelled')''', (r['id'], task_id)).fetchone()[0]
+                     for r in rows}
     for row in rows:
+        if unsettled[row['id']]:
+            return f'{unsettled[row["id"]]} delegated subtask(s) await completion or cancellation'
         if row['status'] != 'done':
             return 'local collaboration work has not been committed and finished'
         if row['state'] == 'integrating' and row['integrator_task'] == task_id:
