@@ -1,5 +1,7 @@
-
-# C
+---
+name: codex-loop
+description: "Lightweight durable objective layer for ChatGPT. Use for repository/filesystem work, Git/source publication, Skill update/deploy, Web/Local routing, cross-tool objectives, or genuinely long multi-step work that may need resume. Once selected, lifecycle admission is mandatory: for a new objective, bootstrap before any substantive task action; for an admitted continuation, reuse the exact task_id; never continue outside the Codex Loop lifecycle. Keep that lifecycle Codex-like and lightweight, with native agent execution, minimal validation, and one final semantic acceptance review. Escalate planning, persistence, managed processes, or external-action bookkeeping only when risk or task shape requires it. For an explicitly authorized local project, establish the current-conversation grant before project file tools, then resume the existing lifecycle instead of treating a missing grant as missing user consent. Never launch Codex CLI or another model runtime."
+---
 # Codex Loop
 
 ## Mandatory lifecycle admission
