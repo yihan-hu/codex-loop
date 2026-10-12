@@ -60,6 +60,7 @@ from codex_loop_runtime.host_config import (
 )
 from codex_loop_runtime.host_profile_sync import export_profile, import_profile
 from codex_loop_runtime.local_connection import resolve_execution
+from codex_loop_runtime import local_collaboration as collab
 from codex_loop_runtime.persistence import (
     build_resume_plan,
     build_state_manifest,
@@ -166,6 +167,7 @@ HOST_ADAPTER_COMMANDS = (
     ('workspace-grant', 'record current-conversation workspace authorization'),
     ('workspace-grants', 'show current-conversation workspace grants'),
     ('workspace-forget', 'forget a conversation workspace cache entry'),
+    ('collab', 'coordinate same-host parallel Git worktrees, messages, and integration'),
     ('workspace-sync-offer', 'prepare an exact-revision workspace sync offer'),
     ('deployment-provenance-verify', 'verify installed Skill bundle provenance'),
     ('relay-frame', 'frame a guarded model-relay payload'),
@@ -391,35 +393,50 @@ def _continuation_payload(
 ) -> dict[str, object]:
     """Return lifecycle context for next; do full recovery observation only for resume."""
     store.task_status()
+    inboxes = collab.inbox_for_task(store.task_id)
     binding = store.get_meta('workspace_binding')
     if not binding:
-        return build_lifecycle_working(store)
+        capsule = build_lifecycle_working(store)
+        if inboxes:
+            capsule['local_collaboration'] = inboxes
+        return capsule
     canonical = Path(str(binding.get('canonical_root') or ''))
     if not canonical.exists():
-        return build_lifecycle_working(store, workspace_status={
+        capsule = build_lifecycle_working(store, workspace_status={
             'bound': True, 'available': False, 'recovery_required': True,
             'canonical_root': str(canonical),
             'reason': 'the lifecycle bound workspace is no longer present',
         })
+        if inboxes:
+            capsule['local_collaboration'] = inboxes
+        return capsule
     cwd = _cwd(raw_cwd) if raw_cwd else Path(store.get_meta('workspace_cwd', str(canonical))).resolve()
     if not reentry:
-        return build_lifecycle_working(store, workspace_status={
+        capsule = build_lifecycle_working(store, workspace_status={
             'bound': True, 'available': True, 'recovery_required': False,
             'canonical_root': str(canonical), 'cwd': str(cwd),
         })
+        if inboxes:
+            capsule['local_collaboration'] = inboxes
+        return capsule
     root = repo_root(cwd)
     status = workspace_binding_status(root, binding)
     if not status.get('matches'):
-        return build_lifecycle_working(store, workspace_status={
+        capsule = build_lifecycle_working(store, workspace_status={
             'bound': True, 'available': True, 'recovery_required': True,
             'canonical_root': str(canonical), 'details': status,
             'reason': 'the current workspace no longer matches the lifecycle binding',
         })
+        if inboxes:
+            capsule['local_collaboration'] = inboxes
+        return capsule
     working = build_working(root, cwd, store, reconcile=False)
     working['workspace_status'] = {
         'bound': True, 'available': True, 'recovery_required': False,
         'canonical_root': str(canonical),
     }
+    if inboxes:
+        working['local_collaboration'] = inboxes
     return working
 
 
@@ -980,594 +997,3 @@ def _cmd_permission_observation_record(argv: list[str]) -> int:
 def _cmd_permission_observation_status(argv: list[str]) -> int:
     p=argparse.ArgumentParser(prog='codex_loop.py permission-observation-status'); p.add_argument('--session-id',required=True); p.add_argument('--capability',required=True,choices=sorted(PERMISSION_PROBE_CAPABILITIES)); p.add_argument('--scope',required=True)
     a=p.parse_args(argv[1:]); emit_ok(permission_observation_status(session_id=a.session_id,capability=a.capability,scope=a.scope)); return 0
-
-
-def _cmd_web_publish_continuation_begin(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py web-publish-continuation-begin')
-    p.add_argument('--cwd')
-    p.add_argument('--task-id')
-    p.add_argument('--repository', required=True)
-    p.add_argument('--branch', required=True)
-    a = p.parse_args(argv[1:])
-    _cwd_path, root, store = _scope_from_argv(argv)
-    emit_ok(begin_web_publish_continuation(root, store, repository=a.repository, branch=a.branch))
-    return 0
-
-
-def _cmd_web_publish_bundle(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py web-publish-bundle')
-    p.add_argument('--cwd')
-    p.add_argument('--task-id')
-    p.add_argument('--output', required=True)
-    p.add_argument('--prerequisite-commit')
-    args = p.parse_args(argv[1:])
-    _cwd_path, root, store = _scope_from_argv(argv)
-    emit_ok(build_web_publish_bundle(root, store, output=Path(args.output), prerequisite_commit=args.prerequisite_commit))
-    return 0
-
-
-def _cmd_web_publish_archive(argv: list[str]) -> int:
-    p=argparse.ArgumentParser(prog='codex_loop.py web-publish-archive'); p.add_argument('--cwd'); p.add_argument('--task-id'); p.add_argument('--output',required=True); p.add_argument('--top-level'); p.add_argument('--prerequisite-commit')
-    a=p.parse_args(argv[1:]); cwd,root,store=_scope_from_argv(argv); emit_ok(build_web_publish_archive(root,store,output=Path(a.output),top_level=a.top_level,prerequisite_commit=a.prerequisite_commit)); return 0
-
-
-def _cmd_publish_enter(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py publish-enter')
-    p.add_argument('--cwd')
-    p.add_argument('--task-id')
-    p.add_argument('--session-id', required=True)
-    p.add_argument('--repository', required=True)
-    p.add_argument('--branch', required=True)
-    p.add_argument('--remote-head', required=True)
-    p.add_argument('--remote-tree', required=True)
-    p.add_argument('--capability-scope', action='append', default=[])
-    p.add_argument('--controller-abi', type=int, required=True)
-    p.add_argument('--standard-web', action='store_true')
-    p.add_argument('--workspace-granted', action='store_true')
-    p.add_argument('--release-id')
-    p.add_argument('--remote', default='origin')
-    p.add_argument('--release-publish', dest='source_only', action='store_false')
-    p.set_defaults(source_only=True)
-    a = p.parse_args(argv[1:])
-    _cwd_path, root, store = _scope_from_argv(argv)
-    emit_ok(publication_enter(
-        root,
-        store,
-        session_id=a.session_id,
-        repository=a.repository,
-        branch=a.branch,
-        remote_head=a.remote_head,
-        remote_tree=a.remote_tree,
-        capability_scopes=_capability_scope_map(a.capability_scope),
-        controller_abi=a.controller_abi,
-        standard_web=a.standard_web,
-        workspace_granted=a.workspace_granted,
-        source_only=a.source_only,
-        release_id=a.release_id,
-        remote=a.remote,
-    ))
-    return 0
-
-
-def _cmd_web_local_sync_plan(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py web-local-sync-plan')
-    p.add_argument('--cwd')
-    p.add_argument('--task-id')
-    p.add_argument('--session-id', required=True)
-    p.add_argument('--destination-path', required=True)
-    p.add_argument('--workspace-granted', action='store_true')
-    p.add_argument('--local-computer-authorized', action='store_true')
-    a = p.parse_args(argv[1:])
-    _cwd_path, root, store = _scope_from_argv(argv)
-    emit_ok(web_local_sync_plan(
-        root,
-        store,
-        session_id=a.session_id,
-        destination_path=a.destination_path,
-        workspace_granted=a.workspace_granted,
-        local_computer_authorized=a.local_computer_authorized,
-    ))
-    return 0
-
-def _cmd_web_publish_plan(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py web-publish-plan')
-    p.add_argument('--cwd')
-    p.add_argument('--task-id')
-    p.add_argument('--session-id', required=True)
-    p.add_argument('--repository', required=True)
-    p.add_argument('--branch', required=True)
-    p.add_argument('--remote-head', required=True)
-    p.add_argument('--remote-tree', required=True)
-    p.add_argument('--capability-scope', action='append', default=[])
-    mode = p.add_mutually_exclusive_group()
-    mode.add_argument(
-        '--verified-tree-fast-path',
-        dest='verified_tree_fast_path',
-        action='store_true',
-        help='compatibility alias; FAST_PUBLISH is already the default',
-    )
-    mode.add_argument(
-        '--standard-web',
-        dest='verified_tree_fast_path',
-        action='store_false',
-        help='explicitly select FULL_VERIFIED_PUBLISH instead of the default FAST_PUBLISH path',
-    )
-    p.set_defaults(verified_tree_fast_path=True)
-    a = p.parse_args(argv[1:])
-    cwd, root, store = _scope_from_argv(argv)
-    emit_ok(web_publish_plan(
-        root,
-        store,
-        session_id=a.session_id,
-        repository=a.repository,
-        branch=a.branch,
-        remote_head=a.remote_head,
-        remote_tree=a.remote_tree,
-        capability_scopes=_capability_scope_map(a.capability_scope),
-        verified_tree_fast_path=a.verified_tree_fast_path,
-    ))
-    return 0
-
-def _cmd_interaction_route(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py interaction-route')
-    p.add_argument('--requires-web-interaction', action='store_true')
-    p.add_argument('--explicit-target', choices=['cloud_browser', 'local_chrome'])
-    p.add_argument('--task-requires-local-session', action='store_true')
-    p.add_argument('--available-target', action='append', default=[])
-    p.add_argument('--current-user-local-computer-authorized', action='store_true')
-    args = p.parse_args(argv[1:])
-    emit_ok(resolve_interaction_target(
-        requires_web_interaction=args.requires_web_interaction,
-        explicit_target=args.explicit_target,
-        task_requires_local_session=args.task_requires_local_session,
-        available_targets=args.available_target,
-        local_computer_authorized=args.current_user_local_computer_authorized,
-    ))
-    return 0
-
-
-def _cmd_persistence_export(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py persistence-export')
-    p.add_argument('--cwd')
-    p.add_argument('--task-id')
-    p.add_argument('--backend', default='off', choices=['off', 'google_drive'])
-    p.add_argument('--repository')
-    p.add_argument('--source-commit')
-    p.add_argument('--source-tree')
-    p.add_argument('--ttl-days', type=int)
-    args = p.parse_args(argv[1:])
-    if args.backend == 'off':
-        emit_ok(persistence_policy('off'))
-        return 0
-    cwd, root, store = _scope_from_argv(argv)
-    manifest = build_state_manifest(
-        root, cwd, store, backend=args.backend, repository=args.repository,
-        source_commit=args.source_commit, source_tree=args.source_tree, ttl_days=args.ttl_days,
-    )
-    path = write_state_manifest(store, manifest)
-    emit_ok({
-        'backend': args.backend,
-        'mode': 'state_only',
-        'manifest_path': str(path),
-        'expires_at': manifest['expires_at'],
-        'next': 'host may upload this private temporary file through the connected Google Drive connector; credentials remain host-owned',
-    })
-    return 0
-
-
-def _cmd_persistence_validate(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py persistence-validate')
-    p.add_argument('--manifest', required=True)
-    args = p.parse_args(argv[1:])
-    manifest = load_state_manifest(Path(args.manifest).resolve())
-    emit_ok({
-        'valid': True,
-        'schema_version': manifest['schema_version'],
-        'task_status': manifest.get('task', {}).get('status'),
-        'repository': manifest.get('workspace', {}).get('repository'),
-        'expires_at': manifest['expires_at'],
-        'resume': manifest.get('resume', {}),
-        'rule': 'treat this as recovery evidence; reconcile current workspace/tool/external state before resuming',
-    })
-    return 0
-
-
-def _cmd_persistence_resume_plan(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py persistence-resume-plan')
-    p.add_argument('--manifest', required=True)
-    args = p.parse_args(argv[1:])
-    manifest = load_state_manifest(Path(args.manifest).resolve())
-    emit_ok(build_resume_plan(manifest))
-    return 0
-
-
-def _cmd_persistence_resume(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py persistence-resume')
-    p.add_argument('--cwd')
-    p.add_argument('--manifest', required=True)
-    p.add_argument('--observations-json', required=True)
-    args = p.parse_args(argv[1:])
-    cwd = _cwd(args.cwd)
-    root = repo_root(cwd)
-    manifest = load_state_manifest(Path(args.manifest).resolve())
-    observation_path = Path(args.observations_json).resolve()
-    payload = observation_path.read_bytes()
-    if len(payload) > 256 * 1024:
-        raise ValueError('resume observations exceed 256 KiB')
-    try:
-        observations = json.loads(payload.decode('utf-8'))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError('resume observations must be valid UTF-8 JSON') from exc
-    emit_ok(resume_state_manifest(root, manifest, observations))
-    return 0
-
-
-def _cmd_persistence_cleanup_plan(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py persistence-cleanup-plan')
-    p.add_argument('--manifest', required=True)
-    p.add_argument('--ownership-proven', action='store_true')
-    p.add_argument('--bounded-runtime-scope-proven', action='store_true')
-    p.add_argument('--recoverable-delete-supported', action='store_true')
-    p.add_argument('--permanent-delete-supported', action='store_true')
-    args = p.parse_args(argv[1:])
-    manifest = load_state_manifest(Path(args.manifest).resolve())
-    emit_ok(cleanup_decision(
-        manifest,
-        ownership_proven=args.ownership_proven,
-        bounded_scope_proven=args.bounded_runtime_scope_proven,
-        recoverable_delete_supported=args.recoverable_delete_supported,
-        permanent_delete_supported=args.permanent_delete_supported,
-    ))
-    return 0
-
-
-def _cmd_workspace_cache_create(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-cache-create')
-    p.add_argument('--cwd')
-    p.add_argument('--output', required=True)
-    p.add_argument('--repository')
-    args = p.parse_args(argv[1:])
-    cwd = _cwd(args.cwd)
-    root = repo_root(cwd)
-    emit_ok(build_workspace_cache(root, output=Path(args.output), repository=args.repository))
-    return 0
-
-
-def _cmd_workspace_cache_validate(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-cache-validate')
-    p.add_argument('--capsule', required=True)
-    p.add_argument('--expected-sha256')
-    args = p.parse_args(argv[1:])
-    data = validate_workspace_cache(Path(args.capsule), expected_sha256=args.expected_sha256)
-    data.pop('manifest', None)
-    emit_ok(data)
-    return 0
-
-
-def _cmd_workspace_cache_restore(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-cache-restore')
-    p.add_argument('--capsule', required=True)
-    p.add_argument('--destination', required=True)
-    p.add_argument('--expected-sha256')
-    p.add_argument('--consumption-receipt-output')
-    args = p.parse_args(argv[1:])
-    emit_ok(restore_workspace_cache(
-        Path(args.capsule),
-        destination=Path(args.destination),
-        expected_sha256=args.expected_sha256,
-        consumption_receipt_output=None if args.consumption_receipt_output is None else Path(args.consumption_receipt_output),
-    ))
-    return 0
-
-
-def _cmd_workspace_cache_cleanup_plan(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-cache-cleanup-plan')
-    p.add_argument('--objects-json', required=True)
-    p.add_argument('--preserve-cache-id', action='append', default=[])
-    args = p.parse_args(argv[1:])
-    payload = Path(args.objects_json).resolve().read_bytes()
-    if len(payload) > 512 * 1024:
-        raise ValueError('workspace cache cleanup object list exceeds 512 KiB')
-    try:
-        objects = json.loads(payload.decode('utf-8'))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError('workspace cache cleanup object list must be valid UTF-8 JSON') from exc
-    if isinstance(objects, dict) and set(objects) == {'objects'}:
-        objects = objects['objects']
-    emit_ok(workspace_cache_cleanup_plan(objects, preserve_cache_ids=set(args.preserve_cache_id)))
-    return 0
-
-
-def _load_bounded_json_file(path_text: str, max_bytes: int, label: str):
-    payload = Path(path_text).resolve().read_bytes()
-    if len(payload) > max_bytes:
-        raise ValueError(f"{label} exceeds {max_bytes} bytes")
-    return json.loads(payload.decode("utf-8"))
-
-
-def _cmd_drive_cache_register(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="codex_loop.py drive-cache-register")
-    p.add_argument("--folder-path", required=True)
-    a = p.parse_args(argv[1:])
-    emit_ok(register_drive_cache_folder(a.folder_path))
-    return 0
-
-
-def _cmd_drive_cache_unregister(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="codex_loop.py drive-cache-unregister")
-    p.add_argument("--folder-path", required=True)
-    a = p.parse_args(argv[1:])
-    emit_ok(unregister_drive_cache_folder(a.folder_path))
-    return 0
-
-
-def _cmd_drive_cache_list(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="codex_loop.py drive-cache-list").parse_args(argv[1:])
-    emit_ok(registered_drive_cache_folders())
-    return 0
-
-
-def _cmd_drive_cache_cleanup_plan(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="codex_loop.py drive-cache-cleanup-plan")
-    p.add_argument("--objects-json", required=True)
-    a = p.parse_args(argv[1:])
-    objects = _load_bounded_json_file(a.objects_json, 1024 * 1024, "Drive cache cleanup object list")
-    if isinstance(objects, dict) and set(objects) == {"objects"}:
-        objects = objects["objects"]
-    emit_ok(drive_cache_cleanup_plan(objects))
-    return 0
-
-
-def _cmd_host_project(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="codex_loop.py host-project")
-    subs = p.add_subparsers(dest="operation", required=True)
-    for operation in ("set", "remove"):
-        sub = subs.add_parser(operation)
-        sub.add_argument("--computer", required=True)
-        sub.add_argument("--name", required=True)
-        if operation == "set":
-            sub.add_argument("--path", required=True)
-    args = p.parse_args(argv[1:])
-    if args.operation == "set":
-        emit_ok(host_project_set(args.computer, args.name, args.path))
-    else:
-        emit_ok(host_project_remove(args.computer, args.name))
-    return 0
-
-
-def _cmd_workspace_admit(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-admit')
-    p.add_argument('--name', required=True)
-    p.add_argument('--path', required=True)
-    p.add_argument('--kind', required=True, choices=['repository', 'development_root'])
-    p.add_argument('--session-id', required=True)
-    p.add_argument('--host-authorized-root', action='append', required=True)
-    p.add_argument('--authorization-evidence', required=True)
-    p.add_argument('--current-user-authorization-observed', action='store_true')
-    args = p.parse_args(argv[1:])
-    emit_ok(admit_workspace(
-        args.name, args.path, args.kind, args.authorization_evidence,
-        session_id=args.session_id,
-        host_authorized_roots=args.host_authorized_root,
-        current_user_authorization_observed=args.current_user_authorization_observed,
-    ))
-    return 0
-
-
-def _cmd_workspace_materialize(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-materialize')
-    p.add_argument('--name', required=True)
-    p.add_argument('--path', required=True)
-    p.add_argument('--kind', required=True, choices=['repository', 'development_root'])
-    p.add_argument('--update', action='store_true')
-    p.add_argument('--session-id')
-    args = p.parse_args(argv[1:])
-    emit_ok(materialize_workspace(args.name, args.path, args.kind, session_id=args.session_id, update=args.update))
-    return 0
-
-
-def _cmd_workspace_registry_list(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-registry-list')
-    p.add_argument('--session-id')
-    args = p.parse_args(argv[1:])
-    workspaces = list_workspaces(session_id=args.session_id)
-    emit_ok({
-        'scope': 'conversation',
-        'registry_path': str(registry_path(args.session_id)) if workspaces else None,
-        'workspaces': workspaces,
-        'locations_persisted': False,
-        'authorization_persisted': False,
-    })
-    return 0
-
-
-def _cmd_workspace_resolve(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-resolve')
-    p.add_argument('name')
-    p.add_argument('--session-id')
-    p.add_argument('--host-authorized-root', action='append', default=[])
-    p.add_argument('--require-access', action='store_true')
-    args = p.parse_args(argv[1:])
-    state = resolve_workspace(
-        args.name,
-        session_id=args.session_id,
-        host_authorized_roots=args.host_authorized_root,
-    )
-    if args.require_access and not state['accessible']:
-        reasons = ', '.join(state.get('reasons') or ['workspace access denied'])
-        raise PermissionError(f'workspace access denied for {state["name"]}: {reasons}')
-    emit_ok(state)
-    return 0
-
-
-def _cmd_workspace_grant(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-grant')
-    p.add_argument('name')
-    p.add_argument('--session-id')
-    p.add_argument('--authorization-evidence', required=True)
-    p.add_argument('--current-user-authorization-observed', action='store_true')
-    args = p.parse_args(argv[1:])
-    emit_ok(grant_workspace(
-        args.name,
-        args.authorization_evidence,
-        session_id=args.session_id,
-        current_user_authorization_observed=args.current_user_authorization_observed,
-    ))
-    return 0
-
-
-def _cmd_workspace_grants(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-grants')
-    p.add_argument('--session-id')
-    args = p.parse_args(argv[1:])
-    emit_ok(session_grants(session_id=args.session_id))
-    return 0
-
-
-def _cmd_workspace_forget(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog='codex_loop.py workspace-forget')
-    p.add_argument('name')
-    p.add_argument('--session-id')
-    args = p.parse_args(argv[1:])
-    emit_ok(forget_workspace(args.name, session_id=args.session_id))
-    return 0
-
-
-def _delegate(argv: list[str]) -> int:
-    args = list(argv)
-    command = args[0] if args else ''
-    task_scoped = command not in {'bootstrap', 'command-check', 'source-verify', '_serve'}
-    if task_scoped and '--task-id' not in args and '--use-active-task' not in args:
-        insert = args.index('--') if '--' in args else len(args)
-        args.insert(insert, '--use-active-task')
-    old = sys.argv
-    try:
-        sys.argv = [str(Path(kernel.__file__).resolve()), *args]
-        return kernel.main()
-    finally:
-        sys.argv = old
-
-
-def main() -> int:
-    argv = sys.argv[1:]
-    try:
-        if not argv:
-            return _delegate(argv)
-        if argv[0] in {'-h', '--help'}:
-            return _print_top_level_help()
-        if argv[0] == 'orient':
-            return _cmd_orient(argv)
-        if argv[0] == 'instructions':
-            return _cmd_instructions(argv)
-        if argv[0] == 'authority':
-            return _cmd_authority(argv)
-        if argv[0] == 'next':
-            return _cmd_next(argv)
-        if argv[0] == 'resume':
-            return _cmd_resume(argv)
-        if argv[0] == 'host-profile':
-            return _cmd_host_profile(argv)
-        if argv[0] == 'host-config':
-            return _cmd_host_config(argv)
-        if argv[0] == 'execution-resolve':
-            return _cmd_execution_resolve(argv)
-        if argv[0] == 'progress-config':
-            return _cmd_progress_config(argv)
-        if argv[0] == 'progress-policy':
-            return _cmd_progress_policy(argv)
-        if argv[0] == 'route-init':
-            return _cmd_route_init(argv)
-        if argv[0] == 'route-show':
-            return _cmd_route_show(argv)
-        if argv[0] == 'route-transition':
-            return _cmd_route_transition(argv)
-        if argv[0] == 'route-check':
-            return _cmd_route_check(argv)
-        if argv[0] == 'permission-preflight-plan':
-            return _cmd_permission_preflight_plan(argv)
-        if argv[0] == 'permission-observation-record':
-            return _cmd_permission_observation_record(argv)
-        if argv[0] == 'permission-observation-status':
-            return _cmd_permission_observation_status(argv)
-        if argv[0] == 'web-publish-continuation-begin':
-            return _cmd_web_publish_continuation_begin(argv)
-        if argv[0] == 'web-publish-bundle':
-            return _cmd_web_publish_bundle(argv)
-        if argv[0] == 'web-publish-archive':
-            return _cmd_web_publish_archive(argv)
-        if argv[0] == 'publish-enter':
-            return _cmd_publish_enter(argv)
-        if argv[0] == 'web-publish-plan':
-            return _cmd_web_publish_plan(argv)
-        if argv[0] == 'web-local-sync-plan':
-            return _cmd_web_local_sync_plan(argv)
-        if argv[0] == 'source-acquisition-plan':
-            return _cmd_source_acquisition_plan(argv)
-        if argv[0] == 'source-acquisition-verify':
-            return _cmd_source_acquisition_verify(argv)
-        if argv[0] == 'repository-enter':
-            return _cmd_repository_enter(argv)
-        if argv[0] == 'interaction-route':
-            return _cmd_interaction_route(argv)
-        if argv[0] == 'validate':
-            return _cmd_validate(argv)
-        if argv[0] == 'validation-record':
-            return _cmd_validation_record(argv)
-        if argv[0] == 'persistence-export':
-            return _cmd_persistence_export(argv)
-        if argv[0] == 'persistence-validate':
-            return _cmd_persistence_validate(argv)
-        if argv[0] == 'persistence-resume-plan':
-            return _cmd_persistence_resume_plan(argv)
-        if argv[0] == 'persistence-resume':
-            return _cmd_persistence_resume(argv)
-        if argv[0] == 'persistence-cleanup-plan':
-            return _cmd_persistence_cleanup_plan(argv)
-        if argv[0] == 'workspace-cache-create':
-            return _cmd_workspace_cache_create(argv)
-        if argv[0] == 'workspace-cache-validate':
-            return _cmd_workspace_cache_validate(argv)
-        if argv[0] == 'workspace-cache-restore':
-            return _cmd_workspace_cache_restore(argv)
-        if argv[0] == 'workspace-cache-cleanup-plan':
-            return _cmd_workspace_cache_cleanup_plan(argv)
-        if argv[0] == 'drive-cache-register':
-            return _cmd_drive_cache_register(argv)
-        if argv[0] == 'drive-cache-unregister':
-            return _cmd_drive_cache_unregister(argv)
-        if argv[0] == 'drive-cache-list':
-            return _cmd_drive_cache_list(argv)
-        if argv[0] == 'drive-cache-cleanup-plan':
-            return _cmd_drive_cache_cleanup_plan(argv)
-        if argv[0] == 'host-project':
-            return _cmd_host_project(argv)
-        if argv[0] == 'workspace-admit':
-            return _cmd_workspace_admit(argv)
-        if argv[0] == 'workspace-materialize':
-            return _cmd_workspace_materialize(argv)
-        if argv[0] == 'workspace-registry-list':
-            return _cmd_workspace_registry_list(argv)
-        if argv[0] == 'workspace-resolve':
-            return _cmd_workspace_resolve(argv)
-        if argv[0] == 'workspace-grant':
-            return _cmd_workspace_grant(argv)
-        if argv[0] == 'workspace-grants':
-            return _cmd_workspace_grants(argv)
-        if argv[0] == 'workspace-forget':
-            return _cmd_workspace_forget(argv)
-        if argv[0] == 'workspace-sync-offer':
-            return _cmd_workspace_sync_offer(argv)
-        if argv[0] == 'deployment-provenance-verify':
-            return _cmd_deployment_provenance_verify(argv)
-        if argv[0] == 'relay-frame':
-            return _cmd_relay_frame(argv)
-        if argv[0] == 'relay-receive':
-            return _cmd_relay_receive(argv)
-        return _delegate(argv)
-    except Exception as exc:
-        emit_error(exc)
-        return 1
-
-
-if __name__ == '__main__':
-    raise SystemExit(main())

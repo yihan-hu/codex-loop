@@ -9,6 +9,7 @@ from .change_tracker import changes, sync_generation
 from .release_lineage import workspace_binding_status
 from .state import READ_ONLY_PROFILES, StateStore
 from .workspace import git_state, hash_workspace_path, workspace_identity_status
+from .local_collaboration import completion_obstacle
 
 
 class CompletionStatus(str, Enum):
@@ -59,6 +60,9 @@ def assess(root: Path, store: StateStore, *, reconcile: bool = True) -> Completi
 
     if not store.request_anchor().strip():
         blockers.append("task request anchor is missing")
+    collaboration_obstacle = completion_obstacle(store.task_id)
+    if collaboration_obstacle:
+        reasons.append(collaboration_obstacle)
 
     plan = store.plan()
 

@@ -243,8 +243,14 @@ def _hot_workspace(
         return None, ["workspace is not a real Git working tree"]
     if binding.get("origin_hint") != _origin_hint(repository):
         reasons.append("Git origin does not identify the expected repository")
-    if str(binding.get("initial_branch") or "") != branch:
+    checkout_branch = binding.get("initial_branch")
+    detached_worker = checkout_branch is None
+    if checkout_branch is not None and str(checkout_branch) != branch:
         reasons.append("Git branch does not equal the intended branch")
+    if detached_worker and source_provenance is None:
+        # Detached HEAD must not invent target-branch authority: provenance is
+        # required to prove the worker is derived from the intended branch.
+        reasons.append("detached worktree requires verified target-branch source provenance")
     head = str(binding.get("base_commit") or "").lower()
     tree = str(binding.get("base_tree") or "").lower()
     if not _SHA40_RE.fullmatch(head) or not _SHA40_RE.fullmatch(tree):
@@ -339,7 +345,9 @@ def _hot_workspace(
         "repository_id": binding.get("repository_id"),
         "repository": _repository(repository),
         "origin_hint": binding.get("origin_hint"),
-        "branch": binding.get("initial_branch"),
+        "branch": branch,
+        "checked_out_branch": checkout_branch,
+        "detached_worker": detached_worker,
         "head_commit": head,
         "head_tree": tree,
     }

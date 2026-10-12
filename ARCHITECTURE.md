@@ -84,6 +84,13 @@ retain prior blocker for recheck]
   PW --> H
 
   H <--> T[Inspect / act / observe / test / repair]
+  H -. same-host local parallel development .-> LC[Local Worktree Collaboration]
+  LC --> REG[Host-local SQLite: runs, slots, queued messages, integration lease]
+  LC --> CW[Git: independent detached or private-branch worktrees]
+  REG --> CLAIM[Atomic claim / dynamic join / last-finisher election]
+  CW --> CLAIM
+  CLAIM -->|last finished active worker| INTEG[Target-branch cherry-pick + conflict repair + integration tests]
+  INTEG --> F
   H -. live task-owned work .-> VW[Verified wait: observe existing handle]
   VW --> H
   H -. multi-step work only .-> P[Optional 3-state plan]
@@ -121,6 +128,9 @@ bound to stage + input + instruction + request + generation]
 
 
 ## Boundaries
+
+- **Local worktree collaboration is opt-in and same-host.** The new `collab` CLI coordinates planned slots and spontaneously joined compatible tasks through a host-local SQLite database. Each task still binds to one canonical Git worktree; worker worktrees use detached HEAD or owned private feature branches. The database stores messages/ownership/commit IDs, never source truth or host authorization. Normal `next`/`resume` exposes unacknowledged messages. Atomic completion elects one last active worker to cherry-pick into the sole authorized clean target-branch checkout, resolve conflicts and run tests. Integration completion remains a verified human/model action, not a background daemon. Web and cross-computer chats do not participate; a copied prompt never substitutes for current-chat permission.
+- **Detached HEAD continuity has explicit provenance.** Workers may use detached HEAD only when the recorded target branch is supported by verified source provenance; the workspace lease distinguishes `branch` (intended target) from `checked_out_branch` (None on detached workers). Unverified detached work is never silently promoted to HOT mutation authority.
 
 - **The connected user Drive profile is the only persistent preference authority.** Each new conversation imports and verifies that profile exactly once on the controller. The controller resolves the selected connector and environment/project locators, passes an explicit execution snapshot to the local runtime, and the private conversation route pins it. Native runtime/task state is independent; no native host preference file participates.
 - **Permission checks are early live operations, not connector status checks.** After bootstrap/resume and route resolution, probe the access classes already required by the objective before substantive work. In particular, Drive deletion calls the real delete API only on a disposable newly created sentinel; local edits use the selected RDC/My Mac/My WSL write tool to create and clean up a file in the exact authorized project. Actual approval prompts and session-wide choices remain host-owned, and later sensitive actions may require fresh approval.

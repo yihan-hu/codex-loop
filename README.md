@@ -4,6 +4,10 @@ Codex Loop is a ChatGPT Skill that gives every selected objective one lightweigh
 
 Selection always requires lifecycle admission. For a new objective, lifecycle bootstrap is the first task action; if the host cannot enter the runtime, Codex Loop fails closed instead of silently running the objective outside the lifecycle. Simple work stays lightweight because plans, workspace binding, checkpoints, persistence, extra review, managed processes, and external-action bookkeeping are activated only when needed—not because the lifecycle itself is optional.
 
+## Same-host Local Worktree Collaboration
+
+For Local worktree coordination, `codex_loop.py collab` provides a host-local SQLite task registry, exact Git worktree isolation, identical launch prompts for planned parallel slots, direct queued messages, and atomic last-finisher integration election. The elected Chat performs Git cherry-pick/conflict resolution/testing in the sole authorized target-branch checkout. A separate daemon or Drive staging is not needed; an inactive Chat is not awakened by local messages. Read [the Local collaboration contract](references/local-worktree-collaboration.md) for commands, permission boundaries, detached-vs-private-branch selection, and recovery. This is available only on the selected Local computer, never across independently isolated Web workspaces or via OneDrive-synced SQLite.
+
 ## Runtime control plane v2
 
 Codex Loop separates repeatable control-plane mechanics from host/model reasoning. The current runtime adds coordinated surfaces for **Execution Outcome Separation** (`workload != process != cleanup`), a unified **Private Host Profile** with Cloud-Browser-first interaction preference, deterministic **Durable Resume**, and split Skill distribution profiles: repository-neutral consumer packages plus explicit maintainer provenance packages. These are thin ChatGPT-host adaptations; existing upstream host gaps remain explicitly labeled rather than being promoted to false parity.

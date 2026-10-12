@@ -1,8 +1,23 @@
 interface:
-  display_name: "Codex Loop"
-  short_description: "Objective lifecycle for multi-step work"
+  display_name: Codex Loop
+  short_description: Objective lifecycle for multi-step work
   icon_small: "./assets/icon.svg"
   icon_large: "./assets/icon.svg"
-  default_prompt: "Use $codex-loop for this objective; before any task action, bootstrap only a new lifecycle or resume an existing one. For a user-authorized local My Mac project, run route-init then workspace-admit through the private runtime before ordinary project tools; check all earlier user turns in the current chat and automatically re-admit the same authorized project if needed; never re-ask unchanged consent or invent a session/task ID. Immediately after lifecycle admission and route selection, use live safe operations to prewarm only required GitHub push, Drive upload/delete, and selected My Mac/My WSL/RDC project write permissions; mere connection checks do not suffice and host approval choices remain host-owned. On a technical failure, diagnose, restore the existing connector/route/grant/task as needed, verify and safely retry the original operation, then keep working; block only on a real external dependency. Never continue outside the lifecycle."
+  default_prompt: Use $codex-loop for this objective; before any task action, bootstrap only a new lifecycle or resume an existing one. For a user-authorized local My
+    Mac project, run route-init then workspace-admit through the private runtime before
+    ordinary project tools; check all earlier user turns in the current chat and automatically
+    re-admit the same authorized project if needed; never re-ask unchanged consent
+    or invent a session/task ID. Immediately after lifecycle admission and route selection,
+    use live safe operations to prewarm only required GitHub push, Drive upload/delete,
+    and selected My Mac/My WSL/RDC project write permissions; mere connection checks
+    do not suffice and host approval choices remain host-owned. On a technical failure,
+    diagnose, restore the existing connector/route/grant/task as needed, verify and
+    safely retry the original operation, then keep working; block only on a real external
+    dependency. Never continue outside the lifecycle.
 policy:
   allow_implicit_invocation: true
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
