@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS receipts (
   message_id INTEGER NOT NULL, task_id TEXT NOT NULL,
   PRIMARY KEY(message_id, task_id)
 );
+CREATE TABLE IF NOT EXISTS serial_tails (
+  run_id TEXT PRIMARY KEY REFERENCES runs(id),
+  instructions TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  owner_task TEXT, final_head TEXT, evidence TEXT
+);
 """
 
 
@@ -200,7 +206,8 @@ def _make_run(conn: sqlite3.Connection, identity: dict[str, str], *, goal: str, 
 
 def create_run(repo: str, target_branch: str, worktree_parent: str,
                tasks: list[dict[str, str]], *, strategy: str = 'detached',
-               goal_key: str, run_id: str | None = None) -> dict[str, Any]:
+               goal_key: str, run_id: str | None = None,
+               serial_tail: str | None = None) -> dict[str, Any]:
     identity = _repo_identity(repo, target_branch)
     parent = Path(worktree_parent).expanduser().resolve(strict=True)
     if parent == Path(identity['repo']) or parent.is_relative_to(Path(identity['repo'])):
@@ -212,15 +219,21 @@ def create_run(repo: str, target_branch: str, worktree_parent: str,
             raise ValueError('each task must have exactly title and instructions')
         _text(task['title'], 'task title', 200)
         _text(task['instructions'], 'task instructions', 60000)
+    if serial_tail is not None:
+        serial_tail = _text(serial_tail, 'post-integration serial chain', 60000)
     with _connection(write=True) as db:
         run = _make_run(db, identity, goal=goal_key, strategy=strategy,
                         parent=parent, planned=True, run_id=run_id)
         for i, task in enumerate(tasks, 1):
             db.execute('INSERT INTO slots(run_id,number,title,instructions) VALUES(?,?,?,?)',
                        (run, i, task['title'], task['instructions']))
+        if serial_tail is not None:
+            db.execute('INSERT INTO serial_tails(run_id,instructions) VALUES(?,?)',
+                       (run, serial_tail))
     return {'run_id': run, 'slots': len(tasks), 'strategy': strategy,
             'target_branch': target_branch, 'base_commit': identity['base_commit'],
-            'worktree_parent': str(parent), 'launch': 'use the identical run-id launch prompt in each fresh chat'}
+            'worktree_parent': str(parent), 'serial_tail_planned': serial_tail is not None,
+            'launch': 'use the identical run-id launch prompt in each fresh chat'}
 
 
 def discover(repo: str, target_branch: str) -> list[dict[str, Any]]:
@@ -379,8 +392,11 @@ def inbox(run_id: str, task_id: str, *, ack: list[int] | None = None) -> dict[st
           LEFT JOIN receipts a ON a.message_id=m.id AND a.task_id=?
           WHERE m.run_id=? AND m.sender!=? AND (m.recipient IS NULL OR m.recipient=?)
             AND a.message_id IS NULL ORDER BY m.id''', (task_id, run_id, task_id, task_id)).fetchall()
+        serial = db.execute('SELECT * FROM serial_tails WHERE run_id=? AND owner_task=?',
+                            (run_id, task_id)).fetchone()
         return {'run_id': run_id, 'slot': slot['number'], 'messages': [dict(row) for row in rows],
-                'delegations': _delegations_for(db, run_id, task_id)}
+                'delegations': _delegations_for(db, run_id, task_id),
+                'serial_tail': dict(serial) if serial else None}
 
 
 def inbox_for_task(task_id: str) -> list[dict[str, Any]]:
@@ -723,12 +739,13 @@ def integration_resolved(run_id: str, task_id: str, *, integration_worktree: str
 
 
 def integration_complete(run_id: str, task_id: str, *, integration_worktree: str, test_evidence: str) -> dict[str, Any]:
+    """Finalize the merged run and atomically assign its prewritten serial tail."""
     task_id = _task(task_id)
     _text(test_evidence, 'test evidence', 5000)
     with _connection() as db:
         run = _run(db, run_id)
-    if run['integrator_task'] != task_id or run['state'] != 'integrating' or not run['candidate_head']:
-        raise RuntimeError('no completed automatic integration candidate owned by this task')
+    if run['integrator_task'] != task_id or run['state'] not in ('integrating', 'integrated') or not run['candidate_head']:
+        raise RuntimeError('no completed integration candidate owned by this task')
     root = Path(integration_worktree).expanduser().resolve(strict=True)
     _verify_same_repo(root, run)
     if _git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD') != run['target_branch']:
@@ -739,11 +756,61 @@ def integration_complete(run_id: str, task_id: str, *, integration_worktree: str
         raise RuntimeError('integration worktree is dirty or cherry-pick is incomplete')
     with _connection(write=True) as db:
         row = _run(db, run_id)
-        if row['candidate_head'] != run['candidate_head'] or row['state'] != 'integrating':
+        if row['candidate_head'] != run['candidate_head'] or row['integrator_task'] != task_id:
+            raise RuntimeError('integration ownership changed concurrently')
+        if row['state'] == 'integrating':
+            db.execute("UPDATE runs SET state='integrated' WHERE id=?", (run_id,))
+            # No extra Slot/task_id: the active Integrator automatically owns the
+            # full uninterrupted serial chain in the same SQLite transaction.
+            db.execute("UPDATE serial_tails SET status='active',owner_task=? WHERE run_id=? AND status='pending'",
+                       (task_id, run_id))
+        elif row['state'] != 'integrated':
             raise RuntimeError('integration state changed concurrently')
-        db.execute("UPDATE runs SET state='integrated' WHERE id=?", (run_id,))
+        serial = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
+        if serial and serial['owner_task'] != task_id:
+            raise RuntimeError('serial continuation owned by another task')
     return {'run_id': run_id, 'state': 'integrated', 'commit': run['candidate_head'],
-            'test_evidence': test_evidence, 'pushed': False}
+            'test_evidence': test_evidence, 'pushed': False,
+            'serial_tail': dict(serial) if serial else None,
+            'continue_now': bool(serial and serial['status'] == 'active')}
+
+
+def serial_complete(run_id: str, task_id: str, *, integration_worktree: str,
+                    evidence: str) -> dict[str, Any]:
+    """Close a serial chain after its plan-defined gates, without inventing Slots."""
+    task_id = _task(task_id)
+    evidence = _text(evidence, 'serial completion evidence', 5000)
+    with _connection() as db:
+        run = _run(db, run_id)
+        serial = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
+    if run['state'] != 'integrated' or run['integrator_task'] != task_id:
+        raise PermissionError('only the integrated run owner can complete its serial chain')
+    if serial is None or serial['owner_task'] != task_id:
+        raise RuntimeError('this task owns no post-integration serial chain')
+    root = Path(integration_worktree).expanduser().resolve(strict=True)
+    _verify_same_repo(root, run)
+    if _git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD') != run['target_branch']:
+        raise ValueError('serial continuation must finish on the target branch checkout')
+    head = _git(root, 'rev-parse', '--verify', 'HEAD')
+    if run_git(root, ['merge-base', '--is-ancestor', run['candidate_head'], head]).returncode:
+        raise RuntimeError('serial continuation no longer descends from merged run')
+    if _git(root, 'status', '--porcelain', '--untracked-files=all'):
+        raise RuntimeError('serial continuation worktree is dirty')
+    with _connection(write=True) as db:
+        row = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
+        if row['owner_task'] != task_id:
+            raise PermissionError('serial ownership changed')
+        if row['status'] == 'complete':
+            if row['final_head'] != head:
+                raise RuntimeError('serial chain is already complete at a different commit')
+        elif row['status'] == 'active':
+            db.execute("UPDATE serial_tails SET status='complete',evidence=?,final_head=? WHERE run_id=? AND status='active'",
+                       (evidence, head, run_id))
+        else:
+            raise RuntimeError('serial chain is not active')
+        completed = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
+    return {'run_id': run_id, 'serial_tail': dict(completed), 'continue_now': False,
+            'next': 'evaluate the frozen plan for its next prewritten parallel wave or final acceptance'}
 
 
 def status(run_id: str) -> dict[str, Any]:
@@ -751,10 +818,12 @@ def status(run_id: str) -> dict[str, Any]:
         run = _run(db, run_id)
         rows = db.execute('SELECT number,title,status,task_id,worktree,commit_sha FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
         delegations = db.execute('SELECT * FROM delegations WHERE run_id=? ORDER BY id', (run_id,)).fetchall()
+        serial = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
     return {'run_id': run_id, 'state': run['state'], 'target_branch': run['target_branch'],
             'goal_key': run['goal_key'], 'integrator_task': run['integrator_task'],
             'candidate_head': run['candidate_head'], 'slots': [dict(row) for row in rows],
-            'delegations': [dict(row) for row in delegations]}
+            'delegations': [dict(row) for row in delegations],
+            'serial_tail': dict(serial) if serial else None}
 
 
 def completion_obstacle(task_id: str) -> str | None:
@@ -766,6 +835,8 @@ def completion_obstacle(task_id: str) -> str | None:
         unsettled = {r['id']: db.execute('''SELECT COUNT(*) FROM delegations WHERE run_id=? AND sender=?
                               AND status NOT IN ('completed','cancelled')''', (r['id'], task_id)).fetchone()[0]
                      for r in rows}
+        serial_open = {r['id']: db.execute("SELECT COUNT(*) FROM serial_tails WHERE run_id=? AND owner_task=? AND status!='complete'",
+                                           (r['id'], task_id)).fetchone()[0] for r in rows}
     for row in rows:
         if unsettled[row['id']]:
             return f'{unsettled[row["id"]]} delegated subtask(s) await completion or cancellation'
@@ -773,4 +844,6 @@ def completion_obstacle(task_id: str) -> str | None:
             return 'local collaboration work has not been committed and finished'
         if row['state'] == 'integrating' and row['integrator_task'] == task_id:
             return 'elected local integrator has not completed merged validation'
+        if serial_open[row['id']]:
+            return 'post-integration serial chain has not completed its planned gates'
     return None

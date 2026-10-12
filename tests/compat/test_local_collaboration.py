@@ -87,6 +87,97 @@ class CollaborationTest(unittest.TestCase):
         for i in range(1,4):
             self.assertEqual(git(self.repo,'rev-parse',f'refs/codex-loop/collab/{run}/slot-{i}'),commits[i])
 
+    def test_post_integration_serial_chain_auto_claims_and_resumes_same_task(self):
+        planned = 'Read the frozen PLAN, execute M3 then M4, verify gates, activate the next wave.'
+        tasks = [{'title': 'worker A', 'instructions': 'Create A'},
+                 {'title': 'worker B', 'instructions': 'Create B'}]
+        created = c.create_run(str(self.repo), 'main', str(self.parent), tasks,
+                               goal_key='serial-auto-claim', serial_tail=planned)
+        run = created['run_id']
+        self.assertTrue(created['serial_tail_planned'])
+        self.assertEqual(c.status(run)['serial_tail']['status'], 'pending')
+        a=c.claim(run,'worker-A',worktree_parent=str(self.parent))
+        b=c.claim(run,'worker-B',worktree_parent=str(self.parent))
+        c.finish(run,'worker-A',commit_sha=self.commit(a))
+        self.assertTrue(c.finish(run,'worker-B',commit_sha=self.commit(b))['integrate_now'])
+        c.prepare_integration(run,'worker-B',integration_worktree=str(self.repo))
+        self.assertIn('integrator', c.completion_obstacle('worker-B'))
+        result=c.integration_complete(run,'worker-B',integration_worktree=str(self.repo),
+                                      test_evidence='integrated files reviewed')
+        self.assertTrue(result['continue_now'])
+        self.assertEqual(result['serial_tail']['owner_task'], 'worker-B')
+        self.assertEqual(result['serial_tail']['instructions'], planned)
+        self.assertEqual(result['serial_tail']['status'], 'active')
+        self.assertEqual(len(c.status(run)['slots']), 2)
+        self.assertIn('serial chain', c.completion_obstacle('worker-B'))
+        continuation=c.inbox_for_task('worker-B')
+        self.assertEqual(continuation[0]['serial_tail']['instructions'], planned)
+        self.assertIsNone(c.inbox_for_task('worker-A')[0]['serial_tail'])
+        with self.assertRaises(PermissionError):
+            c.serial_complete(run,'worker-A',integration_worktree=str(self.repo), evidence='invalid')
+        with self.assertRaisesRegex(RuntimeError,'dirty'):
+            (self.repo/'m3.txt').write_text('uncommitted evidence\n')
+            c.serial_complete(run,'worker-B',integration_worktree=str(self.repo),evidence='not yet')
+        git(self.repo,'add','m3.txt');git(self.repo,'commit','-m','serial M3 M4 gate result')
+        result=c.serial_complete(run,'worker-B',integration_worktree=str(self.repo),
+                                 evidence='M3/M4 checks passed with source receipts')
+        self.assertEqual(result['serial_tail']['status'], 'complete')
+        self.assertEqual(result['serial_tail']['final_head'],git(self.repo,'rev-parse','HEAD'))
+        self.assertIsNone(c.completion_obstacle('worker-B'))
+        self.assertEqual(c.serial_complete(run,'worker-B',integration_worktree=str(self.repo),
+                          evidence='safe retry')['serial_tail']['status'], 'complete')
+
+    def test_serial_chain_refuses_unintegrated_and_wrong_branch_state(self):
+        run=c.create_run(str(self.repo),'main',str(self.parent),
+            [{'title':'one','instructions':'work'}],goal_key='serial-reject',
+            serial_tail='Continue serial gates')['run_id']
+        a=c.claim(run,'task-A',worktree_parent=str(self.parent))
+        self.assertTrue(c.finish(run,'task-A',commit_sha=self.commit(a))['integrate_now'])
+        with self.assertRaises(PermissionError):
+            c.serial_complete(run,'task-A',integration_worktree=str(self.repo),evidence='too soon')
+        c.prepare_integration(run,'task-A',integration_worktree=str(self.repo))
+        c.integration_complete(run,'task-A',integration_worktree=str(self.repo),test_evidence='verified')
+        first=c.integration_complete(run,'task-A',integration_worktree=str(self.repo),test_evidence='retry')
+        self.assertTrue(first['continue_now'])
+        self.assertEqual(len(c.status(run)['slots']),1)
+        git(self.repo,'checkout','-b','wrong-target')
+        with self.assertRaisesRegex(ValueError,'target branch'):
+            c.serial_complete(run,'task-A',integration_worktree=str(self.repo),evidence='wrong branch')
+        git(self.repo,'checkout','main')
+
+    def test_cli_serial_tail_file_and_completion(self):
+        import json
+        tasks_file=self.root/'tasks.json'
+        tasks_file.write_text(json.dumps([{'title':'implement','instructions':'bounded work'}]))
+        tail_file=self.root/'wave-1.serial-tail.md'
+        tail_file.write_text('Frozen PLAN: run M3, then M4 without another task_id')
+        cli=SCRIPT/'codex_loop.py'
+        def call(*args):
+            proc=subprocess.run([sys.executable,str(cli),'collab',*args],
+                                capture_output=True,text=True,env=os.environ.copy())
+            self.assertEqual(proc.returncode,0,proc.stderr)
+            return json.loads(proc.stdout)['data']
+        created=call('create','--repo',str(self.repo),'--branch','main',
+                     '--goal-key','cli-serial-tail','--worktree-parent',str(self.parent),
+                     '--tasks-file',str(tasks_file),'--serial-tail-file',str(tail_file))
+        run=created['run_id']
+        self.assertTrue(created['serial_tail_planned'])
+        worker=call('claim','--run-id',run,'--task-id','cli-owner',
+                    '--worktree-parent',str(self.parent))
+        sha=self.commit(worker)
+        self.assertTrue(call('finish','--run-id',run,'--task-id','cli-owner',
+                             '--commit-sha',sha)['integrate_now'])
+        call('integrate','--run-id',run,'--task-id','cli-owner',
+             '--integration-worktree',str(self.repo))
+        result=call('integration-complete','--run-id',run,'--task-id','cli-owner',
+                    '--integration-worktree',str(self.repo),'--test-evidence','checked files')
+        self.assertTrue(result['continue_now'])
+        self.assertIn('M3',result['serial_tail']['instructions'])
+        result=call('serial-complete','--run-id',run,'--task-id','cli-owner',
+                    '--integration-worktree',str(self.repo),'--evidence','M3 M4 gates checked')
+        self.assertEqual(result['serial_tail']['status'],'complete')
+        self.assertIsNone(c.completion_obstacle('cli-owner'))
+
     def test_all_slots_must_exist_before_election(self):
         run=self.create(2)['run_id']
         a=c.claim(run,'task-A',worktree_parent=str(self.parent))

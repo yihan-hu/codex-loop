@@ -1457,6 +1457,7 @@ def _cmd_collab(argv: list[str]) -> int:
     c.add_argument('--repo', required=True); c.add_argument('--branch', required=True)
     c.add_argument('--goal-key', required=True); c.add_argument('--worktree-parent', required=True)
     c.add_argument('--tasks-file', required=True)
+    c.add_argument('--serial-tail-file', help='prewritten consecutive serial stages to auto-assign to the Integrator')
     c.add_argument('--strategy', choices=['detached', 'branches'], default='detached')
     c.add_argument('--run-id')
     c = sub.add_parser('discover', help='show compatible open local runs for model review')
@@ -1508,14 +1509,23 @@ def _cmd_collab(argv: list[str]) -> int:
     c = sub.add_parser('integration-complete'); c.add_argument('--run-id', required=True)
     c.add_argument('--task-id', required=True); c.add_argument('--integration-worktree', required=True)
     c.add_argument('--test-evidence', required=True)
+    c = sub.add_parser('serial-complete', help='finish the integrator-owned post-integration serial chain')
+    c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
+    c.add_argument('--integration-worktree', required=True); c.add_argument('--evidence', required=True)
     a = p.parse_args(argv[1:]); action = a.action
     if action == 'create':
         source=Path(a.tasks_file)
         if not source.is_file() or source.stat().st_size > 2 * 1024 * 1024:
             raise ValueError('tasks-file must be a bounded local JSON file')
         tasks=json.loads(source.read_text(encoding='utf-8'))
+        serial_tail = None
+        if a.serial_tail_file:
+            tail_source = Path(a.serial_tail_file)
+            if not tail_source.is_file() or tail_source.stat().st_size > 60000:
+                raise ValueError('serial-tail-file must be a bounded UTF-8 text file')
+            serial_tail = tail_source.read_text(encoding='utf-8')
         result=collab.create_run(a.repo,a.branch,a.worktree_parent,tasks,strategy=a.strategy,
-                                 goal_key=a.goal_key,run_id=a.run_id)
+                                 goal_key=a.goal_key,run_id=a.run_id,serial_tail=serial_tail)
     elif action == 'discover':
         result=collab.discover(a.repo,a.branch)
     elif action == 'claim':
@@ -1557,6 +1567,9 @@ def _cmd_collab(argv: list[str]) -> int:
     elif action == 'integration-complete':
         result=collab.integration_complete(a.run_id,a.task_id,integration_worktree=a.integration_worktree,
                                            test_evidence=a.test_evidence)
+    elif action == 'serial-complete':
+        result=collab.serial_complete(a.run_id,a.task_id,integration_worktree=a.integration_worktree,
+                                      evidence=a.evidence)
     else:
         raise ValueError(f'unknown collab command: {action}')
     emit_ok(result)

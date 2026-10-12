@@ -85,14 +85,22 @@ retain prior blocker for recheck]
 
   H <--> T[Inspect / act / observe / test / repair]
   H -. same-host local parallel development .-> LC[Local Worktree Collaboration]
-  LC --> REG[Host-local SQLite: runs, slots, queued messages, delegated subtasks, integration lease]
+  LC --> REG[Host-local SQLite: runs, slots, messages, delegations, integration and serial ownership]
   LC --> CW[Git: independent detached or private-branch worktrees]
   REG --> CLAIM[Atomic claim / dynamic join / last-finisher election]
   CW --> CLAIM
   CLAIM --> DEL[Direct and pooled delegation: offer, accept/reject, reoffer/cancel, result + commit]
   DEL -->|all subtasks resolved| CLAIM
   CLAIM -->|all slots and subtasks done; last active worker| INTEG[Target-branch cherry-pick + conflict repair + integration tests]
-  INTEG --> F
+  INTEG --> SERIAL{Prewritten serial tail registered?}
+  SERIAL -->|Yes| AUTO[Atomic owner assignment to same Integrator task_id]
+  AUTO --> STEPS[Same Chat executes full serial chain and distinct planned gates]
+  STEPS --> GATE{All gates passed and target checkout clean?}
+  GATE -->|No| HOLDTAIL[Keep owner active, repair via prewritten branch or block]
+  HOLDTAIL --> STEPS
+  GATE -->|Yes| CLOSE[serial-complete records final HEAD; unblocks lifecycle]
+  CLOSE --> F
+  SERIAL -->|No| F
   H -. live task-owned work .-> VW[Verified wait: observe existing handle]
   VW --> H
   H -. multi-step work only .-> P[Optional 3-state plan]
@@ -131,7 +139,7 @@ bound to stage + input + instruction + request + generation]
 
 ## Boundaries
 
-- **Local worktree collaboration is opt-in and same-host.** The host-local registry also tracks direct/pool task delegation and recipient acceptance, rejection, reassignment, cancellation and result/commit receipts; pending delegations hold back integration. The new `collab` CLI coordinates planned slots and spontaneously joined compatible tasks through a host-local SQLite database. Each task still binds to one canonical Git worktree; worker worktrees use detached HEAD or owned private feature branches. The database stores messages/ownership/commit IDs, never source truth or host authorization. Normal `next`/`resume` exposes unacknowledged messages. Atomic completion elects one last active worker to cherry-pick into the sole authorized clean target-branch checkout, resolve conflicts and run tests. Integration completion remains a verified human/model action, not a background daemon. Web and cross-computer chats do not participate; a copied prompt never substitutes for current-chat permission.
+- **Local worktree collaboration is opt-in and same-host.** The host-local registry also tracks direct/pool task delegation and recipient acceptance, rejection, reassignment, cancellation and result/commit receipts; pending delegations hold back integration. The new `collab` CLI coordinates planned slots and spontaneously joined compatible tasks through a host-local SQLite database. Each task still binds to one canonical Git worktree; worker worktrees use detached HEAD or owned private feature branches. The database stores messages/ownership/commit IDs, never source truth or host authorization. Normal `next`/`resume` exposes unacknowledged messages and any currently owned post-integration serial tail. Atomic completion elects one last active worker to cherry-pick into the sole authorized clean target-branch checkout, resolve conflicts and run tests. When a planned Run has a serial-tail file, successful `integration-complete` atomically claims that **single uninterrupted chain** for the same integrator task ID. The active Chat executes all of its gates without a new Slot; `serial-complete` verifies a clean target checkout descending from the integration commit, records its final HEAD, and lifts the lifecycle blocker. Integration and serial work remain verified model/host actions, not a background daemon. Web and cross-computer chats do not participate; a copied prompt never substitutes for current-chat permission.
 - **Detached HEAD continuity has explicit provenance.** Workers may use detached HEAD only when the recorded target branch is supported by verified source provenance; the workspace lease distinguishes `branch` (intended target) from `checked_out_branch` (None on detached workers). Unverified detached work is never silently promoted to HOT mutation authority.
 
 - **The connected user Drive profile is the only persistent preference authority.** Each new conversation imports and verifies that profile exactly once on the controller. The controller resolves the selected connector and environment/project locators, passes an explicit execution snapshot to the local runtime, and the private conversation route pins it. Native runtime/task state is independent; no native host preference file participates.
