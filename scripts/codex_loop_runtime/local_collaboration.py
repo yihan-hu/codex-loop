@@ -434,11 +434,11 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                 raise RuntimeError('unplanned participants must register through collab join')
             slot = _choose_slot(db, run_id)
             if slot is None:
-                if db.execute("SELECT 1 FROM slots WHERE run_id=? AND status='available' LIMIT 1", (run_id,)).fetchone():
-                    raise RuntimeError('no ready task: remaining tasks are waiting for declared dependencies')
                 offer = db.execute("""SELECT * FROM delegations WHERE run_id=? AND status='offered'
                                        AND recipient IS NULL AND sender!=? ORDER BY id LIMIT 1""", (run_id, task_id)).fetchone()
                 if offer is None:
+                    if db.execute("SELECT 1 FROM slots WHERE run_id=? AND status='available' LIMIT 1", (run_id,)).fetchone():
+                        raise RuntimeError('no ready task: remaining tasks are waiting for declared dependencies')
                     raise RuntimeError('no unclaimed slot or pool delegation remains in this run')
                 number = int(db.execute('SELECT COALESCE(MAX(number),0)+1 FROM slots WHERE run_id=?',
                                         (run_id,)).fetchone()[0])

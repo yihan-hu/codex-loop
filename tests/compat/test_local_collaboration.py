@@ -511,6 +511,29 @@ class CollaborationTest(unittest.TestCase):
         self.assertEqual(c.status(run)['integrator_task'],'task-A')
         self.assertIn('integrator has not completed', c.completion_obstacle('task-A'))
 
+    def test_pool_delegate_claims_while_planned_slot_waits_on_dependency(self):
+        tasks = [
+            {'key':'source','pool':'foundation','title':'source','instructions':'source'},
+            {'key':'next','pool':'integration','depends_on':['source'],
+             'title':'next','instructions':'next'},
+        ]
+        run = c.create_run(str(self.repo), 'main', str(self.parent), tasks,
+                           goal_key='waiting-with-pool-offer')['run_id']
+        owner = c.claim(run, 'owner', worktree_parent=str(self.parent))
+        self.assertEqual(owner['task_key'], 'source')
+        with self.assertRaisesRegex(RuntimeError, 'no ready task'):
+            c.claim(run, 'new-worker', worktree_parent=str(self.parent))
+
+        offer = c.delegate(run, 'owner', request_key='review-1',
+                           title='review correction', instructions='Review a fixed batch')
+        claimed = c.claim(run, 'new-worker', worktree_parent=str(self.parent))
+        self.assertEqual(claimed['slot'], 3)
+        self.assertEqual(claimed['title'], 'review correction')
+        self.assertEqual(c.status(run)['slots'][1]['status'], 'available')
+        self.assertEqual(c.status(run)['delegations'][0]['id'], offer['id'])
+        self.assertEqual(c.status(run)['delegations'][0]['recipient'], 'new-worker')
+        self.assertEqual(c.status(run)['delegations'][0]['status'], 'accepted')
+
     def test_pool_delegate_claims_new_worktree_after_planned_slots_taken(self):
         run=self.create(1)['run_id']
         a=c.claim(run,'task-A',worktree_parent=str(self.parent))
