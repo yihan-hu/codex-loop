@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .git_auth import local_git_auth_status
 from .release_lineage import publish_plan
 from .routing_state import route_check, route_show
 from .web_publish import begin_web_publish_continuation, web_publish_plan
@@ -136,6 +137,18 @@ def publication_enter(
         }
 
     if workspace_mode == "local":
+        auth = local_git_auth_status(root, route, remote)
+        if auth is not None and not auth["ok"]:
+            return {
+                "entrypoint": "publish-enter", "router_abi": PUBLICATION_ROUTER_ABI,
+                "accepted_controller_abis": list(SUPPORTED_CONTROLLER_ABIS),
+                "controller_abi": abi, "workspace_mode": "local",
+                "status": "LOCAL_PUBLISH_BLOCKED", "code": auth["code"],
+                "git_auth": auth, "planner_result": None,
+                "mode_protocol_reference": LOCAL_PROTOCOL_REFERENCE,
+                "controller_contract": _controller_contract(),
+                "next_action": "repair the selected host GitHub HTTPS helper and retry without reading secrets or switching transport",
+            }
         plan = publish_plan(
             root,
             store,
@@ -147,10 +160,14 @@ def publication_enter(
             release_id=release_id,
             source_only=source_only,
         )
+        if auth is not None and plan.get("ready") and not plan.get("already_published"):
+            plan["git"]["env"] = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
         if plan.get("already_published"):
             next_action = "skip transport; the observed remote already equals the audited source"
         elif not plan.get("ready"):
             next_action = str(plan.get("reason") or "satisfy the local native-Git publish precondition and rerun publish-enter")
+        elif auth is not None:
+            next_action = "run git_auth_preflight.argv with its environment before native push"
         else:
             next_action = (
                 "execute only planner_result.git.argv through the authorized local host; accept a clean terminal push success, and use one targeted remote read only if the outcome is ambiguous; do not switch transport on failure"
@@ -169,6 +186,12 @@ def publication_enter(
             "status": "LOCAL_PUBLISH_READY" if plan.get("ready") else "LOCAL_PUBLISH_BLOCKED",
             "code": "PUBLICATION_PLAN_READY",
             "planner_result": plan,
+            "git_auth": auth,
+            "git_auth_preflight": (
+                {"argv": [*plan["git"]["argv"][:2], "--dry-run", *plan["git"]["argv"][2:]],
+                 "env": {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}}
+                if auth is not None and plan.get("ready") and not plan.get("already_published") else None
+            ),
             "next_action": next_action,
         }
 

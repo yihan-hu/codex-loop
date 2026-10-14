@@ -141,6 +141,10 @@ semantic acceptance]
 bound to stage + input + instruction + request + generation]
   SR --> DW
 
+  H -. Local GitHub publication .-> GITAUTH[Validate host GitHub remote and effective credential helper]
+  PROFILE -. nonsecret git_auth selector .-> GITAUTH
+  GITAUTH --> GITDRY[Selected host noninteractive push dry-run]
+  GITDRY --> G
   H -. consequential side effect .-> G[Routing / approvals / external-action reconciliation]
   G --> X[GitHub / Drive / Local / deployment]
   C -. durability/high-risk only .-> HD[Heavy baseline / fingerprints / durable validation / release lineage]
@@ -148,6 +152,8 @@ bound to stage + input + instruction + request + generation]
 
 
 ## Boundaries
+
+- **Native Git authentication is host-owned.** The Drive Host Profile records only the expected GitHub HTTPS credential helper for each environment. Before native publication, the controller validates protocol and helper; the selected host then runs a noninteractive dry-run. Neither Git tokens nor SSH keys are retrieved or stored by Codex Loop.
 
 - **Local worktree collaboration is an opt-in same-host DAG scheduler, not a general background workflow engine.** Planned tasks declare stable keys, logical Pools and explicit predecessors. The host-local SQLite registry atomically releases only ready tasks and fairly chooses across Pools (favor few active workers and least recently served), without a hard concurrency limit or global Wave barrier. Each Chat retains one worktree and Codex Loop `task_id` across sequential task claims. Completing a task records its verified own commit delta, unlocks descendants and can immediately return the next ready task. Cross-worker inputs are materialized by Git cherry-picking only verified predecessor task deltas; final integration cherry-picks those deltas in topological order, not whole inherited worker histories. This does not change host authorization or wake an inactive Chat. Direct/pooled delegation messages and receipts remain tracked, and pending delegations block last-finisher election. `next`/`resume` expose messages and an Integrator-owned post-global-integration serial chain. Integration and post-integration semantic gates are still performed by the live Chat, never by a daemon. SQLite stores ownership/metadata; Git and the host own source truth and permission.
 - **Detached HEAD continuity has explicit provenance.** Workers may use detached HEAD only when the recorded target branch is supported by verified source provenance; the workspace lease distinguishes `branch` (intended target) from `checked_out_branch` (None on detached workers). Unverified detached work is never silently promoted to HOT mutation authority.

@@ -261,13 +261,15 @@ def validate_absolute_locator(value: Any, label: str) -> str:
 
 
 def validate_environment_locations(raw: Any) -> dict[str, Any]:
-    defaults = {"default_root": None, "projects": {}, "runtime_directory": None, "state_directory": None, "git_metadata_root": None}
+    defaults = {"default_root": None, "projects": {}, "runtime_directory": None, "state_directory": None, "git_metadata_root": None, "git_auth": None}
     if not isinstance(raw, dict) or set(raw) - set(defaults):
-        raise ValueError("environment locations support only default_root, projects, runtime_directory, state_directory, git_metadata_root")
+        raise ValueError("environment locations support only default_root, projects, runtime_directory, state_directory, git_metadata_root, git_auth")
     result = {**defaults, **copy.deepcopy(raw)}
     for key in ("default_root", "runtime_directory", "state_directory", "git_metadata_root"):
         if result[key] is not None:
             validate_absolute_locator(result[key], key)
+    if not (result["git_auth"] is None or isinstance(result["git_auth"], str) and result["git_auth"] in {"osxkeychain", "windows_gcm"}):
+        raise ValueError("git_auth must be null, osxkeychain, or windows_gcm (credential source, not a secret)")
     projects = result["projects"]
     if not isinstance(projects, dict) or len(projects) > 256:
         raise ValueError("environment projects must be an object of at most 256 aliases")
