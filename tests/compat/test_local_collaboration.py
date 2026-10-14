@@ -127,6 +127,36 @@ class CollaborationTest(unittest.TestCase):
         self.assertEqual(c.serial_complete(run,'worker-B',integration_worktree=str(self.repo),
                           evidence='safe retry')['serial_tail']['status'], 'complete')
 
+    def test_final_integrator_addendum_and_no_acceptance_gate(self):
+        from unittest.mock import patch
+        serial = 'Frozen serial DoRA plan'
+        run = self.create_serial_fixture(serial)
+        claimed = c.claim(run, 'gate-worker', worktree_parent=str(self.parent))
+        c.finish(run, 'gate-worker', commit_sha=self.commit(claimed))
+        c.prepare_integration(run, 'gate-worker', integration_worktree=str(self.repo))
+        addendum = self.root / 'runner_addendum.md'
+        addendum.write_text('Required Runner acceptance tests before CPT/SFT.')
+        denied = self.root / 'deny.py'
+        denied.write_text('import sys; print("DENY: missing runner acceptance", file=sys.stderr); sys.exit(2)\n')
+        with patch.object(c, '_DORA_RUN', run), patch.object(c, '_dora_policy_files', return_value=(addendum, denied)):
+            handed = c.integration_complete(run, 'gate-worker', integration_worktree=str(self.repo),
+                                            test_evidence='integrated and tested')
+            self.assertTrue(handed['continue_now'])
+            self.assertIn('Mandatory final-integrator Runner addendum', handed['serial_tail']['instructions'])
+            self.assertIn('Required Runner acceptance tests', handed['serial_tail']['instructions'])
+            repeated = c.integration_complete(run, 'gate-worker', integration_worktree=str(self.repo),
+                                              test_evidence='retry')
+            self.assertEqual(repeated['serial_tail']['instructions'].count('# Mandatory final-integrator Runner addendum'), 1)
+            with self.assertRaisesRegex(RuntimeError, 'acceptance.*DENIED'):
+                c.serial_complete(run, 'gate-worker', integration_worktree=str(self.repo),
+                                  evidence='claimed completion with no Runner tests')
+            self.assertEqual(c.status(run)['serial_tail']['status'], 'active')
+
+    def create_serial_fixture(self, serial):
+        return c.create_run(str(self.repo), 'main', str(self.parent),
+                            [{'title':'worker','instructions':'fixture'}],
+                            goal_key='runner-gate-fixture', serial_tail=serial)['run_id']
+
     def test_serial_chain_refuses_unintegrated_and_wrong_branch_state(self):
         run=c.create_run(str(self.repo),'main',str(self.parent),
             [{'title':'one','instructions':'work'}],goal_key='serial-reject',
