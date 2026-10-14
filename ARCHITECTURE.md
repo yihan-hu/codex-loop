@@ -123,7 +123,13 @@ semantic acceptance]
   F -->|material work remains| H
   F -->|genuine impasse| BK[block --reason]
   BK --> BL
-  F -->|requirements proven| D[One deterministic completion check]
+  F -->|requirements proven| CROOT{Completion root selection}
+  CROOT -->|explicit cwd| EXROOT[Resolve caller-supplied repository]
+  CROOT -->|omitted cwd + bound task| BROOT[Use task-pinned canonical root]
+  CROOT -->|unbound task| LROOT[Lifecycle-only state]
+  EXROOT --> D[One deterministic completion check]
+  BROOT --> D
+  LROOT --> D
   D -->|machine blocker| H
   D -->|PASS| E[status = complete]
 

@@ -504,6 +504,10 @@ def cmd_checkpoint_restore(args: argparse.Namespace) -> None:
 
 def cmd_completion(args: argparse.Namespace) -> None:
     _cwd_path, root, store = _store(args)
+    if args.cwd is None:
+        binding = store.get_meta("workspace_binding")
+        if binding is not None:
+            root = Path(binding["canonical_root"]).resolve()
     if store.task_status() == "complete":
         emit_ok({"status": "PASS", "reasons": [], "details": {"task_status": "complete"}, "lifecycle_status": "complete", "already_complete": True})
         return

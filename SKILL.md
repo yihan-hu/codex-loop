@@ -220,7 +220,7 @@ Trivial or well-covered changes need no separate reviewer. Large, unfamiliar, we
 
 ## Deterministic completion blockers
 
-After semantic acceptance, call `completion --task-id TASK` once. It checks machine-observable safety/side-effect conditions only and, on `PASS`, atomically transitions the lifecycle from `active` to terminal `complete`. Do not call it merely to ask whether work seems done; use current evidence, `next`, or diagnostic projections while still working. Machine blockers include:
+After semantic acceptance, call `completion --task-id TASK --cwd REPO` once for a workspace-bound task (omit `--cwd` for lifecycle-only tasks). If `--cwd` is omitted for a bound task, completion uses that task's pinned canonical root, never the controller's current shell directory. An explicit `--cwd` remains authoritative and must match the bound workspace. It checks machine-observable safety/side-effect conditions only and, on `PASS`, atomically transitions the lifecycle from `active` to terminal `complete`. Do not call it merely to ask whether work seems done; use current evidence, `next`, or diagnostic projections while still working. Machine blockers include:
 
 - explicitly required durable validation is missing;
 - consequential external actions remain unresolved;

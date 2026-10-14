@@ -1,3 +1,5 @@
+import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -23,6 +25,50 @@ class LightweightCompletionTests(unittest.TestCase):
         )
         capture_baseline(root, store)
         return store
+
+    def test_cli_completion_uses_bound_workspace_not_caller_cwd(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            repo, caller = base / 'repo', base / 'controller'
+            repo.mkdir()
+            caller.mkdir()
+            subprocess.run(['git', 'init', '-q'], cwd=repo, check=True)
+            subprocess.run(['git', 'config', 'user.email', 'test@example.invalid'], cwd=repo, check=True)
+            subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=repo, check=True)
+            (repo / 'file.txt').write_text('base\n')
+            subprocess.run(['git', 'add', 'file.txt'], cwd=repo, check=True)
+            subprocess.run(['git', 'commit', '-qm', 'base'], cwd=repo, check=True)
+            cli = Path(__file__).resolve().parents[2] / 'scripts' / 'codex_loop.py'
+            env = {**os.environ, 'CODEX_LOOP_HOME': str(base / 'state'),
+                   'PYTHONDONTWRITEBYTECODE': '1'}
+
+            def invoke(*args):
+                process = subprocess.run([sys.executable, str(cli), *args], cwd=caller,
+                                         env=env, capture_output=True, text=True, check=True)
+                return json.loads(process.stdout)['data']
+
+            task_id = invoke('bootstrap', '--request-anchor', 'test completion cwd')['task_id']
+            self.assertEqual(
+                invoke('orient', '--task-id', task_id, '--cwd', str(repo))['root'],
+                str(repo.resolve()),
+            )
+            wrong = invoke('completion', '--task-id', task_id, '--cwd', str(caller))
+            self.assertEqual(wrong['status'], 'BLOCKED')
+            self.assertIn('canonical workspace binding', wrong['reasons'][0])
+            completed = invoke('completion', '--task-id', task_id)
+            self.assertEqual(completed['status'], 'PASS')
+            self.assertEqual(completed['lifecycle_status'], 'complete')
+            self.assertTrue(completed['details']['workspace_binding']['matches'])
+
+            unbound = invoke('bootstrap', '--request-anchor', 'lifecycle only')['task_id']
+            self.assertEqual(invoke('completion', '--task-id', unbound)['status'], 'PASS')
+
+            vanished = invoke('bootstrap', '--request-anchor', 'missing repo')['task_id']
+            invoke('orient', '--task-id', vanished, '--cwd', str(repo))
+            repo.rename(base / 'moved-repo')
+            missing = invoke('completion', '--task-id', vanished)
+            self.assertEqual(missing['status'], 'BLOCKED')
+            self.assertIn('canonical workspace binding', missing['reasons'][0])
 
     def test_no_plan_and_no_required_validation_can_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
