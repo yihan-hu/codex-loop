@@ -176,10 +176,16 @@ semantic acceptance]
 bound to stage + input + instruction + request + generation]
   SR --> DW
 
-  H -. Local GitHub publication .-> GITAUTH[Validate host GitHub remote and effective credential helper]
-  PROFILE -. nonsecret git_auth selector .-> GITAUTH
-  GITAUTH --> GITDRY[Selected host noninteractive push dry-run]
-  GITDRY --> G
+  H -. Local GitHub publication .-> GITAUTH[Apply saved nonsecret Git credential source to native push]
+  PROFILE -. git_auth preference .-> GITAUTH
+  GITAUTH --> GITPUSH[Push directly on selected host]
+  GITPUSH -->|success + missing or stale source| GITSAVE[Controller export + update original Drive Host Profile + readback]
+  GITSAVE --> PROFILE
+  GITPUSH -->|clear auth failure| GITREPAIR[Diagnose then same-host credential fallback]
+  GITREPAIR --> GITPUSH
+  GITPUSH -->|ambiguous outcome| GITVERIFY[Inspect exact remote ref before retry]
+  GITVERIFY --> GITPUSH
+  GITPUSH --> G
   H -. consequential side effect .-> G[Routing / approvals / external-action reconciliation]
   G --> X[GitHub / Drive / Local / deployment]
   C -. durability/high-risk only .-> HD[Heavy baseline / fingerprints / durable validation / release lineage]
@@ -188,7 +194,7 @@ bound to stage + input + instruction + request + generation]
 
 ## Boundaries
 
-- **Native Git authentication is host-owned.** The Drive Host Profile records only the expected GitHub HTTPS credential helper for each environment. Before native publication, the controller validates protocol and helper; the selected host then runs a noninteractive dry-run. Neither Git tokens nor SSH keys are retrieved or stored by Codex Loop.
+- **Native Git authentication is host-owned.** The Drive Host Profile records the last successful nonsecret Git credential source for each environment. Native publication applies that source without preflight; clear authentication failures may select an already available same-host alternative. Only an authoritative successful push triggers Host Profile update and Drive readback, never token storage. Neither Git tokens nor SSH keys are retrieved or stored by Codex Loop.
 
 - **Local collaboration is an adaptive DAG scheduler with a bounded lease, not a background Chat runtime.** The initial verified Git baseline and task identities remain stable, while an active worker may atomically publish tasks/pools and revise only unclaimed task definitions with a checked graph revision. SQLite filters explicit worker exclusions and producer self-review before assigning a ready task. Each worker has a private stable Worktree; no physical Slot path is reused after reclaim. A bounded foreground idle wait records separate SQLite waiter heartbeats and checks Ready every 30 seconds; it cannot wake or prove the liveness of a stopped Chat. No waiting heartbeat refreshes a claimed-task lease. A claim transaction reclaims assignments with no observed tool activity for 600 seconds; explicit force recovery still preserves the former Worktree, auditable ownership generation, and any verified checkpoint. The new owner must reconcile uncertain Git/external effects before repeating them. An installed My Mac/WSL MCP hook reports scoped host-tool activity, checks unread control, and throttles SQLite lease writes to one per 60 seconds. Uninstrumented tools and model thinking still need explicit activity reports. A reclaimed original worker may submit a verified late result if the successor remains unfinished; completed successor results are never overwritten. Last-finisher integration and tracked delegations remain protected by verified own-commit deltas and dependency ordering. An inactive integrator/serial owner can be reassigned after target Git state verification without blindly replaying interrupted merges. No daemon, cross-computer SQLite synchronization, authorization transfer or stopped-Chat wakeup is implied.
 
