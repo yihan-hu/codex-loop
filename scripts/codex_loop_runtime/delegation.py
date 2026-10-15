@@ -400,6 +400,11 @@ def finish_isolation(root: Path, cwd: Path, store: StateStore, isolation_id: str
         raise ValueError(f"wrong isolation_id: active isolation is {active['isolation_id']}")
     if store.semantic_work_for_isolation(str(isolation_id)) is not None:
         raise RuntimeError("semantic isolation must finish through semantic-work-finish")
+    slot = (active.get('context_spec') or {}).get('collaboration')
+    if slot and active['mutation_policy'] == 'read_only':
+        if (not slot.get('worktree_fingerprint') or
+            workspace_fingerprint(Path(slot['worktree'])) != slot['worktree_fingerprint']):
+            raise RuntimeError('read-only Slot worktree changed during logical isolation')
     clean_result = validate_isolation_result(result)
     sync_generation(root, store)
     exit_generation = store.generation()

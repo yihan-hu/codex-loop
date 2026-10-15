@@ -46,19 +46,19 @@ def _close_previous(store, active: dict[str, Any], new_token: dict[str, Any],
     if old['run_id'] != new_token['run_id']:
         raise RuntimeError('Logical Isolation for a different Run is active')
     with collab._connection() as db:
-        prior = db.execute('SELECT status,task_id,lease_generation,commit_sha FROM slots '
+        prior = db.execute('SELECT status,task_id,lease_generation,commit_sha,completed_by FROM slots '
                            'WHERE run_id=? AND number=?',
                            (old['run_id'],old['slot'])).fetchone()
     if prior and (prior['status'] == 'done' or
                   prior['task_id'] != store.task_id or
                   prior['lease_generation'] != old['lease_generation']):
-        if store.semantic_work_for_isolation(active['isolation_id']):
-            raise RuntimeError('previous semantic isolation is unfinished; finish or abort it explicitly')
-        if prior['status'] == 'done':
+        if prior['status'] == 'done' and prior['completed_by'] == store.task_id:
+            if store.semantic_work_for_isolation(active['isolation_id']):
+                raise RuntimeError('previous semantic isolation is unfinished; finish or abort it explicitly')
             _close_generic(store, active, root, prior['commit_sha'] or '')
         else:
             abort_isolation(root, root, store, active['isolation_id'],
-                            'slot ownership was reclaimed before its isolation finished')
+                            'slot was completed by another worker or ownership was reclaimed')
         return
     raise RuntimeError('previous Slot Logical Isolation is still active; finish that Slot first')
 
@@ -121,31 +121,54 @@ def enter_assignment(assignment: dict[str, Any]) -> dict[str, Any]:
         assignment['logical_isolation']['reused'] = True
         return assignment
     spec = assignment.get('isolation_spec') or {}
+    # Old persisted Runs may predate isolation defaults. Review status still
+    # determines the correct behavior when no explicit configuration exists.
+    if assignment.get('review_of') and not spec:
+        spec = {'role': 'reviewer', 'mutation_policy': 'read_only'}
     semantic = spec.get('semantic_work')
     role = spec.get('role', 'semantic-worker' if semantic else 'researcher')
-    access = spec.get('mutation_policy', 'read_only' if semantic else 'workspace_write')
+    access = spec.get('mutation_policy',
+                      'read_only' if semantic or role == 'reviewer' else 'workspace_write')
     # The stage's worker worktree may differ from the worker's durable
     # lifecycle binding. Semantic authority must detect changes in both.
     token['worktree'] = str(Path(assignment['worktree']).resolve(strict=True))
-    # Ordinary writable work needs only the Slot/worktree identity; scanning
-    # all file content is necessary only for strict read-only semantic work.
-    if semantic:
+    # Every read-only Slot, not only strictly semantic ones, must verify that
+    # its actual worker worktree stayed unchanged before accepting a review.
+    if access == 'read_only':
         token['worktree_fingerprint'] = workspace_fingerprint(Path(token['worktree']))
+    instructions = assignment['instructions']
+    # Preserve whitespace and the complete input, even across 4 KiB text
+    # limits. The existing context serializer safely handles bounded lists.
+    token['instructions_chunks'] = [
+        instructions[i:i + 3500] for i in range(0, len(instructions), 3500)
+    ]
+    facts = [
+        f'Current Run {token["run_id"]}; Slot {token["slot"]}; '
+        f'lease generation {token["lease_generation"]}; task key {token["task_key"]}.',
+        f'Declared upstream tasks: {", ".join(assignment.get("depends_on", [])) or "(none)"}.',
+        'Read collaboration.instructions_chunks in order for the complete '
+        'current Slot instructions; ignore conclusions from earlier Slots.',
+    ]
     result = create_isolation(
         root, root, store, role=role, objective=assignment['title'],
         requested_executor='logical_isolation', actual_executor='logical_isolation',
         project_files=[assignment['worktree']],
-        facts=[
-            f'Current Run {token["run_id"]}; Slot {token["slot"]}; '
-            f'lease generation {token["lease_generation"]}; task key {token["task_key"]}.',
-            'Read the full current Slot instructions and verified dependency outputs '
-            'from this claim and the current worktree; do not carry assumptions from other Slots.',
-        ],
+        facts=facts,
         semantic_work=semantic, mutation_policy=access,
         context_binding=token, checkpoint_at_entry=False,
     )
     assignment['logical_isolation'] = result
     return assignment
+
+
+def _verify_finished_readonly(record: dict[str, Any]) -> None:
+    if record['mutation_policy'] != 'read_only':
+        return
+    binding = _binding(record)
+    if binding:
+        if (not binding.get('worktree_fingerprint') or
+            workspace_fingerprint(Path(binding['worktree'])) != binding['worktree_fingerprint']):
+            raise RuntimeError('read-only Slot result is stale because its worker worktree changed')
 
 
 def before_finish(run_id: str, task_id: str, slot: int | None) -> None:
@@ -192,6 +215,7 @@ def before_finish(run_id: str, task_id: str, slot: int | None) -> None:
                 instruction_sha256=semantic['instruction_sha256'])
         if original['mutation_policy']=='read_only' and original['status'] != 'finished':
             raise RuntimeError('read-only Slot requires isolate-finish before late collab finish')
+        _verify_finished_readonly(original)
         return
     if slot is not None and row['number'] != slot:
         raise RuntimeError('finish targets a different Slot from current ownership')
@@ -214,6 +238,7 @@ def before_finish(run_id: str, task_id: str, slot: int | None) -> None:
                       if _same_slot(_binding(i),matching)),None)
     if prior_iso is None or prior_iso['status']!='finished':
         raise RuntimeError('current Slot has no completed or active Logical Isolation; rerun collab claim')
+    _verify_finished_readonly(prior_iso)
     if 'semantic_work' in spec:
         sem=store.semantic_work_for_isolation(prior_iso['isolation_id'])
         if not sem or sem['status']!='finished' or not sem['semantic_result_id']:
@@ -245,8 +270,33 @@ def after_finish(run_id: str, task_id: str, result: dict[str, Any],
                 if store.semantic_work_for_isolation(active['isolation_id']):
                     raise RuntimeError('semantic Slot finished without a semantic result')
                 _close_generic(store, active, Path(_run_repo(run_id)), done['commit_sha'])
-    if result.get('continue_now') and isinstance(result.get('next_task'), dict):
-        result['next_task'] = enter_assignment(result['next_task'])
+    if result.get('continue_now'):
+        following = result.get('next_task')
+        try:
+            if following is None and result.get('already_finished'):
+                # The first finish committed and auto-claimed but the caller
+                # lost its response. Read back the same claimed Slot rather
+                # than returning continue_now without a usable input scope.
+                with collab._connection() as db:
+                    row = db.execute('''SELECT number FROM slots WHERE run_id=? AND task_id=?
+                        AND status='claimed' ''',(run_id,task_id)).fetchone()
+                    parent = collab._run(db,run_id)['worktree_parent']
+                if not row or row['number'] != result.get('next_slot'):
+                    raise RuntimeError('next Slot ownership changed; inspect collab status')
+                following = collab.claim(run_id,task_id,worktree_parent=parent)
+            if following is None:
+                raise RuntimeError('next Slot input is missing; rerun collab claim')
+            result['next_task'] = enter_assignment(following)
+        except (RuntimeError, ValueError, OSError) as exc:
+            # Collaboration already owns the new Slot. Never silently leave
+            # continue_now=true without an isolation projection or release a
+            # worktree that may contain materialized task inputs.
+            result.pop('next_task',None)
+            result['continue_now'] = False
+            result['next_task_blocked'] = str(exc)
+            result['action'] = ('The previous Slot is committed; inspect the '
+                                'registered next Slot and retry collab claim '
+                                'with the same Run and task_id')
     return result
 
 

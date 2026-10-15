@@ -98,11 +98,13 @@ retain prior blocker for recheck]
   CW --> FAIR
   FAIR --> LEASE[Atomic owner generation + 600 second last_seen lease]
   LEASE --> RECOVER{Reclaimed task?}
-  RECOVER -->|No| ISOIN[Existing Logical Isolation: bind Run/Slot/lease in per-Chat lifecycle]
+  RECOVER -->|No| ISOIN[Existing Logical Isolation: bind Run/Slot/lease and exact instructions]
   RECOVER -->|Yes| SNAP[Snapshot old HEAD, Git index, tracked patches and nonignored task files]
-  SNAP -->|Consistent and conflict-free| RESTORE[Restore source delta into NEW worktree; old worktree untouched]
+  SNAP -->|Consistent and conflict-free| RESTORE[Restore commits, staged edits and rebased internal links in NEW worktree]
   RESTORE --> ISOIN
-  ISOIN -->|Read-only semantic or writable work| EXEC[One Chat executes current Slot using projected evidence]
+  ISOIN -->|Ready, including full Slot instructions| EXEC[One Chat executes scoped work; review_of defaults read-only]
+  ISOIN -->|Entry fails after claim| ISOHOLD[Keep claimed Slot and materialized files; retry same Run/task_id]
+  ISOHOLD --> ISOIN
   SNAP -->|Changed/missing/conflicting| STOPREC[Pause recovery for manual reconciliation; preserve both worktrees]
   EXEC --> MCPHB[Scoped My Mac / WSL call: check inbox/control, heartbeat at most once per minute]
   MCPHB --> LEASE
@@ -116,7 +118,7 @@ retain prior blocker for recheck]
   HB --> LEASE
   EXEC --> FIN[finish verifies own commit delta + Git cleanliness]
   FIN --> ISOEND[Writable closes on verified Git; read-only needs isolate-finish; strict semantic needs semantic-work-finish]
-  ISOEND -->|Auto-claimed next Slot only| ISOIN
+  ISOEND -->|Auto-claimed next Slot; retry recovers entire next-task scope| ISOIN
   FIN --> UNLOCK[Mark done and unlock downstream tasks immediately]
   UNLOCK --> READY
   FIN --> NEXT{Another Ready task?}

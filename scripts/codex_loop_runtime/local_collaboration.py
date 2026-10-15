@@ -198,6 +198,17 @@ def _restore_reclaimed_worktree(run: sqlite3.Row, recovery: sqlite3.Row,
         paths = [os.fsdecode(value) for value in before[3].split(b'\0') if value]
         if len(paths) != len(set(paths)):
             raise RuntimeError('duplicate untracked paths in recovery snapshot')
+        original_symlinks: dict[str, str] = {}
+        source_root = source.resolve()
+
+        def rebased_symlink_target(src: Path, dst: Path) -> str:
+            resolved = src.resolve()
+            if not resolved.is_relative_to(source_root):
+                raise RuntimeError('external untracked symlink requires manual recovery')
+            # A source-absolute link must not keep pointing into the old
+            # worker's files when placed in the replacement worktree.
+            return os.path.relpath(stage / resolved.relative_to(source_root), dst.parent)
+
         for filename in paths:
             relative = Path(filename)
             if relative.is_absolute() or '..' in relative.parts or '.git' in relative.parts:
@@ -208,9 +219,8 @@ def _restore_reclaimed_worktree(run: sqlite3.Row, recovery: sqlite3.Row,
             dst.parent.mkdir(parents=True, exist_ok=True)
             mode = src.lstat().st_mode
             if stat.S_ISLNK(mode):
-                if not (src.resolve().is_relative_to(source.resolve())):
-                    raise RuntimeError('external untracked symlink requires manual recovery')
-                dst.symlink_to(os.readlink(src))
+                original_symlinks[filename] = os.readlink(src)
+                dst.symlink_to(rebased_symlink_target(src, dst))
             elif stat.S_ISREG(mode):
                 shutil.copy2(src, dst)
             else:
@@ -219,7 +229,9 @@ def _restore_reclaimed_worktree(run: sqlite3.Row, recovery: sqlite3.Row,
         for filename in paths:
             src, copied = source / filename, stage / filename
             if stat.S_ISLNK(copied.lstat().st_mode):
-                if not src.is_symlink() or os.readlink(src) != os.readlink(copied):
+                if (not src.is_symlink() or
+                    os.readlink(src) != original_symlinks[filename] or
+                    os.readlink(copied) != rebased_symlink_target(src, copied)):
                     raise RuntimeError('old untracked symlink changed during recovery snapshot')
             else:
                 if not src.is_file():
@@ -440,6 +452,8 @@ def _isolation_spec(raw: Any) -> dict[str, Any]:
         if raw['mutation_policy'] not in ('read_only', 'workspace_write'):
             raise ValueError('isolation mutation_policy must be read_only or workspace_write')
         out['mutation_policy'] = raw['mutation_policy']
+    if out.get('role') == 'reviewer' and 'mutation_policy' not in out:
+        out['mutation_policy'] = 'read_only'
     if out.get('role') == 'semantic-worker' and 'semantic_work' not in raw:
         raise ValueError('semantic-worker role requires an explicit semantic_work binding')
     if 'semantic_work' in raw:
@@ -484,11 +498,14 @@ def _task_specs(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         deps = list(dict.fromkeys(deps + reviews))
         if key in deps:
             raise ValueError(f'task {key}: self dependency or review')
+        isolation = _isolation_spec(task.get('isolation'))
+        if reviews:
+            isolation = {'role': 'reviewer', 'mutation_policy': 'read_only', **isolation}
         result.append({'key': key, 'pool': pool, 'depends_on': deps,
                        'review_of': reviews, 'exclude_workers': excluded,
                        'title': _text(task['title'], 'task title', 200),
                        'instructions': _text(task['instructions'], 'task instructions', 60000),
-                       'isolation': _isolation_spec(task.get('isolation'))})
+                       'isolation': isolation})
     by_key = {item['key']: item for item in result}
     if len(by_key) != len(result):
         raise ValueError('task keys must be unique')
@@ -1155,6 +1172,7 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
     return {'run_id': run_id, 'slot': number, 'task_id': task_id,
             'task_key': slot['task_key'] or f'task-{number}', 'pool': slot['pool_id'],
             'depends_on': json.loads(slot['depends_on']),
+            'review_of': json.loads(slot['review_of']),
             'title': slot['title'], 'instructions': slot['instructions'],
             'worktree': str(path), 'strategy': strategy, 'base_commit': base,
             'lease_generation': slot['lease_generation'],

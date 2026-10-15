@@ -416,6 +416,25 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         self.assertEqual(ready['status'],'READY_FOR_TEST')
         self.assertEqual((self.repo/'b.txt').read_text(),'B partial result')
 
+    def test_reclaim_rebases_absolute_internal_symlinks_into_successor_worktree(self):
+        run=self.run_tasks()
+        old=self.claim(run,'original')
+        old_path=Path(old['worktree'])
+        (old_path/'artifacts').mkdir()
+        (old_path/'artifacts'/'result.txt').write_text('original data')
+        (old_path/'alias.txt').symlink_to(old_path/'artifacts'/'result.txt')
+        self.expire(run)
+        new=self.claim(run,'successor')
+        new_path=Path(new['worktree'])
+        alias=new_path/'alias.txt'
+        self.assertTrue(alias.is_symlink())
+        self.assertFalse(Path(alias.readlink()).is_absolute())
+        self.assertEqual(alias.resolve(),new_path/'artifacts'/'result.txt')
+        self.assertEqual(alias.read_text(),'original data')
+        (new_path/'artifacts'/'result.txt').write_text('successor only')
+        self.assertEqual((old_path/'artifacts'/'result.txt').read_text(),'original data')
+        self.assertTrue((old_path/'alias.txt').readlink().is_absolute())
+
     def test_recovery_refuses_untracked_symlink_escaping_old_worktree(self):
         run=self.run_tasks()
         old=self.claim(run,'original')

@@ -8,11 +8,12 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'scripts'))
-from codex_loop_runtime import local_collaboration as collab
+from codex_loop_runtime import local_collaboration as collab, collab_isolation
 from codex_loop_runtime.state import create_store,open_store
 from codex_loop_runtime.change_tracker import capture_baseline
 from codex_loop_runtime.write_transaction import guarded_write
@@ -268,6 +269,9 @@ class SlotLogicalIsolationTests(unittest.TestCase):
         next_iso=first['next_task']['logical_isolation']['isolation_id']
         retry=self.finish(run,tid,a,sha)
         self.assertTrue(retry['already_finished'])
+        self.assertTrue(retry['continue_now'])
+        self.assertEqual(retry['next_task']['task_key'],'B')
+        self.assertEqual(retry['next_task']['logical_isolation']['isolation_id'],next_iso)
         self.assertEqual(store.active_isolation()['isolation_id'],next_iso)
         self.assertEqual(len(store.isolation_history()),2)
 
@@ -367,6 +371,122 @@ class SlotLogicalIsolationTests(unittest.TestCase):
         self.assertEqual(late['status'],'preserved')
         self.assertIsNone(old_store.active_isolation())
         self.assertEqual(old_store.isolation_history()[0]['status'],'aborted')
+
+    def test_claim_isolation_init_failure_is_retryable_without_releasing_slot(self):
+        run=self.new_run([{'key':'A','title':'Task','instructions':'Task scope'}])
+        tid,store=self.worker('r')
+        reserved=collab.claim(run,tid,worktree_parent=str(self.parent))
+        with mock.patch.object(collab_isolation,'create_isolation',
+                               side_effect=RuntimeError('injected setup failure')):
+            with self.assertRaisesRegex(RuntimeError,'injected'):
+                collab_isolation.enter_assignment(reserved)
+        self.assertIsNone(store.active_isolation())
+        self.assertEqual(collab.status(run)['slots'][0]['status'],'claimed')
+        recovered=self.claim(run,tid)
+        self.assertEqual(recovered['slot'],reserved['slot'])
+        self.assertEqual(recovered['lease_generation'],reserved['lease_generation'])
+        self.assertTrue(recovered['logical_isolation']['isolation_id'])
+
+    def test_auto_claim_isolation_failure_reports_retryable_next_slot(self):
+        run=self.new_run([{'key':'A','title':'A','instructions':'A'},
+                          {'key':'B','title':'B','instructions':'B','depends_on':['A']}])
+        tid,store=self.worker('r')
+        a=self.claim(run,tid)
+        sha=self.commit(a)
+        state=collab.finish(run,tid,commit_sha=sha,slot_number=a['slot'],
+                            lease_generation=a['lease_generation'])
+        self.assertTrue(state['continue_now'])
+        with mock.patch.object(collab_isolation,'create_isolation',
+                               side_effect=RuntimeError('injected next isolation setup')):
+            result=collab_isolation.after_finish(run,tid,state,a['slot'])
+        self.assertFalse(result['continue_now'])
+        self.assertIn('injected next isolation',result['next_task_blocked'])
+        self.assertNotIn('next_task',result)
+        self.assertEqual(collab.status(run)['slots'][1]['status'],'claimed')
+        # A repeated finish must return a usable next_task, even if the
+        # caller never received the prior auto-claim response.
+        retry=self.finish(run,tid,a,sha)
+        self.assertTrue(retry['already_finished'])
+        self.assertTrue(retry['continue_now'])
+        recovered=retry['next_task']
+        self.assertEqual(recovered['task_key'],'B')
+        self.assertTrue(recovered['logical_isolation']['isolation_id'])
+
+    def test_default_review_is_readonly_and_long_instructions_project_fully(self):
+        long_instructions='Review carefully. '+'very detailed inputs. '*2000
+        run=self.new_run([{'key':'A','title':'A','instructions':'produce'},
+                          {'key':'R','title':'Review A','instructions':long_instructions,
+                           'review_of':['A']}])
+        producer,_=self.worker('a')
+        reviewer,store=self.worker('b')
+        a=self.claim(run,producer)
+        self.finish(run,producer,a,self.commit(a))
+        review=self.claim(run,reviewer)
+        self.assertEqual(review['task_key'],'R')
+        projection=review['logical_isolation']
+        self.assertEqual(projection['role'],'reviewer')
+        self.assertEqual(projection['mutation_policy'],'read_only')
+        self.assertEqual(''.join(projection['collaboration']['instructions_chunks']),
+                         long_instructions.strip())
+        self.assertEqual(review['review_of'],['A'])
+        self.assertIsNotNone(store.active_isolation())
+
+    def test_readonly_reviewer_detects_changes_before_and_after_review(self):
+        run=self.new_run([{'key':'R','title':'Reviewer','instructions':'Review',
+                          'isolation':{'role':'reviewer'}}])
+        tid,store=self.worker('r')
+        assignment=self.claim(run,tid)
+        self.assertEqual(assignment['logical_isolation']['mutation_policy'],'read_only')
+        wt=Path(assignment['worktree'])
+        (wt/'rogue.txt').write_text('unauthorized change')
+        data={'summary':'Reviewed without findings','findings':[],
+              'recommended_action':'accept','files_inspected':[],'limitations':[]}
+        def review_finish():
+            return subprocess.run([sys.executable,str(ROOT/'scripts'/'codex_loop.py'),
+              'isolate-finish','--task-id',tid,'--cwd',str(self.repo),
+              '--isolation-id',assignment['logical_isolation']['isolation_id']],
+              input=json.dumps(data),text=True,capture_output=True)
+        invalid=review_finish()
+        self.assertNotEqual(invalid.returncode,0)
+        self.assertIn('read-only Slot worktree changed',invalid.stdout)
+        self.assertIsNotNone(store.active_isolation())
+        (wt/'rogue.txt').unlink()
+        accepted=review_finish()
+        self.assertEqual(accepted.returncode,0,accepted.stdout)
+        (wt/'rogue.txt').write_text('modified after approved review')
+        invalid_commit=self.cli('finish','--run-id',run,'--task-id',tid,
+                                '--slot',assignment['slot'],
+                                '--lease-generation',assignment['lease_generation'],
+                                '--commit-sha',git(wt,'rev-parse','HEAD'),
+                                expect_ok=False)
+        self.assertIn('read-only Slot result is stale',invalid_commit['message'])
+        self.assertEqual(collab.status(run)['slots'][0]['status'],'claimed')
+
+    def test_completion_by_other_worker_aborts_original_scope_not_finishes(self):
+        run=self.new_run([{'key':'A','title':'Original','instructions':'Original'}])
+        old_tid,old_store=self.worker('a')
+        new_tid,_=self.worker('b')
+        previous=self.claim(run,old_tid)
+        old_iso=old_store.active_isolation()
+        with collab._connection(write=True) as db:
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=?',(time.time()-601,run))
+        successor=self.claim(run,new_tid)
+        self.finish(run,new_tid,successor,self.commit(successor))
+        collab_isolation._close_previous(old_store,old_iso,
+            {'run_id':run,'slot':successor['slot']+1},self.repo)
+        self.assertEqual(old_store.isolation_history()[0]['status'],'aborted')
+
+    def test_isolation_history_uses_insertion_order_not_random_id(self):
+        from codex_loop_runtime.delegation import create_isolation,abort_isolation
+        tid,store=self.worker('z')
+        old=create_isolation(self.repo,self.repo,store,role='reviewer',
+                             objective='first',requested_executor='logical_isolation')
+        abort_isolation(self.repo,self.repo,store,old['isolation_id'],'complete first')
+        new=create_isolation(self.repo,self.repo,store,role='reviewer',
+                             objective='second',requested_executor='logical_isolation')
+        with store.connect() as db:
+            db.execute('UPDATE isolations SET created_at=?',('2026-10-15 12:00:00',))
+        self.assertEqual(store.isolation_history(limit=1)[0]['isolation_id'],new['isolation_id'])
 
     def test_invalid_isolation_task_fields_are_rejected(self):
         with self.assertRaisesRegex(ValueError,'mutation_policy'):

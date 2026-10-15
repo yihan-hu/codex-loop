@@ -1121,7 +1121,7 @@ self, generation: int) -> dict[str, Any]:
         limit = max(1, min(int(limit), 128))
         with self.connect() as db:
             rows = db.execute(
-                "SELECT * FROM isolations ORDER BY created_at DESC, isolation_id DESC LIMIT ?", (limit,)
+                "SELECT * FROM isolations ORDER BY rowid DESC LIMIT ?", (limit,)
             ).fetchall()
         return [self._decode_isolation_row(row) for row in rows if row is not None]
 
