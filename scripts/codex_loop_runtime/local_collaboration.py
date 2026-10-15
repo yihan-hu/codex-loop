@@ -17,6 +17,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+import subprocess
+import sys
 
 from .workspace import run_git
 from .release_lineage import capture_workspace_binding
@@ -1334,6 +1336,38 @@ def integration_resolved(run_id: str, task_id: str, *, integration_worktree: str
             'resolution_evidence': resolution_evidence, 'action': 'review merged diff and run tests before integration-complete'}
 
 
+
+# This run-specific user steer is a local execution overlay, NOT an edit to the
+# frozen parallel DAG or prewritten serial-tail source.
+_DORA_RUN = "LWC-20261014204052-6b47223a"
+_DORA_ADDENDUM_SHA = "54784ed0e0fed66d6a14cd6209aaf49041c1391a937c06f29238c83295d4769e"
+_DORA_GATE_SHA = "d2d42d63c1d27300e070d7374ae664197c00ff4c9ada76d2c45f0c49cac0dd74"
+
+
+def _dora_policy_files(run_id: str) -> tuple[Path, Path] | None:
+    if run_id != _DORA_RUN:
+        return None
+    plan = Path.home() / ".codex-loop/plans/epiqwen-fpffhs-dora-sharded-20261014"
+    addendum = plan / "INTEGRATOR_DORA_RUNNER_ADDENDUM.md"
+    gate = plan / "dora_runner_gate.py"
+    for path, expected in ((addendum, _DORA_ADDENDUM_SHA), (gate, _DORA_GATE_SHA)):
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise RuntimeError(f"DoRA final-integrator gate missing or changed: {path}")
+    return addendum, gate
+
+
+def _require_dora_acceptance(run_id: str, root: Path) -> None:
+    files = _dora_policy_files(run_id)
+    if files is None:
+        return
+    gate = files[1]
+    check = subprocess.run([sys.executable, str(gate), "verify", "--repo", str(root)],
+                           capture_output=True, text=True, timeout=15, check=False)
+    if check.returncode:
+        raise RuntimeError("DoRA Runner acceptance missing/invalid; serial-complete DENIED: "
+                           + (check.stderr or check.stdout).strip()[:500])
+
+
 def integration_complete(run_id: str, task_id: str, *, integration_worktree: str, test_evidence: str) -> dict[str, Any]:
     """Finalize the merged run and atomically assign its prewritten serial tail."""
     task_id = _task(task_id)
@@ -1342,6 +1376,7 @@ def integration_complete(run_id: str, task_id: str, *, integration_worktree: str
         run = _run(db, run_id)
     if run['integrator_task'] != task_id or run['state'] not in ('integrating', 'integrated') or not run['candidate_head']:
         raise RuntimeError('no completed integration candidate owned by this task')
+    policy = _dora_policy_files(run_id)
     root = Path(integration_worktree).expanduser().resolve(strict=True)
     _verify_same_repo(root, run)
     if _git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD') != run['target_branch']:
@@ -1362,6 +1397,21 @@ def integration_complete(run_id: str, task_id: str, *, integration_worktree: str
                        (task_id, run_id))
         elif row['state'] != 'integrated':
             raise RuntimeError('integration state changed concurrently')
+        if policy:
+            serial_before = db.execute("SELECT instructions FROM serial_tails WHERE run_id=?", (run_id,)).fetchone()
+            if not serial_before:
+                raise RuntimeError("frozen serial tail missing")
+            marker = "# Mandatory final-integrator Runner addendum"
+            if marker not in serial_before["instructions"]:
+                launch = f"python3 {policy[1]} launch --repo {root}"
+                updated = (serial_before["instructions"] + "\n\n" + marker + "\n"
+                           + policy[0].read_text(encoding="utf-8")
+                           + "\n\nONLY permitted formal DoRA entrypoint after Runner acceptance: \n"
+                           + launch + "\n"
+                           + "Required receipt: runs/" + run_id + "/runner_acceptance.json; "
+                           + "the gate checks source hashes, true pretrain GO, "
+                           + "five executed Runner tests and data/runner artifact hashes.\n")
+                db.execute("UPDATE serial_tails SET instructions=? WHERE run_id=?", (updated, run_id))
         serial = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
         if serial and serial['owner_task'] != task_id:
             raise RuntimeError('serial continuation owned by another task')
@@ -1387,6 +1437,7 @@ def serial_complete(run_id: str, task_id: str, *, integration_worktree: str,
     _verify_same_repo(root, run)
     if _git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD') != run['target_branch']:
         raise ValueError('serial continuation must finish on the target branch checkout')
+    _require_dora_acceptance(run_id, root)
     head = _git(root, 'rev-parse', '--verify', 'HEAD')
     if run_git(root, ['merge-base', '--is-ancestor', run['candidate_head'], head]).returncode:
         raise RuntimeError('serial continuation no longer descends from merged run')

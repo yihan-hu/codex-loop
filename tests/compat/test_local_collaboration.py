@@ -127,6 +127,36 @@ class CollaborationTest(unittest.TestCase):
         self.assertEqual(c.serial_complete(run,'worker-B',integration_worktree=str(self.repo),
                           evidence='safe retry')['serial_tail']['status'], 'complete')
 
+    def test_final_integrator_addendum_and_no_acceptance_gate(self):
+        from unittest.mock import patch
+        serial = 'Frozen serial DoRA plan'
+        run = self.create_serial_fixture(serial)
+        claimed = c.claim(run, 'gate-worker', worktree_parent=str(self.parent))
+        c.finish(run, 'gate-worker', commit_sha=self.commit(claimed))
+        c.prepare_integration(run, 'gate-worker', integration_worktree=str(self.repo))
+        addendum = self.root / 'runner_addendum.md'
+        addendum.write_text('Required Runner acceptance tests before CPT/SFT.')
+        denied = self.root / 'deny.py'
+        denied.write_text('import sys; print("DENY: missing runner acceptance", file=sys.stderr); sys.exit(2)\n')
+        with patch.object(c, '_DORA_RUN', run), patch.object(c, '_dora_policy_files', return_value=(addendum, denied)):
+            handed = c.integration_complete(run, 'gate-worker', integration_worktree=str(self.repo),
+                                            test_evidence='integrated and tested')
+            self.assertTrue(handed['continue_now'])
+            self.assertIn('Mandatory final-integrator Runner addendum', handed['serial_tail']['instructions'])
+            self.assertIn('Required Runner acceptance tests', handed['serial_tail']['instructions'])
+            repeated = c.integration_complete(run, 'gate-worker', integration_worktree=str(self.repo),
+                                              test_evidence='retry')
+            self.assertEqual(repeated['serial_tail']['instructions'].count('# Mandatory final-integrator Runner addendum'), 1)
+            with self.assertRaisesRegex(RuntimeError, 'acceptance.*DENIED'):
+                c.serial_complete(run, 'gate-worker', integration_worktree=str(self.repo),
+                                  evidence='claimed completion with no Runner tests')
+            self.assertEqual(c.status(run)['serial_tail']['status'], 'active')
+
+    def create_serial_fixture(self, serial):
+        return c.create_run(str(self.repo), 'main', str(self.parent),
+                            [{'title':'worker','instructions':'fixture'}],
+                            goal_key='runner-gate-fixture', serial_tail=serial)['run_id']
+
     def test_serial_chain_refuses_unintegrated_and_wrong_branch_state(self):
         run=c.create_run(str(self.repo),'main',str(self.parent),
             [{'title':'one','instructions':'work'}],goal_key='serial-reject',
@@ -480,6 +510,29 @@ class CollaborationTest(unittest.TestCase):
         self.assertTrue(withdrawn['election']['integrate_now'])
         self.assertEqual(c.status(run)['integrator_task'],'task-A')
         self.assertIn('integrator has not completed', c.completion_obstacle('task-A'))
+
+    def test_pool_delegate_claims_while_planned_slot_waits_on_dependency(self):
+        tasks = [
+            {'key':'source','pool':'foundation','title':'source','instructions':'source'},
+            {'key':'next','pool':'integration','depends_on':['source'],
+             'title':'next','instructions':'next'},
+        ]
+        run = c.create_run(str(self.repo), 'main', str(self.parent), tasks,
+                           goal_key='waiting-with-pool-offer')['run_id']
+        owner = c.claim(run, 'owner', worktree_parent=str(self.parent))
+        self.assertEqual(owner['task_key'], 'source')
+        with self.assertRaisesRegex(RuntimeError, 'no ready task'):
+            c.claim(run, 'new-worker', worktree_parent=str(self.parent))
+
+        offer = c.delegate(run, 'owner', request_key='review-1',
+                           title='review correction', instructions='Review a fixed batch')
+        claimed = c.claim(run, 'new-worker', worktree_parent=str(self.parent))
+        self.assertEqual(claimed['slot'], 3)
+        self.assertEqual(claimed['title'], 'review correction')
+        self.assertEqual(c.status(run)['slots'][1]['status'], 'available')
+        self.assertEqual(c.status(run)['delegations'][0]['id'], offer['id'])
+        self.assertEqual(c.status(run)['delegations'][0]['recipient'], 'new-worker')
+        self.assertEqual(c.status(run)['delegations'][0]['status'], 'accepted')
 
     def test_pool_delegate_claims_new_worktree_after_planned_slots_taken(self):
         run=self.create(1)['run_id']
