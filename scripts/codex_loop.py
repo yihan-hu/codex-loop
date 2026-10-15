@@ -1465,6 +1465,9 @@ def _cmd_collab(argv: list[str]) -> int:
     c = sub.add_parser('claim', help='claim a ready DAG task fairly across pools; reuse current Chat worktree')
     c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
     c.add_argument('--worktree-parent', required=True); c.add_argument('--existing-worktree')
+    c.add_argument('--wait', action='store_true', help='wait for Ready work while heartbeating idle status')
+    c.add_argument('--poll-interval', type=float, default=30)
+    c.add_argument('--max-wait-seconds', type=float, default=60)
     c = sub.add_parser('heartbeat', help='record current worker tool activity and renew its lease')
     c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
     c.add_argument('--lease-generation', required=True, type=int)
@@ -1553,8 +1556,11 @@ def _cmd_collab(argv: list[str]) -> int:
     elif action == 'discover':
         result=collab.discover(a.repo,a.branch)
     elif action == 'claim':
-        result=collab.claim(a.run_id,a.task_id,worktree_parent=a.worktree_parent,
-                            existing_worktree=a.existing_worktree)
+        claim_fn = collab.wait_claim if a.wait else collab.claim
+        result=claim_fn(a.run_id,a.task_id,worktree_parent=a.worktree_parent,
+                        existing_worktree=a.existing_worktree,
+                        **({'poll_interval': a.poll_interval, 'max_wait_seconds': a.max_wait_seconds}
+                           if a.wait else {}))
     elif action == 'heartbeat':
         result=collab.heartbeat(a.run_id,a.task_id,lease_generation=a.lease_generation)
     elif action in ('publish','revise'):

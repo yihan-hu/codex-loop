@@ -59,6 +59,10 @@ CREATE TABLE IF NOT EXISTS workers (
   run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL,
   worktree TEXT NOT NULL, last_commit TEXT, PRIMARY KEY(run_id, task_id), UNIQUE(run_id, worktree)
 );
+CREATE TABLE IF NOT EXISTS waiting_workers (
+  run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL,
+  last_seen REAL NOT NULL, PRIMARY KEY(run_id, task_id)
+);
 CREATE TABLE IF NOT EXISTS reclaims (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, slot_number INTEGER NOT NULL,
   old_task_id TEXT NOT NULL, old_worktree TEXT, old_generation INTEGER NOT NULL,
@@ -674,7 +678,8 @@ def dynamic_join(repo: str, target_branch: str, worktree_parent: str, *, goal_ke
 
 
 def claim(run_id: str, task_id: str, *, worktree_parent: str,
-          existing_worktree: str | None = None) -> dict[str, Any]:
+          existing_worktree: str | None = None,
+          wait_if_empty: bool = False) -> dict[str, Any]:
     task_id = _task(task_id)
     # One Codex Loop task_id/Chat owns one worktree, but can finish and pull many
     # independent DAG tasks; SQLite selects a ready task fairly across pools.
@@ -691,6 +696,11 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                           (run_id, task_id)).fetchone()
         if slot is None:
             if run['state'] != 'open':
+                if wait_if_empty:
+                    db.execute('DELETE FROM waiting_workers WHERE run_id=? AND task_id=?',
+                               (run_id, task_id))
+                    return {'run_id': run_id, 'task_id': task_id, 'status': 'done',
+                            'run_state': run['state']}
                 if worker:
                     last = _slot(db, run_id, task_id)
                     return {'run_id': run_id, 'task_id': task_id, 'slot': last['number'],
@@ -704,6 +714,23 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                 offer = db.execute("""SELECT * FROM delegations WHERE run_id=? AND status='offered'
                                        AND recipient IS NULL AND sender!=? ORDER BY id LIMIT 1""", (run_id, task_id)).fetchone()
                 if offer is None:
+                    if wait_if_empty:
+                        unfinished = db.execute("SELECT 1 FROM slots WHERE run_id=? AND status!='done' LIMIT 1",
+                                                (run_id,)).fetchone()
+                        delegated = db.execute("""SELECT 1 FROM delegations WHERE run_id=?
+                                AND status NOT IN ('completed','cancelled') LIMIT 1""",
+                                               (run_id,)).fetchone()
+                        if unfinished or delegated:
+                            now = time.time()
+                            db.execute("""INSERT INTO waiting_workers(run_id,task_id,last_seen) VALUES(?,?,?)
+                                ON CONFLICT(run_id,task_id) DO UPDATE SET last_seen=excluded.last_seen""",
+                                       (run_id, task_id, now))
+                            return {'run_id': run_id, 'task_id': task_id, 'status': 'waiting',
+                                    'heartbeat_at': now, 'run_state': run['state']}
+                        db.execute('DELETE FROM waiting_workers WHERE run_id=? AND task_id=?',
+                                   (run_id, task_id))
+                        return {'run_id': run_id, 'task_id': task_id, 'status': 'done',
+                                'run_state': run['state']}
                     if _ready_slots(db, run_id):
                         raise RuntimeError('no eligible ready task for this worker')
                     if db.execute("SELECT 1 FROM slots WHERE run_id=? AND status='available' LIMIT 1", (run_id,)).fetchone():
@@ -725,6 +752,8 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                               WHERE run_id=? AND number=? AND status='available'""",
                            (task_id, time.time(), run_id, slot['number']))
                 slot = _active_owner(db, run_id, task_id)
+        db.execute('DELETE FROM waiting_workers WHERE run_id=? AND task_id=?',
+                   (run_id, task_id))
         if slot['lease_generation'] == 0:
             db.execute('UPDATE slots SET lease_generation=1 WHERE run_id=? AND number=?',
                        (run_id,slot['number']))
@@ -1460,12 +1489,34 @@ def serial_complete(run_id: str, task_id: str, *, integration_worktree: str,
             'next': 'evaluate the frozen plan for its next prewritten parallel wave or final acceptance'}
 
 
+def wait_claim(run_id: str, task_id: str, *, worktree_parent: str,
+               existing_worktree: str | None = None, poll_interval: float = 30,
+               max_wait_seconds: float = 60) -> dict[str, Any]:
+    # Bounded foreground wait: no daemon and no changes to claimed-task leases.
+    if not 0 < poll_interval <= 60 or not 0 < max_wait_seconds <= 300:
+        raise ValueError('poll-interval must be in (0, 60]; max-wait-seconds in (0, 300]')
+    began = time.monotonic()
+    deadline = began + max_wait_seconds
+    while True:
+        result = claim(run_id, task_id, worktree_parent=worktree_parent,
+                       existing_worktree=existing_worktree, wait_if_empty=True)
+        if result.get('status') != 'waiting':
+            return result
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {**result, 'waited_seconds': round(time.monotonic()-began, 2),
+                    'retry_wait': True}
+        time.sleep(min(poll_interval, remaining))
+
+
 def status(run_id: str) -> dict[str, Any]:
     with _connection() as db:
         run = _run(db, run_id)
         rows = db.execute('SELECT number,title,instructions,task_key,pool_id,depends_on,review_of,exclude_workers,status,COALESCE(task_id,completed_by) task_id,commit_sha,worktree,start_commit,lease_generation,last_seen,checkpoint_sha,checkpoint_note FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
         delegations = db.execute('SELECT * FROM delegations WHERE run_id=? ORDER BY id', (run_id,)).fetchall()
         serial = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
+        waiting = db.execute('SELECT task_id,last_seen FROM waiting_workers WHERE run_id=?',
+                             (run_id,)).fetchall()
         ready = {slot['number'] for slot in _ready_slots(db, run_id)}
         reclaims = [dict(row) for row in db.execute(
             'SELECT * FROM reclaims WHERE run_id=? ORDER BY id', (run_id,))]
@@ -1488,6 +1539,11 @@ def status(run_id: str) -> dict[str, Any]:
             'pools': pools,
             'goal_key': run['goal_key'], 'graph_revision': run['graph_revision'],
             'lease_seconds': LEASE_SECONDS, 'reclaims': reclaims,
+            'waiting_workers': [
+                {'task_id': w['task_id'], 'last_seen': w['last_seen'],
+                 'seconds_since_heartbeat': round(now-w['last_seen'], 1)}
+                for w in waiting if now-w['last_seen'] <= 120
+            ],
             'integrator_task': run['integrator_task'],
             'integrator_generation': run['integrator_generation'],
             'integrator_last_seen': run['integrator_last_seen'],

@@ -63,6 +63,147 @@ class AdaptiveCollaborationTest(unittest.TestCase):
             db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_key=?',
                        (time.time()-601, run, task_key))
 
+    def test_waiting_heartbeats_do_not_refresh_the_600_second_claimed_lease(self):
+        run = self.run_tasks([
+            {'key':'A', 'title':'A', 'instructions':'A'},
+            {'key':'B', 'title':'B', 'instructions':'B', 'depends_on':['A']}])
+        owner = self.claim(run, 'producer')
+        with c._connection() as db:
+            original_seen = db.execute(
+                "SELECT last_seen FROM slots WHERE run_id=? AND task_id=?",
+                (run, 'producer')).fetchone()[0]
+        initial = c.claim(run, 'idle', worktree_parent=str(self.parent), wait_if_empty=True)
+        self.assertEqual(initial['status'], 'waiting')
+        self.assertEqual(len(c.status(run)['waiting_workers']), 1)
+        self.assertFalse((self.parent / f'{run}-worker-idle').exists())
+        waited = c.wait_claim(run, 'idle', worktree_parent=str(self.parent),
+                              poll_interval=0.02, max_wait_seconds=0.08)
+        self.assertEqual(waited['status'], 'waiting')
+        self.assertTrue(waited['retry_wait'])
+        self.assertGreater(waited['heartbeat_at'], initial['heartbeat_at'])
+        with c._connection() as db:
+            still_seen = db.execute(
+                "SELECT last_seen FROM slots WHERE run_id=? AND task_id=?",
+                (run, 'producer')).fetchone()[0]
+        self.assertEqual(original_seen, still_seen)
+        self.assertEqual(c.status(run)['lease_seconds'], 600)
+        c.finish(run, 'producer', commit_sha=self.commit(owner), auto_claim=False,
+                 lease_generation=owner['lease_generation'])
+        claimed = c.wait_claim(run, 'idle', worktree_parent=str(self.parent),
+                               poll_interval=0.01, max_wait_seconds=0.1)
+        self.assertEqual(claimed['task_key'], 'B')
+        self.assertFalse(c.status(run)['waiting_workers'])
+        c.finish(run, 'idle', commit_sha=self.commit(claimed),
+                 lease_generation=claimed['lease_generation'])
+        end = c.wait_claim(run, 'new-idle', worktree_parent=str(self.parent),
+                           poll_interval=0.01, max_wait_seconds=0.1)
+        self.assertEqual(end['status'], 'done')
+        self.assertEqual(end['run_state'], 'integrating')
+
+    def test_two_waiters_claim_distinct_work_after_dependency_unlock(self):
+        run = self.run_tasks([
+            {'key':'A','title':'foundation','instructions':'A'},
+            {'key':'B','title':'parallel-1','instructions':'B','depends_on':['A']},
+            {'key':'C','title':'parallel-2','instructions':'C','depends_on':['A']}])
+        owner = self.claim(run, 'producer')
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(c.wait_claim, run, worker,
+                        worktree_parent=str(self.parent), poll_interval=0.02,
+                        max_wait_seconds=2.0) for worker in ('idle-1', 'idle-2')]
+            deadline = time.monotonic() + 1.0
+            while len(c.status(run)['waiting_workers']) < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(len(c.status(run)['waiting_workers']), 2)
+            c.finish(run, 'producer', commit_sha=self.commit(owner), auto_claim=False,
+                     lease_generation=owner['lease_generation'])
+            outcomes = [f.result(timeout=3) for f in futures]
+        self.assertEqual({o['task_key'] for o in outcomes}, {'B','C'})
+        self.assertEqual({o['task_id'] for o in outcomes}, {'idle-1','idle-2'})
+        self.assertEqual(c.status(run)['waiting_workers'], [])
+
+    def test_1_1_5_1_waiting_pool_fanout_and_final_fanin(self):
+        specs = [
+            {'key':'foundation', 'title':'foundation', 'instructions':'foundation'},
+            {'key':'gate', 'title':'gate', 'instructions':'gate',
+             'depends_on':['foundation']}]
+        specs += [
+            {'key':f'parallel-{i}', 'pool':f'pool-{i}', 'title':f'parallel-{i}',
+             'instructions':f'parallel-{i}', 'depends_on':['gate']}
+            for i in range(5)]
+        specs.append({
+            'key':'tail', 'title':'tail', 'instructions':'tail',
+            'depends_on':[f'parallel-{i}' for i in range(5)]})
+        run=self.run_tasks(specs)
+        first=self.claim(run,'main')
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures=[executor.submit(c.wait_claim, run, f'idle-{i}',
+                    worktree_parent=str(self.parent), poll_interval=0.025,
+                    max_wait_seconds=6.0) for i in range(5)]
+            deadline=time.monotonic()+2.0
+            while len(c.status(run)['waiting_workers']) < 5 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(len(c.status(run)['waiting_workers']), 5)
+            c.finish(run,'main',commit_sha=self.commit(first),auto_claim=False,
+                     lease_generation=first['lease_generation'])
+            gate=self.claim(run,'main')
+            self.assertEqual(gate['task_key'],'gate')
+            c.finish(run,'main',commit_sha=self.commit(gate),auto_claim=False,
+                     lease_generation=gate['lease_generation'])
+            claims=[f.result(timeout=7) for f in futures]
+        self.assertEqual({a['task_key'] for a in claims},
+                         {f'parallel-{i}' for i in range(5)})
+        self.assertEqual(len({a['task_id'] for a in claims}),5)
+        self.assertEqual(c.status(run)['waiting_workers'],[])
+        for assignment in claims:
+            c.finish(run,assignment['task_id'],commit_sha=self.commit(assignment),
+                     auto_claim=False,lease_generation=assignment['lease_generation'])
+        tail=self.claim(run,'main')
+        self.assertEqual(tail['task_key'],'tail')
+        for i in range(5):
+            self.assertTrue((Path(tail['worktree'])/f'parallel-{i}.txt').is_file())
+        result=c.finish(run,'main',commit_sha=self.commit(tail),
+                        lease_generation=tail['lease_generation'])
+        self.assertTrue(result['integrate_now'])
+        self.assertEqual(c.status(run)['lease_seconds'],600)
+
+    def test_waiter_can_claim_dynamically_published_ready_pool(self):
+        run=self.run_tasks([{'key':'A','title':'original','instructions':'original'}])
+        owner=self.claim(run,'publisher')
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future=executor.submit(c.wait_claim,run,'waiting-reviewer',
+                                   worktree_parent=str(self.parent),
+                                   poll_interval=0.02,max_wait_seconds=2.0)
+            deadline=time.monotonic()+1
+            while not c.status(run)['waiting_workers'] and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(len(c.status(run)['waiting_workers']),1)
+            c.publish_task(run,'publisher',
+                           {'key':'new-ready','pool':'later','title':'review',
+                            'instructions':'review as soon as ready',
+                            'exclude_workers':['publisher']},
+                           lease_generation=owner['lease_generation'])
+            claimed=future.result(timeout=3)
+        self.assertEqual(claimed['task_key'],'new-ready')
+        self.assertEqual(claimed['pool'],'later')
+        self.assertEqual(claimed['task_id'],'waiting-reviewer')
+        self.assertEqual(c.status(run)['graph_revision'],2)
+        self.assertEqual(c.status(run)['waiting_workers'],[])
+
+    def test_cli_wait_claim_returns_bounded_waiting_response(self):
+        run=self.run_tasks([{'key':'A','title':'A','instructions':'A'}])
+        self.claim(run, 'owner')
+        output=subprocess.run([
+            sys.executable, str(SCRIPT / 'codex_loop.py'), 'collab', 'claim',
+            '--run-id', run, '--task-id', 'idle-cli',
+            '--worktree-parent', str(self.parent), '--wait',
+            '--poll-interval', '0.02', '--max-wait-seconds', '0.07'],
+            capture_output=True, text=True, check=True)
+        result=json.loads(output.stdout)['data']
+        self.assertEqual(result['status'], 'waiting')
+        self.assertTrue(result['retry_wait'])
+        self.assertGreaterEqual(result['waited_seconds'], 0.06)
+        self.assertEqual(c.status(run)['waiting_workers'][0]['task_id'], 'idle-cli')
+
     def test_ten_minute_reclaim_preserves_dirty_old_worktree_and_fences(self):
         run = self.run_tasks()
         old = self.claim(run, 'old')

@@ -92,6 +92,9 @@ retain prior blocker for recheck]
   MUT --> READY
   READY --> QUAL[Filter excluded workers and producer self-review]
   QUAL --> FAIR[Atomic fair claim: prioritize under-served eligible pools]
+  FAIR -->|No eligible task| IDLE[Bounded wait: idle heartbeat every 30s, no claimed Slot]
+  IDLE -->|Poll and check Ready| READY
+  IDLE -->|Run closed / all tasks done| IDLEDONE[Idle Chat exits]
   CW --> FAIR
   FAIR --> LEASE[Atomic owner generation + 600 second last_seen lease]
   LEASE --> EXEC[One Chat executes bounded task on its worker-owned worktree]
@@ -105,7 +108,7 @@ retain prior blocker for recheck]
   UNLOCK --> READY
   FIN --> NEXT{Another Ready task?}
   NEXT -->|Yes| FAIR
-  NEXT -->|No; other tasks active| WAITPOOL[Chat may exit; no wakeup daemon]
+  NEXT -->|No Ready and not Integrator| IDLE
   UNLOCK --> DEPS[Cross-worker dependency Git materialization: verified task deltas]
   DEPS --> EXEC
   FIN --> ELECTION{All DAG tasks and delegations done?}
@@ -172,7 +175,7 @@ bound to stage + input + instruction + request + generation]
 
 - **Native Git authentication is host-owned.** The Drive Host Profile records only the expected GitHub HTTPS credential helper for each environment. Before native publication, the controller validates protocol and helper; the selected host then runs a noninteractive dry-run. Neither Git tokens nor SSH keys are retrieved or stored by Codex Loop.
 
-- **Local collaboration is an adaptive DAG scheduler with a bounded lease, not a background Chat runtime.** The initial verified Git baseline and task identities remain stable, while an active worker may atomically publish tasks/pools and revise only unclaimed task definitions with a checked graph revision. SQLite filters explicit worker exclusions and producer self-review before assigning a ready task. Each worker has a private stable Worktree; no physical Slot path is reused after reclaim. A claim transaction reclaims assignments with no observed tool activity for 600 seconds; explicit force recovery still preserves the former Worktree, auditable ownership generation, and any verified checkpoint. The new owner must reconcile uncertain Git/external effects before repeating them. Native host tool calls cannot be assumed to emit SQLite heartbeats; workers explicitly report activity. Last-finisher integration and tracked delegations remain protected by verified own-commit deltas and dependency ordering. An inactive integrator/serial owner can be reassigned after target Git state verification without blindly replaying interrupted merges. No daemon, cross-computer SQLite synchronization, authorization transfer or stopped-Chat wakeup is implied.
+- **Local collaboration is an adaptive DAG scheduler with a bounded lease, not a background Chat runtime.** The initial verified Git baseline and task identities remain stable, while an active worker may atomically publish tasks/pools and revise only unclaimed task definitions with a checked graph revision. SQLite filters explicit worker exclusions and producer self-review before assigning a ready task. Each worker has a private stable Worktree; no physical Slot path is reused after reclaim. A bounded foreground idle wait records separate SQLite waiter heartbeats and checks Ready every 30 seconds; it cannot wake or prove the liveness of a stopped Chat. No waiting heartbeat refreshes a claimed-task lease. A claim transaction reclaims assignments with no observed tool activity for 600 seconds; explicit force recovery still preserves the former Worktree, auditable ownership generation, and any verified checkpoint. The new owner must reconcile uncertain Git/external effects before repeating them. Native host tool calls cannot be assumed to emit SQLite heartbeats; workers explicitly report activity. Last-finisher integration and tracked delegations remain protected by verified own-commit deltas and dependency ordering. An inactive integrator/serial owner can be reassigned after target Git state verification without blindly replaying interrupted merges. No daemon, cross-computer SQLite synchronization, authorization transfer or stopped-Chat wakeup is implied.
 
 - **Detached HEAD continuity has explicit provenance.** Workers may use detached HEAD only when the recorded target branch is supported by verified source provenance; the workspace lease distinguishes `branch` (intended target) from `checked_out_branch` (None on detached workers). Unverified detached work is never silently promoted to HOT mutation authority.
 
