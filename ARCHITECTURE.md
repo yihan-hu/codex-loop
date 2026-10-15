@@ -97,11 +97,16 @@ retain prior blocker for recheck]
   IDLE -->|Run closed / all tasks done| IDLEDONE[Idle Chat exits]
   CW --> FAIR
   FAIR --> LEASE[Atomic owner generation + 600 second last_seen lease]
-  LEASE --> EXEC[One Chat executes bounded task on its worker-owned worktree]
+  LEASE --> RECOVER{Reclaimed task?}
+  RECOVER -->|No| EXEC[One Chat executes bounded task on its worker-owned worktree]
+  RECOVER -->|Yes| SNAP[Snapshot old HEAD, Git index, tracked patches and nonignored task files]
+  SNAP -->|Consistent and conflict-free| RESTORE[Restore source delta into NEW worktree; old worktree untouched]
+  RESTORE --> EXEC
+  SNAP -->|Changed/missing/conflicting| STOPREC[Pause recovery for manual reconciliation; preserve both worktrees]
   EXEC --> MCPHB[Scoped My Mac / WSL call: check inbox/control, heartbeat at most once per minute]
   MCPHB --> LEASE
   MCPHB -->|stop_task| STOPWORK[Block next operation, preserve worktree]
-  LEASE -. inactivity at next claim .-> RC[Reclaim stale assignment; preserve old worktree and checkpoint]
+  LEASE -. inactivity at next claim .-> RC[Reclaim stale assignment; preserve old worktree; checkpoint optional]
   RC --> READY
   RC -. verified original finishes first .-> LATE[Atomic late finish: accept verified Git commit and send STOP]
   LATE --> STOPWORK

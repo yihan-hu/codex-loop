@@ -10,6 +10,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import stat
+import tempfile
 import secrets
 import time
 import sqlite3
@@ -126,6 +129,156 @@ def _git(root: Path, *args: str) -> str:
     if proc.returncode:
         raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.decode(errors='replace').strip()}")
     return proc.stdout.decode('utf-8', errors='replace').strip()
+
+
+def _git_output(root: Path, *args: str) -> bytes:
+    result = run_git(root, list(args))
+    if result.returncode:
+        raise RuntimeError(f'git {args[0]} failed: {result.stderr.decode(errors="replace").strip()}')
+    return result.stdout
+
+
+def _restore_git_patch(path: Path, patch: bytes, *, staged: bool) -> None:
+    if not patch:
+        return
+    args = ['git', '-C', str(path), 'apply', '--binary']
+    if staged:
+        args.append('--index')
+    args.append('-')
+    proc = subprocess.run(args, input=patch, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode:
+        raise RuntimeError('reclaimed worktree patch did not apply cleanly: ' +
+                           proc.stderr.decode(errors='replace').strip() +
+                           '; preserve both worktrees and reconcile the Git conflict')
+
+
+def _restore_reclaimed_worktree(run: sqlite3.Row, recovery: sqlite3.Row,
+                                destination: Path) -> dict[str, Any]:
+    # Snapshot only the old task's own Git delta; no checkpoint is required.
+    # Original worktree and index are read-only. New files go only to the
+    # distinct registered replacement worktree.
+    source = Path(recovery['old_worktree'] or '').expanduser()
+    if not recovery['old_worktree'] or not source.is_dir():
+        raise RuntimeError('reclaimed worktree is missing; inspect recovery history before proceeding')
+    if source.resolve() == destination.resolve():
+        raise RuntimeError('reclaimed worktree cannot equal the replacement worktree')
+    if not source.resolve().is_relative_to(Path(run['worktree_parent']).resolve(strict=True)):
+        raise PermissionError('old worktree is outside the run-authorized worktree parent; manual recovery required')
+    _verify_same_repo(source, run)
+    _verify_same_repo(destination, run)
+    start = recovery['old_start_commit']
+    if not start:
+        raise RuntimeError('reclaimed task lacks a verified start_commit; preserve old files for manual recovery')
+    if _git(source, 'ls-files', '--unmerged'):
+        raise RuntimeError('old worktree has an unresolved Git merge; manual recovery required')
+    original_head = _git(source, 'rev-parse', '--verify', 'HEAD')
+    if run_git(source, ['merge-base', '--is-ancestor', start, original_head]).returncode:
+        raise RuntimeError('old worktree HEAD no longer descends from task start; manual recovery required')
+
+    # Make a private, isolated file snapshot before modifying the new worktree.
+    # A changed source while copying aborts rather than silently mixing versions.
+    with tempfile.TemporaryDirectory(prefix='.codex-loop-recovery-', dir=destination.parent) as scratch:
+        stage = Path(scratch)
+        def git_snapshot() -> tuple[bytes, bytes, bytes, bytes]:
+            return (
+                _git_output(source, 'status', '--porcelain=v1', '--untracked-files=all', '-z'),
+                _git_output(source, 'diff', '--cached', '--binary', '--no-ext-diff', '--no-textconv'),
+                _git_output(source, 'diff', '--binary', '--no-ext-diff', '--no-textconv'),
+                _git_output(source, 'ls-files', '--others', '--exclude-standard', '-z'),
+            )
+        before = git_snapshot()
+        # Git-ignored files may include secrets, caches, build artifacts or
+        # task outputs. Report them for explicit review; never blindly copy.
+        ignored_rows = _git_output(source, 'status', '--porcelain=v1',
+                                   '--ignored=matching', '--untracked-files=normal', '-z')
+        ignored = [os.fsdecode(row[3:]) for row in ignored_rows.split(b'\0')
+                   if row.startswith(b'!! ')]
+        staged, unstaged = before[1], before[2]
+        paths = [os.fsdecode(value) for value in before[3].split(b'\0') if value]
+        if len(paths) != len(set(paths)):
+            raise RuntimeError('duplicate untracked paths in recovery snapshot')
+        for filename in paths:
+            relative = Path(filename)
+            if relative.is_absolute() or '..' in relative.parts or '.git' in relative.parts:
+                raise RuntimeError('unsafe untracked path in recovered worktree')
+            src, dst = source / relative, stage / relative
+            if not os.path.lexists(src):
+                raise RuntimeError('untracked file disappeared during recovery snapshot')
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            mode = src.lstat().st_mode
+            if stat.S_ISLNK(mode):
+                if not (src.resolve().is_relative_to(source.resolve())):
+                    raise RuntimeError('external untracked symlink requires manual recovery')
+                dst.symlink_to(os.readlink(src))
+            elif stat.S_ISREG(mode):
+                shutil.copy2(src, dst)
+            else:
+                raise RuntimeError('non-file task output requires manual recovery: '+filename)
+        # Recheck all copied content, Git index and HEAD before writing anywhere.
+        for filename in paths:
+            src, copied = source / filename, stage / filename
+            if stat.S_ISLNK(copied.lstat().st_mode):
+                if not src.is_symlink() or os.readlink(src) != os.readlink(copied):
+                    raise RuntimeError('old untracked symlink changed during recovery snapshot')
+            else:
+                if not src.is_file():
+                    raise RuntimeError('old untracked file disappeared during recovery snapshot')
+                def digest(path: Path) -> bytes:
+                    checksum = hashlib.sha256()
+                    with path.open('rb') as stream:
+                        for block in iter(lambda: stream.read(1024 * 1024), b''):
+                            checksum.update(block)
+                    return checksum.digest()
+                if digest(src) != digest(copied):
+                    raise RuntimeError('old untracked file changed during recovery snapshot')
+        if original_head != _git(source, 'rev-parse', '--verify', 'HEAD') or before != git_snapshot():
+            raise RuntimeError('old worktree changed during recovery snapshot; preserve both and retry')
+
+        commits = _git(source, 'rev-list', '--reverse', f'{start}..{original_head}').splitlines()
+        for sha in commits:
+            parents = _git(source, 'rev-list', '--parents', '-n', '1', sha).split()
+            if len(parents) > 2:
+                raise RuntimeError('old task contains a merge commit; manual Git recovery required')
+        if _git(destination, 'status', '--porcelain', '--untracked-files=all'):
+            raise RuntimeError('replacement worktree must be clean before restoring old changes')
+        if commits:
+            # Check the final Git trees before mutating an already completed
+            # worker's checkout. The next cherry-pick can still fail for
+            # unusual histories, but ordinary overlapping changes stop here.
+            preview = run_git(destination, ['merge-tree', '--write-tree', 'HEAD', original_head])
+            if preview.returncode:
+                raise RuntimeError('reclaimed commits need conflict resolution; '
+                                   'preserved the clean replacement worktree')
+        for sha in commits:
+            try:
+                _git(destination, 'cherry-pick', '-x', sha)
+            except Exception as exc:
+                raise RuntimeError('reclaimed Git commit requires conflict resolution; '
+                                   'preserve the new worktree and inspect cherry-pick state') from exc
+        _restore_git_patch(destination, staged, staged=True)
+        _restore_git_patch(destination, unstaged, staged=False)
+        for filename in paths:
+            src, dst = stage / filename, destination / filename
+            if os.path.lexists(dst):
+                raise RuntimeError('untracked output conflicts with files in replacement worktree: '+filename)
+            if not dst.parent.resolve().is_relative_to(destination.resolve()):
+                raise RuntimeError('untracked output parent escapes replacement worktree')
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_symlink():
+                dst.symlink_to(os.readlink(src))
+            else:
+                shutil.copy2(src, dst)
+        return {
+            'old_task_id': recovery['old_task_id'],
+            'old_head': original_head,
+            'replayed_commits': len(commits),
+            'staged_changes': bool(staged),
+            'unstaged_changes': bool(unstaged),
+            'untracked_files': len(paths),
+            'ignored_entries_not_copied': len(ignored),
+            'ignored_review_examples': ignored[:8],
+            'source_unchanged': True,
+        }
 
 
 def _repo_identity(repo: str, branch: str) -> dict[str, str]:
@@ -870,6 +1023,7 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                           WHERE run_id=? AND recipient=? AND status IN ('accepted','rejected')''',
                        (run_id,former))
             db.execute('UPDATE reclaims SET adopted_by=? WHERE id=?',(task_id,recovery['id']))
+            recovery = db.execute('SELECT * FROM reclaims WHERE id=?',(recovery['id'],)).fetchone()
         if worker and worker['last_commit'] and slot['start_commit'] is None:
             expected_previous_head = worker['last_commit']
         else:
@@ -893,6 +1047,7 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
         raise RuntimeError('worker HEAD changed after its previous completed task; reconcile before claiming')
     if not worker and not existing_worktree and not stored and head != base:
         raise RuntimeError('new worker worktree base differs from recorded run base')
+    restored = None
     if not slot['start_commit']:
         if resumed_legacy:
             # Existing pre-DAG workers can resume dirty or committed in-flight work.
@@ -930,6 +1085,10 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
             with _connection(write=True) as db:
                 db.execute('INSERT OR IGNORE INTO worker_inputs(run_id,task_id,source_slot) VALUES(?,?,?)',
                            (run_id, task_id, source['number']))
+        # Keep start_commit at the verified inputs. Recovered commits belong to
+        # this task's own delta and must be included by finish/integration.
+        if recovery and recovery['adopted_by'] == task_id:
+            restored = _restore_reclaimed_worktree(run, recovery, path)
         with _connection(write=True) as db:
             current = _active_owner(db, run_id, task_id, slot['lease_generation'])
             if current['number'] != number:
@@ -959,6 +1118,7 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
             'lease_generation': slot['lease_generation'],
             'last_seen': time.time(),
             'recovery': dict(recovery) if recovery else None,
+            'restored_worktree': restored,
             'reconcile_external_effects': bool(recovery),
             'target_branch': run['target_branch'], 'source_provenance': provenance,
             'registered': True,

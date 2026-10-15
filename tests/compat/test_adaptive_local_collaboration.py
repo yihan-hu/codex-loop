@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -315,6 +316,8 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         self.assertEqual(new['recovery']['old_task_id'], 'old')
         self.assertTrue(new['reconcile_external_effects'])
         self.assertEqual((Path(old['worktree']) / 'draft.txt').read_text(), 'not committed')
+        self.assertEqual((Path(new['worktree']) / 'draft.txt').read_text(), 'not committed')
+        self.assertEqual(new['restored_worktree']['untracked_files'],1)
         with self.assertRaises(PermissionError):
             c.heartbeat(run, 'old', lease_generation=old['lease_generation'])
         sha = self.commit(new)
@@ -327,6 +330,191 @@ class AdaptiveCollaborationTest(unittest.TestCase):
                          lease_generation=new['lease_generation'])
         self.assertTrue(final['integrate_now'])
         self.assertEqual(len(c.status(run)['reclaims']), 1)
+
+    def test_reclaim_without_checkpoint_recovers_git_index_worktree_and_untracked_outputs(self):
+        run=self.run_tasks()
+        old=self.claim(run,'original')
+        old_root=Path(old['worktree'])
+        (old_root/'committed.txt').write_text('already committed')
+        git(old_root,'add','committed.txt')
+        git(old_root,'commit','-m','old intermediate task work')
+        old_commit=git(old_root,'rev-parse','HEAD')
+        (old_root/'start.txt').write_text('staged state\n')
+        git(old_root,'add','start.txt')
+        (old_root/'start.txt').write_text('unstaged state\n')
+        (old_root/'output').mkdir()
+        payload=b'\x00\xffbinary\x00'
+        (old_root/'output'/'data.bin').write_bytes(payload)
+        (old_root/'output'/'nested.txt').write_text('in progress')
+        (old_root/'output'/'link').symlink_to('nested.txt')
+        old_state=git(old_root,'status','--porcelain','--untracked-files=all')
+        old_index=git(old_root,'diff','--cached')
+        old_work=git(old_root,'diff')
+        self.expire(run)
+        successor=self.claim(run,'successor')
+        new_root=Path(successor['worktree'])
+        self.assertEqual(successor['restored_worktree']['replayed_commits'],1)
+        self.assertTrue(successor['restored_worktree']['staged_changes'])
+        self.assertTrue(successor['restored_worktree']['unstaged_changes'])
+        self.assertEqual(successor['restored_worktree']['untracked_files'],3)
+        self.assertEqual((new_root/'committed.txt').read_text(),'already committed')
+        self.assertEqual((new_root/'output'/'data.bin').read_bytes(),payload)
+        self.assertTrue((new_root/'output'/'link').is_symlink())
+        self.assertEqual(git(new_root,'diff','--cached'),old_index)
+        self.assertEqual(git(new_root,'diff'),old_work)
+        self.assertEqual(git(new_root,'status','--porcelain','--untracked-files=all'),old_state)
+        self.assertIn(old_commit,git(new_root,'log','-1','--format=%B'))
+        self.assertEqual(git(old_root,'rev-parse','HEAD'),old_commit)
+        self.assertEqual(git(old_root,'status','--porcelain','--untracked-files=all'),old_state)
+        # An idempotent claim must not reapply the old commits or patches.
+        again=self.claim(run,'successor')
+        self.assertEqual(again['worktree'],successor['worktree'])
+        self.assertEqual(git(new_root,'status','--porcelain','--untracked-files=all'),old_state)
+        git(new_root,'add','-A')
+        git(new_root,'commit','-m','finish original partial work')
+        result=c.finish(run,'successor',commit_sha=git(new_root,'rev-parse','HEAD'),
+                        lease_generation=successor['lease_generation'],slot_number=successor['slot'])
+        self.assertTrue(result['integrate_now'])
+        ready=c.prepare_integration(run,'successor',integration_worktree=str(self.repo))
+        self.assertEqual(ready['status'],'READY_FOR_TEST')
+        self.assertEqual((self.repo/'committed.txt').read_text(),'already committed')
+        self.assertEqual((self.repo/'start.txt').read_text(),'unstaged state\n')
+        self.assertEqual((self.repo/'output'/'data.bin').read_bytes(),payload)
+        c.integration_complete(run,'successor',integration_worktree=str(self.repo),
+                               test_evidence='recovered commit, index, worktree, and files checked')
+        self.assertEqual(c.status(run)['lease_seconds'],600)
+
+    def test_reclaim_dependent_task_replays_only_old_task_own_commits(self):
+        run=self.run_tasks([
+            {'key':'A','title':'A','instructions':'foundation'},
+            {'key':'B','title':'B','instructions':'dependent','depends_on':['A']}])
+        producer=self.claim(run,'producer')
+        c.finish(run,'producer',commit_sha=self.commit(producer),auto_claim=False,
+                 lease_generation=producer['lease_generation'])
+        old=self.claim(run,'original')
+        self.assertEqual(old['task_key'],'B')
+        old_root=Path(old['worktree'])
+        self.assertTrue((old_root/'A.txt').is_file())
+        (old_root/'b.txt').write_text('B partial result')
+        git(old_root,'add','b.txt')
+        git(old_root,'commit','-m','partially completed B')
+        self.expire(run,'B')
+        new=self.claim(run,'successor')
+        new_root=Path(new['worktree'])
+        self.assertEqual(new['restored_worktree']['replayed_commits'],1)
+        self.assertEqual((new_root/'A.txt').read_text(),'producer')
+        self.assertEqual((new_root/'b.txt').read_text(),'B partial result')
+        self.assertEqual(git(new_root,'rev-list','--count',f"{new['base_commit']}..HEAD"),'2')
+        c.finish(run,'successor',commit_sha=git(new_root,'rev-parse','HEAD'),
+                 slot_number=new['slot'],lease_generation=new['lease_generation'])
+        ready=c.prepare_integration(run,'successor',integration_worktree=str(self.repo))
+        self.assertEqual(ready['status'],'READY_FOR_TEST')
+        self.assertEqual((self.repo/'b.txt').read_text(),'B partial result')
+
+    def test_recovery_refuses_untracked_symlink_escaping_old_worktree(self):
+        run=self.run_tasks()
+        old=self.claim(run,'original')
+        (Path(old['worktree'])/'outside').symlink_to(self.root/'private')
+        self.expire(run)
+        with self.assertRaisesRegex(RuntimeError,'external untracked symlink'):
+            self.claim(run,'successor')
+        self.assertTrue((Path(old['worktree'])/'outside').is_symlink())
+        with c._connection() as db:
+            row=db.execute('SELECT status,task_id,start_commit FROM slots WHERE run_id=?',(run,)).fetchone()
+            self.assertEqual((row['status'],row['task_id']),('claimed','successor'))
+            self.assertIsNone(row['start_commit'])
+
+    def test_recovered_commits_cannot_overwrite_conflicting_completed_worker(self):
+        run=self.run_tasks([{'key':'A','title':'A','instructions':'A'},
+                            {'key':'B','title':'B','instructions':'B'}])
+        old=self.claim(run,'old')
+        existing=self.claim(run,'successor')
+        old_root=Path(old['worktree'])
+        successor_root=Path(existing['worktree'])
+        (old_root/'start.txt').write_text('from original task\\n')
+        git(old_root,'add','start.txt')
+        git(old_root,'commit','-m','original in-flight change')
+        (successor_root/'start.txt').write_text('from completed B task\\n')
+        git(successor_root,'add','start.txt')
+        git(successor_root,'commit','-m','completed B work')
+        c.finish(run,'successor',commit_sha=git(successor_root,'rev-parse','HEAD'),
+                 auto_claim=False,slot_number=existing['slot'],
+                 lease_generation=existing['lease_generation'])
+        self.expire(run,'A')
+        with self.assertRaisesRegex(RuntimeError,'conflict resolution'):
+            self.claim(run,'successor')
+        self.assertEqual((old_root/'start.txt').read_text(),'from original task\\n')
+        self.assertEqual((successor_root/'start.txt').read_text(),'from completed B task\\n')
+        self.assertEqual(git(successor_root,'status','--porcelain','--untracked-files=all'),'')
+        self.assertEqual(c.status(run)['slots'][0]['status'],'claimed')
+
+    def test_reclaim_restores_staged_binary_patch(self):
+        (self.repo/'bytes.dat').write_bytes(b'\x00before')
+        git(self.repo,'add','bytes.dat')
+        git(self.repo,'commit','-m','binary fixture')
+        run=self.run_tasks()
+        old=self.claim(run,'original')
+        data=b'\x00\xffafter\x00'
+        (Path(old['worktree'])/'bytes.dat').write_bytes(data)
+        git(old['worktree'],'add','bytes.dat')
+        self.expire(run)
+        new=self.claim(run,'successor')
+        dest=Path(new['worktree'])
+        self.assertEqual((dest/'bytes.dat').read_bytes(),data)
+        self.assertTrue(new['restored_worktree']['staged_changes'])
+        self.assertEqual(git(dest,'diff','--cached','--numstat'),
+                         git(old['worktree'],'diff','--cached','--numstat'))
+        self.assertEqual(git(dest,'diff'),'')
+
+    def test_reclaim_cannot_copy_old_worktree_outside_authorized_parent(self):
+        run=self.run_tasks()
+        old=self.claim(run,'original')
+        outside=self.root/'outside-worker'
+        git(self.repo,'worktree','add','--detach',str(outside),
+            git(self.repo,'rev-parse','HEAD'))
+        self.expire(run)
+        c.reclaim(run,'A',force=False,reason='expired original')
+        with c._connection(write=True) as db:
+            db.execute('UPDATE reclaims SET old_worktree=? WHERE run_id=?',
+                       (str(outside),run))
+        with self.assertRaisesRegex(PermissionError,'outside the run-authorized'):
+            self.claim(run,'successor')
+        self.assertTrue(outside.is_dir())
+        self.assertTrue(Path(old['worktree']).is_dir())
+
+    def test_ignored_cache_is_not_silently_duplicated(self):
+        (self.repo/'.gitignore').write_text('.cache/\n')
+        git(self.repo,'add','.gitignore')
+        git(self.repo,'commit','-m','ignored build data')
+        run=self.run_tasks()
+        old=self.claim(run,'original')
+        cached=Path(old['worktree'])/'.cache'
+        cached.mkdir()
+        (cached/'token.dat').write_bytes(b'local only')
+        self.expire(run)
+        next=self.claim(run,'successor')
+        self.assertGreaterEqual(next['restored_worktree']['ignored_entries_not_copied'],1)
+        self.assertFalse((Path(next['worktree'])/'.cache'/'token.dat').exists())
+        self.assertEqual((cached/'token.dat').read_bytes(),b'local only')
+
+    def test_snapshot_detects_concurrent_source_file_mutation(self):
+        run=self.run_tasks()
+        old=self.claim(run,'original')
+        source=Path(old['worktree'])/'draft.txt'
+        source.write_text('first version')
+        self.expire(run)
+        original_copy=c.shutil.copy2
+        def race(a,b,*args,**kwargs):
+            value=original_copy(a,b,*args,**kwargs)
+            if Path(a)==source:
+                source.write_text('second version')
+            return value
+        with mock.patch.object(c.shutil,'copy2',side_effect=race):
+            with self.assertRaisesRegex(RuntimeError,'changed during recovery snapshot'):
+                self.claim(run,'successor')
+        self.assertEqual(source.read_text(),'second version')
+        new=Path(self.parent/f'{run}-worker-successor')
+        self.assertFalse((new/'draft.txt').exists())
 
     def test_original_worker_can_resume_after_inactivity_before_any_takeover(self):
         run=self.run_tasks()
@@ -432,7 +620,7 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         self.assertEqual(len(assigned), 1)
         self.assertEqual(assigned[0]['lease_generation'], 2)
 
-    def test_checkpoint_survives_takeover_and_is_not_silently_replayed(self):
+    def test_checkpoint_remains_optional_and_committed_delta_is_replayed(self):
         run = self.run_tasks()
         old = self.claim(run, 'writer')
         sha = self.commit(old)
@@ -444,8 +632,9 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         self.assertEqual(new['recovery']['checkpoint_note'], 'first unit verified')
         self.assertEqual(git(self.repo, 'rev-parse',
                             f'refs/codex-loop/collab/{run}/checkpoint-1-g1'), sha)
-        self.assertFalse((Path(new['worktree']) / 'A.txt').exists())
+        self.assertEqual((Path(new['worktree']) / 'A.txt').read_text(), 'writer')
         self.assertTrue((Path(old['worktree']) / 'A.txt').exists())
+        self.assertEqual(new['restored_worktree']['replayed_commits'],1)
 
     def test_reclaim_delegations_does_not_leave_dead_sender_as_blocker(self):
         run = self.run_tasks([
