@@ -1465,6 +1465,24 @@ def _cmd_collab(argv: list[str]) -> int:
     c = sub.add_parser('claim', help='claim a ready DAG task fairly across pools; reuse current Chat worktree')
     c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
     c.add_argument('--worktree-parent', required=True); c.add_argument('--existing-worktree')
+    c = sub.add_parser('heartbeat', help='record current worker tool activity and renew its lease')
+    c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
+    c.add_argument('--lease-generation', required=True, type=int)
+    c = sub.add_parser('publish', help='publish one new task and optionally a new local task pool')
+    c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
+    c.add_argument('--lease-generation', required=True, type=int); c.add_argument('--task-file', required=True)
+    c = sub.add_parser('revise', help='atomically revise an unclaimed task and its dependencies')
+    c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
+    c.add_argument('--lease-generation', required=True, type=int)
+    c.add_argument('--task-key', required=True); c.add_argument('--expected-revision', required=True, type=int)
+    c.add_argument('--updates-file', required=True)
+    c = sub.add_parser('checkpoint', help='record a verified, reachable intermediate Git commit')
+    c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
+    c.add_argument('--lease-generation', required=True, type=int)
+    c.add_argument('--commit-sha', required=True); c.add_argument('--note', required=True)
+    c = sub.add_parser('reclaim', help='reclaim an expired slot; --force bypasses the inactivity timer')
+    c.add_argument('--run-id', required=True); c.add_argument('--task-key', required=True)
+    c.add_argument('--force', action='store_true'); c.add_argument('--reason', default='Lease expired')
     c = sub.add_parser('join', help='join/create unplanned cohort with exact goal key')
     c.add_argument('--repo', required=True); c.add_argument('--branch', required=True)
     c.add_argument('--goal-key', required=True); c.add_argument('--worktree-parent', required=True)
@@ -1500,8 +1518,13 @@ def _cmd_collab(argv: list[str]) -> int:
     c = sub.add_parser('finish'); c.add_argument('--run-id', required=True)
     c.add_argument('--task-id', required=True); c.add_argument('--commit-sha', required=True)
     c.add_argument('--slot', type=int, help='claimed slot number; disambiguates retried or no-op finishes')
+    c.add_argument('--lease-generation', type=int, help='claim token; required after any reclaim')
     c = sub.add_parser('elect'); c.add_argument('--run-id', required=True)
     c.add_argument('--task-id', required=True)
+    c = sub.add_parser('reclaim-integrator', help='take over stalled integration/serial owner after Git safety check')
+    c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
+    c.add_argument('--integration-worktree', required=True)
+    c.add_argument('--force', action='store_true'); c.add_argument('--reason', default='Expired integration lease')
     c = sub.add_parser('integrate'); c.add_argument('--run-id', required=True)
     c.add_argument('--task-id', required=True); c.add_argument('--integration-worktree', required=True)
     c = sub.add_parser('integration-resolved'); c.add_argument('--run-id', required=True)
@@ -1532,6 +1555,24 @@ def _cmd_collab(argv: list[str]) -> int:
     elif action == 'claim':
         result=collab.claim(a.run_id,a.task_id,worktree_parent=a.worktree_parent,
                             existing_worktree=a.existing_worktree)
+    elif action == 'heartbeat':
+        result=collab.heartbeat(a.run_id,a.task_id,lease_generation=a.lease_generation)
+    elif action in ('publish','revise'):
+        source=Path(a.task_file if action=='publish' else a.updates_file)
+        if not source.is_file() or source.stat().st_size>1024*128:
+            raise ValueError('task/updates file must be bounded JSON')
+        payload=json.loads(source.read_text(encoding='utf-8'))
+        if action=='publish':
+            result=collab.publish_task(a.run_id,a.task_id,payload,lease_generation=a.lease_generation)
+        else:
+            result=collab.revise_task(a.run_id,a.task_id,a.task_key,payload,
+                                     lease_generation=a.lease_generation,
+                                     expected_revision=a.expected_revision)
+    elif action == 'checkpoint':
+        result=collab.checkpoint(a.run_id,a.task_id,lease_generation=a.lease_generation,
+                                 commit_sha=a.commit_sha,note=a.note)
+    elif action == 'reclaim':
+        result=collab.reclaim(a.run_id,a.task_key,force=a.force,reason=a.reason)
     elif action == 'join':
         result=collab.dynamic_join(a.repo,a.branch,a.worktree_parent,goal_key=a.goal_key,
                                    task_id=a.task_id,title=a.title,instructions=a.instructions,
@@ -1557,9 +1598,14 @@ def _cmd_collab(argv: list[str]) -> int:
         result=collab.complete_delegation(a.run_id,a.task_id,delegation_id=a.delegation_id,
                                          result=a.result,commit_sha=a.commit_sha)
     elif action == 'finish':
-        result=collab.finish(a.run_id,a.task_id,commit_sha=a.commit_sha,slot_number=a.slot)
+        result=collab.finish(a.run_id,a.task_id,commit_sha=a.commit_sha,slot_number=a.slot,
+                             lease_generation=a.lease_generation)
     elif action == 'elect':
         result=collab.elect(a.run_id,a.task_id)
+    elif action == 'reclaim-integrator':
+        result=collab.reclaim_integrator(a.run_id,a.task_id,
+                                         integration_worktree=a.integration_worktree,
+                                         force=a.force,reason=a.reason)
     elif action == 'integrate':
         result=collab.prepare_integration(a.run_id,a.task_id,integration_worktree=a.integration_worktree)
     elif action == 'integration-resolved':

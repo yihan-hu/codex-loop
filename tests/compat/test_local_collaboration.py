@@ -324,8 +324,8 @@ class CollaborationTest(unittest.TestCase):
         run=self.create(2,strategy='branches')['run_id']
         a=c.claim(run,'branch-A',worktree_parent=str(self.parent))
         b=c.claim(run,'branch-B',worktree_parent=str(self.parent))
-        self.assertEqual(git(Path(a['worktree']),'symbolic-ref','--short','HEAD'),f'codex-loop/{run}/slot-1')
-        self.assertEqual(git(Path(b['worktree']),'symbolic-ref','--short','HEAD'),f'codex-loop/{run}/slot-2')
+        self.assertEqual(git(Path(a['worktree']),'symbolic-ref','--short','HEAD'),f'codex-loop/{run}/worker-branch-A')
+        self.assertEqual(git(Path(b['worktree']),'symbolic-ref','--short','HEAD'),f'codex-loop/{run}/worker-branch-B')
         self.assertEqual(git(self.repo,'symbolic-ref','--short','HEAD'),'main')
 
     def test_dirty_worker_or_dirty_integration_target_stops_mutation(self):

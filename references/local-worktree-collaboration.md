@@ -4,9 +4,9 @@ Use only after Codex Loop admission on the **selected, pinned Local computer**. 
 
 ## What is shared, what is isolated
 
-- A **Run** owns one immutable source baseline and one validated directed acyclic graph (DAG) of planned tasks. Each task declares `key` (stable ID), `pool` (fairness grouping), `depends_on` (predecessor task keys), `title` and `instructions`. `key`, `pool` and `depends_on` are optional only when there is genuinely no need for explicit labels or dependencies; omitted values become `task-N`, `default` and `[]`.
+- A **Run** owns one immutable verified Git source baseline and an initially validated directed acyclic graph (DAG) that may be revised for unclaimed tasks. Each task declares `key` (stable ID), `pool` (fairness grouping), `depends_on` (predecessor task keys), `title` and `instructions`. `key`, `pool` and `depends_on` are optional only when there is genuinely no need for explicit labels or dependencies; omitted values become `task-N`, `default` and `[]`.
 - **Pools do not impose hard concurrency limits.** Each atomic claim considers all currently ready tasks, prioritizes pools with fewer active workers and least-recently served pools, and keeps all available Chats useful. A waiting task does not block another Pool's downstream work. Predecessors must actually be finished and committed; declared cycles, duplicate keys or missing prerequisites are rejected on Run creation.
-- Each Chat keeps its existing Codex Loop `task_id` and one private Git worktree, and may execute many successive tasks. At `collab finish`, the runtime marks one task done, preserves its own commit delta and may return `continue_now=true` with the already-claimed `next_task`. **Execute that task immediately in the same Chat and worktree**, with no fresh lifecycle/bootstrap/authorization. A completed task cannot be stolen or restarted by another Chat.
+- Each Chat keeps its existing Codex Loop `task_id` and one private Git worktree, and may execute many successive tasks. At `collab finish`, the runtime marks one task done, preserves its own commit delta and may return `continue_now=true` with the already-claimed `next_task`. **Execute that task immediately in the same Chat and worktree**, with no fresh lifecycle/bootstrap/authorization. A completed task cannot be stolen or restarted by another Chat; expired uncompleted claims may be reclaimed with a new ownership generation.
 - Dependencies crossing worktrees are materialized through verified Git `cherry-pick -x` of each prerequisite's **own new commits**, ordered by the DAG. The target branch remains untouched until final integration. On an interrupted Git operation, inspect native Git state, resolve safely and retry claim; no blind replay of a partial cherry-pick. Each task records its initial `start_commit` *after* dependency materialization, so final integration takes only `start_commit..commit_sha`, topologically, without reapplying the imported prerequisites.
 - Messages/delegation offers and all worker/task ownership live in a SQLite file under the selected local computer's `CODEX_LOOP_HOME`. Do not sync this SQLite file across Mac/WSL or OneDrive. Each worktree and local file path is still independently subject to the current Chat's scoped authorization. A file/SQLite update **cannot awaken** an idle or ended Chat.
 - When every task is `done` and every delegation is resolved, the last active worker atomically becomes Integrator. An unavailable/dirty worktree, missing commit, unfinished task or unresolved delegation never counts as completion. The Integrator performs target-branch Git merge/cherry-pick and validation, then owns any prewritten continuous post-integration serial tail on the same `task_id`.
@@ -14,7 +14,7 @@ Use only after Codex Loop admission on the **selected, pinned Local computer**. 
 ## Planned same-host DAG Run
 
 1. Verify the exact authorized repository, clean target checkout, source commit/tree and one outside-repository worktree parent on the **same pinned host**. Choose `detached` for short-lived contributions and `branches` for separately reviewable long-lived contributions; both strategies use isolated worktrees.
-2. Freeze one full-objective `PLAN.md` and one JSON task file before launch. The task file is an array with records such as:
+2. Define and hash the **initial** `PLAN.md` and JSON task file before launch. These establish original scope and launch provenance, while subsequent Local dispatch reads the live SQLite task graph. The task file is an array with records such as:
 
    ```json
    [
@@ -26,10 +26,44 @@ Use only after Codex Loop admission on the **selected, pinned Local computer**. 
 
    These fields are execution data, not prose for the agent to reinterpret; retain precise ownership, gate and output instructions. Unlike old Wave-only pools, dependent tasks **belong in this same Run** if their verified predecessors can be materialized safely. A genuinely exclusive global resource or a prerequisite requiring an independently accepted release baseline can still justify a separate subsequent Run.
 3. Create once via `python3 scripts/codex_loop.py collab create --repo REPO --branch TARGET --goal-key GOAL --worktree-parent PARENT --tasks-file TASKS.json [--serial-tail-file PREWRITTEN_TAIL.md] --strategy detached`. The SQLite registry owns all task definitions and pool/edge state afterward. There is no hard task-to-Chat ratio; launch as many active Chats as actually useful and authorized.
-4. Each Chat performs its own normal Codex Loop bootstrap and current-chat scoped repository/worktree permission admission; then `collab claim --run-id RUN --task-id TASK --worktree-parent PARENT`. A claim atomically selects a Ready task fairly, reuses the Chat's previous worktree if it has one, materializes predecessor code, and returns the task key/pool/dependencies, worktree and exact source baseline. An idempotent retry of an already-claimed task returns its current assignment.
-5. After bounded task work and local verification, commit changes (including small tracked evidence for test-only tasks) and call `collab finish --run-id RUN --task-id TASK --slot SLOT_NUMBER --commit-sha FULL_HEAD`. `--slot` disambiguates retries or successive tasks whose HEAD did not change. The finish response reports an integration election **or** `continue_now=true` plus `next_task`; follow that `next_task` immediately with the **same** task ID/worktree. Do not stop at a label called Wave or ask for another launch prompt. If no next task is ready, this Chat may exit normally; remaining active Chats keep claiming work when dependencies unlock.
+4. Each Chat performs its own normal Codex Loop bootstrap and current-chat scoped repository/worktree permission admission; then `collab claim --run-id RUN --task-id TASK --worktree-parent PARENT`. A claim atomically reclaims expired leases after 600 seconds of unobserved activity, selects only eligible Ready tasks fairly, reuses the Chat's own worktree, materializes verified predecessor code, and returns the task key/pool/dependencies, worktree, exact source baseline and lease generation. An idempotent retry of an already-claimed task returns its current assignment.
+5. After bounded task work and local verification, commit changes (including small tracked evidence for test-only tasks) and call `collab finish --run-id RUN --task-id TASK --slot SLOT_NUMBER --lease-generation GENERATION --commit-sha FULL_HEAD`. `--slot` disambiguates retries or successive tasks whose HEAD did not change. The finish response reports an integration election **or** `continue_now=true` plus `next_task`; follow that `next_task` immediately with the **same** task ID/worktree. Do not stop at a label called Wave or ask for another launch prompt. If no next task is ready, this Chat may exit normally; remaining active Chats keep claiming work when dependencies unlock.
 6. If elected Integrator, execute `collab integrate --run-id RUN --task-id TASK --integration-worktree TARGET`; it cherry-picks only each task's own commits in dependency order. Resolve Git conflicts without touching unrelated user work. Verify the merged result, then call `collab integration-complete --test-evidence ACTUAL_TESTS`. If `continue_now=true` assigns a registered post-integration tail, execute its entire chain in this Chat and call `collab serial-complete` only after its real gates pass. Neither SQLite nor the registry runs an unattended model or automatically pushes.
-7. `collab status --run-id RUN` displays Ready/Waiting/Claimed/Done per Pool, remaining tasks, and the integration/serial owner. `next` and `resume` expose inbox/serial work for current active workers. If a Chat stops during a task, resume **that** task ID and its same owned worktree; never steal claimed work or replay uncertain Git writes.
+7. `collab status --run-id RUN` displays Ready/Waiting/Claimed/Done per Pool, remaining tasks, and the integration/serial owner. `next` and `resume` expose inbox/serial work for current active workers. If a Chat stops, its claimed task becomes reclaimable after 600 seconds without an observed heartbeat. The next eligible claim may adopt it in a different worker-owned worktree; the old worktree and Git checkpoint remain intact. A resumed old Chat must check its lease generation and must not replay rejected writes.
+
+## Local mutable DAG, review tags and activity leases
+
+For Local planned Runs only, workers may atomically publish one task or a JSON array of an entire new Pool (including internal dependencies), and modify *available* tasks during execution. Only the initial PLAN/task file is hashed for launch; the mutable task state is the host-local SQLite registry. Read `collab status` for its current `graph_revision` and avoid applying old PLAN content over newer task instructions. Claimed/Done tasks remain immutable; create follow-up tasks instead of editing them.
+
+```bash
+# Inside the already admitted, authorized Local worker. Files contain JSON.
+python3 scripts/codex_loop.py collab publish --run-id RUN --task-id TASK   --lease-generation GENERATION --task-file new-task-or-task-array.json
+python3 scripts/codex_loop.py collab revise --run-id RUN --task-id TASK   --lease-generation GENERATION --task-key later-task   --expected-revision CURRENT_REVISION --updates-file changes.json
+```
+
+The new task JSON uses `key`, `pool`, `depends_on`, `title`, `instructions`, plus optional `exclude_workers` and `review_of` lists. For an independent review, `review_of` names the producing task key(s): this adds the required task dependencies and excludes the actual producers automatically, even if the author is not known when the review task was planned. `exclude_workers` accepts stable registered names such as `Repo-worker3`, ordinal aliases such as `worker3`, or exact task IDs. All filtering happens before atomic assignment.
+
+A claimed Local task has an observed activity lease of **600 seconds**, renewed by `claim`, `publish`, `revise`, `checkpoint` and explicit `heartbeat`. Normal host tool calls, long model thinking, and external work cannot be assumed to emit a heartbeat automatically. Each worker must call:
+
+```bash
+python3 scripts/codex_loop.py collab heartbeat --run-id RUN --task-id TASK   --lease-generation GENERATION
+```
+
+after meaningful tool activity and at safe intervals during a long-running operation. Heartbeat is evidence of activity, not proof that all work is complete. If no activity was recorded for 600 seconds, the *next* `collab claim` atomically reclaims the old owner; no daemon or paused-Chat wakeup runs. A coordinator with the exact same-host authorization may reclaim a named stuck task sooner:
+
+```bash
+python3 scripts/codex_loop.py collab reclaim --run-id RUN   --task-key task-A --force --reason 'Original Chat unavailable'
+```
+
+An automatically reclaimed task gets a **new lease generation**. Old `finish`, `heartbeat`, and `checkpoint` calls are rejected. Worker worktrees are keyed by worker identity, not slot identity; the old worktree is never erased or reused. `claim.recovery` reports the previous owner, worktree, and any saved checkpoint. Committed intermediate results may be recorded with `collab checkpoint --run-id RUN --task-id TASK --lease-generation GENERATION --commit-sha SHA --note DESCRIPTION`. A new worker must inspect and verify source and any uncertain external effects before reusing them; uncommitted files and ambiguous Git operations are not automatically cherry-picked.
+
+If an *Integrator* or post-integration serial owner becomes stale, transfer only after verifying the target branch and clean working tree; an interrupted integration is **never** restarted blindly:
+
+```bash
+python3 scripts/codex_loop.py collab reclaim-integrator --run-id RUN   --task-id NEW_INTEGRATOR --integration-worktree TARGET_BRANCH_CHECKOUT
+```
+
+For a deliberate early transfer, append `--force --reason DESCRIPTION`. The new owner receives a new integrator generation. For pre-existing merge attempts, review Git state and use `integration-resolved` or `integration-complete` only after required commit proof and tests. Web coordination remains unchanged.
 
 ## Unplanned collaboration
 

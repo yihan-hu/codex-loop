@@ -11,6 +11,7 @@ import json
 import os
 import re
 import secrets
+import time
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ from .workspace_registry import codex_loop_home
 RUN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 TASK_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 REF_RE = re.compile(r"^[a-f0-9]{40,64}$")
+LEASE_SECONDS = 600
 
 
 SCHEMA = """
@@ -33,7 +35,9 @@ CREATE TABLE IF NOT EXISTS runs (
   goal_key TEXT NOT NULL, planned INTEGER NOT NULL, strategy TEXT NOT NULL,
   worktree_parent TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open',
   integrator_task TEXT, candidate_head TEXT, integration_start_head TEXT,
-  integration_attempted INTEGER NOT NULL DEFAULT 0
+  integration_attempted INTEGER NOT NULL DEFAULT 0,
+  graph_revision INTEGER NOT NULL DEFAULT 1,
+  integrator_generation INTEGER NOT NULL DEFAULT 0, integrator_last_seen REAL
 );
 CREATE INDEX IF NOT EXISTS active_runs ON runs(repo_key, target_branch, goal_key, state);
 CREATE TABLE IF NOT EXISTS slots (
@@ -43,6 +47,9 @@ CREATE TABLE IF NOT EXISTS slots (
   worktree TEXT, commit_sha TEXT,
   task_key TEXT, pool_id TEXT NOT NULL DEFAULT 'default',
   depends_on TEXT NOT NULL DEFAULT '[]', start_commit TEXT, completed_by TEXT,
+  exclude_workers TEXT NOT NULL DEFAULT '[]', review_of TEXT NOT NULL DEFAULT '[]',
+  lease_generation INTEGER NOT NULL DEFAULT 0, last_seen REAL,
+  checkpoint_sha TEXT, checkpoint_note TEXT,
   PRIMARY KEY(run_id, number), UNIQUE(run_id, task_id), UNIQUE(run_id, worktree)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS unique_active_task ON slots(task_id) WHERE task_id IS NOT NULL;
@@ -50,6 +57,13 @@ CREATE TABLE IF NOT EXISTS workers (
   run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL,
   worktree TEXT NOT NULL, last_commit TEXT, PRIMARY KEY(run_id, task_id), UNIQUE(run_id, worktree)
 );
+CREATE TABLE IF NOT EXISTS reclaims (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, slot_number INTEGER NOT NULL,
+  old_task_id TEXT NOT NULL, old_worktree TEXT, old_generation INTEGER NOT NULL,
+  checkpoint_sha TEXT, checkpoint_note TEXT, reason TEXT NOT NULL,
+  reclaimed_at REAL NOT NULL, adopted_by TEXT
+);
+CREATE INDEX IF NOT EXISTS reclaimed_slots ON reclaims(run_id,slot_number,id);
 CREATE TABLE IF NOT EXISTS worker_inputs (
   run_id TEXT NOT NULL, task_id TEXT NOT NULL, source_slot INTEGER NOT NULL,
   PRIMARY KEY(run_id, task_id, source_slot)
@@ -175,6 +189,10 @@ def _connection(*, write: bool = False) -> Iterator[sqlite3.Connection]:
         'task_key': 'TEXT', 'pool_id': "TEXT NOT NULL DEFAULT 'default'",
         'depends_on': "TEXT NOT NULL DEFAULT '[]'", 'start_commit': 'TEXT',
         'completed_by': 'TEXT',
+        'exclude_workers': "TEXT NOT NULL DEFAULT '[]'",
+        'review_of': "TEXT NOT NULL DEFAULT '[]'",
+        'lease_generation': 'INTEGER NOT NULL DEFAULT 0',
+        'last_seen': 'REAL', 'checkpoint_sha': 'TEXT', 'checkpoint_note': 'TEXT',
     }.items():
         if field not in existing:
             try:
@@ -182,6 +200,20 @@ def _connection(*, write: bool = False) -> Iterator[sqlite3.Connection]:
             except sqlite3.OperationalError as exc:
                 if 'duplicate column' not in str(exc).lower():
                     raise
+    run_fields = {row['name'] for row in conn.execute('PRAGMA table_info(runs)')}
+    for name, definition in {
+        'graph_revision': 'INTEGER NOT NULL DEFAULT 1',
+        'integrator_generation': 'INTEGER NOT NULL DEFAULT 0',
+        'integrator_last_seen': 'REAL',
+    }.items():
+        if name not in run_fields:
+            conn.execute(f'ALTER TABLE runs ADD COLUMN {name} {definition}')
+    # Existing claimed tasks get one grace period on schema upgrade.
+    conn.execute("UPDATE slots SET last_seen=? WHERE status='claimed' AND last_seen IS NULL",
+                 (time.time(),))
+    conn.execute("UPDATE runs SET integrator_last_seen=? WHERE state IN ('integrating','integrated') "
+                 "AND integrator_task IS NOT NULL AND integrator_last_seen IS NULL",
+                 (time.time(),))
     conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS unique_task_key ON slots(run_id,task_key) WHERE task_key IS NOT NULL')
     if write:
         conn.execute('BEGIN IMMEDIATE')
@@ -223,25 +255,35 @@ def _task_specs(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not tasks or len(tasks) > 10000:
         raise ValueError('planned run requires 1-10000 bounded tasks')
     result = []
+    allowed = {'title', 'instructions', 'key', 'pool', 'depends_on',
+               'exclude_workers', 'review_of'}
     for i, task in enumerate(tasks, 1):
-        if not isinstance(task, dict) or not {'title', 'instructions'} <= set(task) or \
-                set(task) - {'title', 'instructions', 'key', 'pool', 'depends_on'}:
-            raise ValueError('task must contain title/instructions and optional key/pool/depends_on')
+        if not isinstance(task, dict) or not {'title', 'instructions'} <= set(task) or set(task) - allowed:
+            raise ValueError('task requires title/instructions and supported task fields')
         key = _identifier(task.get('key', f'task-{i}'), 'task key', RUN_RE)
         pool = _identifier(task.get('pool', 'default'), 'pool name', RUN_RE)
         deps = task.get('depends_on', [])
-        if not isinstance(deps, list) or any(not isinstance(d, str) or not RUN_RE.fullmatch(d) for d in deps):
-            raise ValueError(f'task {key}: depends_on must be a list of task keys')
-        if len(deps) != len(set(deps)) or key in deps:
-            raise ValueError(f'task {key}: duplicate or self dependency')
+        reviews = task.get('review_of', [])
+        excluded = task.get('exclude_workers', [])
+        for label, values in [('depends_on', deps), ('review_of', reviews),
+                              ('exclude_workers', excluded)]:
+            if not isinstance(values, list) or any(
+                    not isinstance(v, str) or not RUN_RE.fullmatch(v) for v in values):
+                raise ValueError(f'task {key}: {label} must be a list of identifiers')
+            if len(values) != len(set(values)):
+                raise ValueError(f'task {key}: duplicate {label}')
+        deps = list(dict.fromkeys(deps + reviews))
+        if key in deps:
+            raise ValueError(f'task {key}: self dependency or review')
         result.append({'key': key, 'pool': pool, 'depends_on': deps,
+                       'review_of': reviews, 'exclude_workers': excluded,
                        'title': _text(task['title'], 'task title', 200),
                        'instructions': _text(task['instructions'], 'task instructions', 60000)})
-    by_key = {task['key']: task for task in result}
+    by_key = {item['key']: item for item in result}
     if len(by_key) != len(result):
         raise ValueError('task keys must be unique')
     pending = {key: set(item['depends_on']) for key, item in by_key.items()}
-    for key, deps in pending.items():
+    for deps in pending.values():
         for source in deps:
             if source not in by_key:
                 raise ValueError(f'unknown task dependency: {source}')
@@ -252,6 +294,222 @@ def _task_specs(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
             raise ValueError('cycle in task dependencies')
         removed.update(ready)
     return result
+
+
+def _stored_specs(db: sqlite3.Connection, run_id: str) -> list[dict[str, Any]]:
+    return [{'key': row['task_key'] or f'task-{row["number"]}',
+             'pool': row['pool_id'], 'depends_on': json.loads(row['depends_on']),
+             'review_of': json.loads(row['review_of']),
+             'exclude_workers': json.loads(row['exclude_workers']),
+             'title': row['title'], 'instructions': row['instructions']}
+            for row in db.execute('SELECT * FROM slots WHERE run_id=? ORDER BY number', (run_id,))]
+
+
+def _owner_alias(db: sqlite3.Connection, run: sqlite3.Row, task_id: str) -> str:
+    ids = [row['task_id'] for row in db.execute(
+        'SELECT task_id FROM workers WHERE run_id=? ORDER BY rowid', (run['id'],))]
+    number = ids.index(task_id) + 1 if task_id in ids else len(ids) + 1
+    project = re.sub(r'[^A-Za-z0-9_-]+', '-', Path(run['repo']).name).strip('-') or 'Project'
+    return f'{project}-worker{number}'
+
+
+def _eligible(db: sqlite3.Connection, run: sqlite3.Row,
+              slot: sqlite3.Row, task_id: str) -> bool:
+    alias = _owner_alias(db, run, task_id)
+    n = alias.rsplit('worker', 1)[-1]
+    excluded = set(json.loads(slot['exclude_workers']))
+    if {task_id, alias, f'worker{n}'} & excluded:
+        return False
+    reviews = set(json.loads(slot['review_of']))
+    if not reviews:
+        return True
+    for source in db.execute('SELECT task_key,number,completed_by FROM slots WHERE run_id=?',
+                             (run['id'],)):
+        if (source['task_key'] or f'task-{source["number"]}') in reviews and source['completed_by'] == task_id:
+            return False
+    return True
+
+
+def _active_owner(db: sqlite3.Connection, run_id: str, task_id: str,
+                  generation: int | None = None) -> sqlite3.Row:
+    slot = db.execute("SELECT * FROM slots WHERE run_id=? AND task_id=? AND status='claimed'",
+                      (run_id, task_id)).fetchone()
+    if slot is None:
+        raise PermissionError('worker no longer owns an active collaboration task')
+    if generation is not None and slot['lease_generation'] != generation:
+        raise PermissionError('stale task ownership generation')
+    return slot
+
+
+def _touch_owner(db: sqlite3.Connection, run_id: str, task_id: str,
+                 generation: int) -> sqlite3.Row:
+    slot = _active_owner(db, run_id, task_id, generation)
+    db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND number=?',
+               (time.time(), run_id, slot['number']))
+    return slot
+
+
+def _reclaim_slot(db: sqlite3.Connection, run_id: str, slot: sqlite3.Row,
+                  reason: str) -> dict[str, Any]:
+    # Keep the old worker's worktree and reachable commit references untouched.
+    if slot['status'] != 'claimed' or not slot['task_id']:
+        raise RuntimeError('only claimed work can be reclaimed')
+    previous = {'task_id': slot['task_id'], 'worktree': slot['worktree'],
+                'lease_generation': slot['lease_generation'],
+                'checkpoint_sha': slot['checkpoint_sha'],
+                'checkpoint_note': slot['checkpoint_note']}
+    db.execute("""INSERT INTO reclaims(run_id,slot_number,old_task_id,old_worktree,
+                  old_generation,checkpoint_sha,checkpoint_note,reason,reclaimed_at)
+                  VALUES(?,?,?,?,?,?,?,?,?)""",
+               (run_id, slot['number'], slot['task_id'], slot['worktree'],
+                slot['lease_generation'], slot['checkpoint_sha'], slot['checkpoint_note'],
+                reason, time.time()))
+    db.execute("""UPDATE slots SET status='available',task_id=NULL,worktree=NULL,
+                  start_commit=NULL,last_seen=NULL,checkpoint_sha=NULL,checkpoint_note=NULL
+                  WHERE run_id=? AND number=? AND status='claimed'""",
+               (run_id, slot['number']))
+    return previous
+
+
+def _expire_slots(db: sqlite3.Connection, run_id: str, *, returning_task: str | None = None) -> None:
+    now = time.time()
+    for slot in db.execute("SELECT * FROM slots WHERE run_id=? AND status='claimed'",
+                           (run_id,)).fetchall():
+        if slot['task_id'] != returning_task and slot['last_seen'] is not None and now - slot['last_seen'] > LEASE_SECONDS:
+            _reclaim_slot(db, run_id, slot, '600 seconds without recorded tool activity')
+
+
+def heartbeat(run_id: str, task_id: str, *, lease_generation: int) -> dict[str, Any]:
+    task_id = _task(task_id)
+    with _connection(write=True) as db:
+        run = _run(db, run_id)
+        if run['integrator_task'] == task_id and run['state'] in ('integrating','integrated'):
+            if lease_generation != run['integrator_generation']:
+                raise PermissionError('stale integration ownership generation')
+            db.execute('UPDATE runs SET integrator_last_seen=? WHERE id=?',
+                       (time.time(),run_id))
+            return {'run_id': run_id, 'integrator': task_id,
+                    'lease_generation': lease_generation, 'last_seen': time.time()}
+        slot = _touch_owner(db, run_id, task_id, lease_generation)
+        return {'run_id': run_id, 'task_key': slot['task_key'],
+                'lease_generation': lease_generation, 'last_seen': time.time()}
+
+
+def reclaim(run_id: str, task_key: str, *, force: bool = False,
+            reason: str = 'Lease expired') -> dict[str, Any]:
+    task_key = _identifier(task_key, 'task key', RUN_RE)
+    reason = _text(reason, 'reclaim reason', 1000)
+    with _connection(write=True) as db:
+        run = _run(db, run_id)
+        if run['state'] != 'open':
+            raise RuntimeError('only open runs allow task reclaim')
+        slot = db.execute("SELECT * FROM slots WHERE run_id=? AND COALESCE(task_key,'task-'||number)=?",
+                          (run_id, task_key)).fetchone()
+        if slot is None:
+            raise KeyError('task key not found')
+        if slot['status'] != 'claimed':
+            raise RuntimeError('only claimed tasks can be reclaimed')
+        if not force and (slot['last_seen'] is None or
+                          time.time() - slot['last_seen'] <= LEASE_SECONDS):
+            raise RuntimeError('lease has not expired; explicit force required')
+        previous = _reclaim_slot(db, run_id, slot, reason)
+        return {'run_id': run_id, 'task_key': task_key, 'previous': previous,
+                'reclaimable': True, 'reconcile_external_effects': True}
+
+def publish_task(run_id: str, task_id: str, tasks: dict[str, Any] | list[dict[str, Any]], *,
+                 lease_generation: int) -> dict[str, Any]:
+    # Publish one new task or an entire cross-dependent task pool atomically.
+    task_id = _task(task_id)
+    batch = [tasks] if isinstance(tasks, dict) else tasks
+    if not isinstance(batch, list) or not batch:
+        raise ValueError('publish requires a task object or nonempty task array')
+    with _connection(write=True) as db:
+        run = _run(db, run_id)
+        if run['state'] != 'open' or not run['planned']:
+            raise RuntimeError('dynamic tasks require an open planned run')
+        _touch_owner(db, run_id, task_id, lease_generation)
+        current = _stored_specs(db, run_id)
+        validated = _task_specs(current + batch)
+        new_tasks = validated[len(current):]
+        first_number = db.execute('SELECT COALESCE(MAX(number),0)+1 FROM slots WHERE run_id=?',
+                                  (run_id,)).fetchone()[0]
+        for offset, new in enumerate(new_tasks):
+            db.execute("INSERT INTO slots(run_id,number,title,instructions,task_key,pool_id,"
+                       " depends_on,review_of,exclude_workers) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (run_id, first_number + offset, new['title'], new['instructions'], new['key'],
+                        new['pool'], json.dumps(new['depends_on']), json.dumps(new['review_of']),
+                        json.dumps(new['exclude_workers'])))
+        db.execute('UPDATE runs SET graph_revision=graph_revision+1 WHERE id=?', (run_id,))
+        return {'run_id': run_id, 'task_key': new_tasks[0]['key'] if len(new_tasks) == 1 else None,
+                'slot': first_number if len(new_tasks) == 1 else None,
+                'published': [item['key'] for item in new_tasks],
+                'graph_revision': run['graph_revision'] + 1}
+
+
+
+def revise_task(run_id: str, task_id: str, task_key: str,
+                updates: dict[str, Any], *,
+                lease_generation: int, expected_revision: int) -> dict[str, Any]:
+    task_id = _task(task_id)
+    task_key = _identifier(task_key, 'task key', RUN_RE)
+    editable = {'title','instructions','pool','depends_on','review_of','exclude_workers'}
+    if not updates or set(updates) - editable:
+        raise ValueError('invalid or empty task updates')
+    with _connection(write=True) as db:
+        run = _run(db, run_id)
+        if run['state'] != 'open' or not run['planned']:
+            raise RuntimeError('only an open planned run supports DAG changes')
+        if run['graph_revision'] != expected_revision:
+            raise RuntimeError('DAG revision has changed; reload task status')
+        _touch_owner(db, run_id, task_id, lease_generation)
+        current = _stored_specs(db, run_id)
+        target = next((t for t in current if t['key'] == task_key), None)
+        if target is None:
+            raise KeyError('unknown task key')
+        slot = db.execute('SELECT status FROM slots WHERE run_id=? AND task_key=?',
+                          (run_id, task_key)).fetchone()
+        if slot['status'] != 'available':
+            raise RuntimeError('claimed or completed tasks cannot be revised')
+        changed = {**target, **updates}
+        validated = _task_specs([changed if task['key'] == task_key else task for task in current])
+        final = next(t for t in validated if t['key'] == task_key)
+        db.execute("""UPDATE slots SET title=?,instructions=?,pool_id=?,depends_on=?,
+                      review_of=?,exclude_workers=? WHERE run_id=? AND task_key=?""",
+                   (final['title'], final['instructions'], final['pool'],
+                    json.dumps(final['depends_on']), json.dumps(final['review_of']),
+                    json.dumps(final['exclude_workers']), run_id, task_key))
+        db.execute('UPDATE runs SET graph_revision=graph_revision+1 WHERE id=?', (run_id,))
+        return {'run_id': run_id, 'task_key': task_key,
+                'graph_revision': expected_revision + 1}
+
+
+def checkpoint(run_id: str, task_id: str, *, lease_generation: int,
+               commit_sha: str, note: str) -> dict[str, Any]:
+    task_id = _task(task_id)
+    if not REF_RE.fullmatch(commit_sha):
+        raise ValueError('checkpoint requires a full Git commit')
+    note = _text(note, 'checkpoint note', 5000)
+    with _connection() as db:
+        run = _run(db, run_id)
+        slot = _active_owner(db, run_id, task_id, lease_generation)
+    if not slot['start_commit'] or not slot['worktree']:
+        raise RuntimeError('task has not materialized inputs yet')
+    root = Path(slot['worktree'])
+    _verify_same_repo(root, run)
+    if _git(root, 'rev-parse', '--verify', 'HEAD') != commit_sha:
+        raise RuntimeError('checkpoint SHA must be worker HEAD')
+    if run_git(root, ['merge-base', '--is-ancestor', slot['start_commit'], commit_sha]).returncode:
+        raise RuntimeError('checkpoint is not derived from verified task inputs')
+    with _connection(write=True) as db:
+        current = _touch_owner(db, run_id, task_id, lease_generation)
+        if current['number'] != slot['number'] or current['start_commit'] != slot['start_commit']:
+            raise PermissionError('task assignment changed during checkpoint')
+        # Git ref is written only while ownership is locked and verified.
+        ref = f'refs/codex-loop/collab/{run_id}/checkpoint-{slot["number"]}-g{lease_generation}'
+        _git(root, 'update-ref', ref, commit_sha)
+        db.execute('UPDATE slots SET checkpoint_sha=?,checkpoint_note=? WHERE run_id=? AND number=?',
+                   (commit_sha, note, run_id, slot['number']))
+    return {'run_id': run_id, 'task_key': slot['task_key'], 'checkpoint_sha': commit_sha}
 
 
 def _ordered_slots(db: sqlite3.Connection, run_id: str) -> list[sqlite3.Row]:
@@ -276,8 +534,9 @@ def _ready_slots(db: sqlite3.Connection, run_id: str) -> list[sqlite3.Row]:
             set(json.loads(slot['depends_on'])).issubset(done)]
 
 
-def _choose_slot(db: sqlite3.Connection, run_id: str) -> sqlite3.Row | None:
-    ready = _ready_slots(db, run_id)
+def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str) -> sqlite3.Row | None:
+    run = _run(db, run_id)
+    ready = [slot for slot in _ready_slots(db, run_id) if _eligible(db, run, slot, task_id)]
     if not ready:
         return None
     active = {r['pool_id']: r['n'] for r in db.execute(
@@ -351,10 +610,11 @@ def create_run(repo: str, target_branch: str, worktree_parent: str,
         run = _make_run(db, identity, goal=goal_key, strategy=strategy,
                         parent=parent, planned=True, run_id=run_id)
         for i, task in enumerate(specs, 1):
-            db.execute('''INSERT INTO slots(run_id,number,title,instructions,task_key,pool_id,depends_on)
-                          VALUES(?,?,?,?,?,?,?)''',
+            db.execute('''INSERT INTO slots(run_id,number,title,instructions,task_key,pool_id,depends_on,review_of,exclude_workers)
+                          VALUES(?,?,?,?,?,?,?,?,?)''',
                        (run, i, task['title'], task['instructions'], task['key'], task['pool'],
-                        json.dumps(task['depends_on'])))
+                        json.dumps(task['depends_on']),json.dumps(task['review_of']),
+                        json.dumps(task['exclude_workers'])))
         if serial_tail is not None:
             db.execute('INSERT INTO serial_tails(run_id,instructions) VALUES(?,?)',
                        (run, serial_tail))
@@ -396,9 +656,14 @@ def dynamic_join(repo: str, target_branch: str, worktree_parent: str, *, goal_ke
             if run['strategy'] != strategy or run['worktree_parent'] != str(parent):
                 raise ValueError('existing collaboration uses a different strategy or worktree parent')
             run_id = run['id']
+        if run['state'] == 'open':
+            _expire_slots(db, run_id, returning_task=task_id)
         existing = db.execute('SELECT * FROM slots WHERE run_id=? AND (task_id=? OR completed_by=?) ORDER BY number DESC LIMIT 1', (run_id, task_id, task_id)).fetchone()
+        abandoned = db.execute("SELECT 1 FROM slots WHERE run_id=? AND status='available' LIMIT 1", (run_id,)).fetchone()
         if existing is not None:
             number = existing['number']
+        elif abandoned:
+            number = None  # Claim an expired unplanned slot instead of orphaning it.
         else:
             number = int(db.execute('SELECT COALESCE(MAX(number),0)+1 FROM slots WHERE run_id=?', (run_id,)).fetchone()[0])
             db.execute("INSERT INTO slots(run_id,number,title,instructions,status,task_id) VALUES(?,?,?,?, 'claimed', ?)",
@@ -416,6 +681,8 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
         parent = Path(worktree_parent).expanduser().resolve(strict=True)
         if str(parent) != run['worktree_parent']:
             raise PermissionError('worktree parent differs from registered authorized parent')
+        if run['state'] == 'open':
+            _expire_slots(db, run_id, returning_task=task_id)
         worker = db.execute('SELECT * FROM workers WHERE run_id=? AND task_id=?',
                             (run_id, task_id)).fetchone()
         slot = db.execute("SELECT * FROM slots WHERE run_id=? AND task_id=? AND status='claimed'",
@@ -428,15 +695,17 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                             'status': last['status'], 'worktree': worker['worktree'],
                             'registered': True, 'run_state': run['state']}
                 raise RuntimeError('run is not accepting slot claims')
-            if not run['planned']:
+            slot = _choose_slot(db, run_id, task_id)
+            if not run['planned'] and slot is None:
                 raise RuntimeError('unplanned participants must register through collab join')
-            slot = _choose_slot(db, run_id)
             if slot is None:
-                if db.execute("SELECT 1 FROM slots WHERE run_id=? AND status='available' LIMIT 1", (run_id,)).fetchone():
-                    raise RuntimeError('no ready task: remaining tasks are waiting for declared dependencies')
                 offer = db.execute("""SELECT * FROM delegations WHERE run_id=? AND status='offered'
                                        AND recipient IS NULL AND sender!=? ORDER BY id LIMIT 1""", (run_id, task_id)).fetchone()
                 if offer is None:
+                    if _ready_slots(db, run_id):
+                        raise RuntimeError('no eligible ready task for this worker')
+                    if db.execute("SELECT 1 FROM slots WHERE run_id=? AND status='available' LIMIT 1", (run_id,)).fetchone():
+                        raise RuntimeError('no ready task: remaining tasks are waiting for declared dependencies')
                     raise RuntimeError('no unclaimed slot or pool delegation remains in this run')
                 number = int(db.execute('SELECT COALESCE(MAX(number),0)+1 FROM slots WHERE run_id=?',
                                         (run_id,)).fetchone()[0])
@@ -445,13 +714,25 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                            (run_id, number, offer['title'], offer['instructions'], task_id, f'delegation-{number}'))
                 db.execute("""UPDATE delegations SET status='accepted',recipient=?,updated_at=CURRENT_TIMESTAMP
                               WHERE id=?""", (task_id, offer['id']))
-                slot = _slot(db, run_id, task_id)
+                db.execute('UPDATE slots SET lease_generation=1,last_seen=? WHERE run_id=? AND number=?',
+                           (time.time(),run_id,number))
+                slot = _active_owner(db, run_id, task_id)
             else:
-                db.execute("UPDATE slots SET task_id=?,status='claimed' WHERE run_id=? AND number=? AND status='available'",
-                           (task_id, run_id, slot['number']))
+                db.execute("""UPDATE slots SET task_id=?,status='claimed',
+                              lease_generation=lease_generation+1,last_seen=?
+                              WHERE run_id=? AND number=? AND status='available'""",
+                           (task_id, time.time(), run_id, slot['number']))
+                slot = _active_owner(db, run_id, task_id)
+        if slot['lease_generation'] == 0:
+            db.execute('UPDATE slots SET lease_generation=1 WHERE run_id=? AND number=?',
+                       (run_id,slot['number']))
+            slot = _active_owner(db, run_id, task_id)
+        if slot['status'] == 'claimed':
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND number=?',
+                       (time.time(), run_id, slot['number']))
         number, stored = slot['number'], slot['worktree']
         repo, base, strategy = Path(run['repo']), run['base_commit'], run['strategy']
-        worktree = worker['worktree'] if worker else str(parent / f'{run_id}-slot-{number}')
+        worktree = worker['worktree'] if worker else str(parent / f'{run_id}-worker-{task_id}')
         if existing_worktree:
             path = Path(existing_worktree).expanduser().resolve(strict=True)
             if worker and str(path) != worker['worktree']:
@@ -462,6 +743,27 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
             path = Path(worktree)
         if stored and stored != str(path):
             raise RuntimeError('task has a different registered worktree; resume it')
+        if not worker:
+            competing = db.execute("""SELECT w.task_id FROM workers w JOIN runs r ON r.id=w.run_id
+                                     WHERE w.worktree=? AND w.task_id!=? AND r.state IN ('open','integrating')""",
+                                   (str(path), task_id)).fetchone()
+            if competing:
+                raise RuntimeError('worktree already belongs to another active worker')
+            db.execute('INSERT INTO workers(run_id,task_id,worktree) VALUES(?,?,?)',
+                       (run_id, task_id, str(path)))
+        recovery = db.execute('SELECT * FROM reclaims WHERE run_id=? AND slot_number=? ORDER BY id DESC LIMIT 1',
+                              (run_id, number)).fetchone()
+        if recovery and recovery['adopted_by'] is None:
+            former = recovery['old_task_id']
+            # Active delegated obligations follow the task, never vanish with the chat.
+            db.execute('''UPDATE delegations SET sender=?,updated_at=CURRENT_TIMESTAMP
+                          WHERE run_id=? AND sender=? AND status NOT IN ('completed','cancelled')''',
+                       (task_id,run_id,former))
+            db.execute('''UPDATE delegations SET status='offered',recipient=NULL,
+                          reject_reason='recipient lease reclaimed',updated_at=CURRENT_TIMESTAMP
+                          WHERE run_id=? AND recipient=? AND status IN ('accepted','rejected')''',
+                       (run_id,former))
+            db.execute('UPDATE reclaims SET adopted_by=? WHERE id=?',(task_id,recovery['id']))
         if worker and worker['last_commit'] and slot['start_commit'] is None:
             expected_previous_head = worker['last_commit']
         else:
@@ -474,7 +776,7 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
         if strategy == 'detached':
             _git(repo, 'worktree', 'add', '--detach', str(path), base)
         else:
-            _git(repo, 'worktree', 'add', '-b', f'codex-loop/{run_id}/slot-{number}', str(path), base)
+            _git(repo, 'worktree', 'add', '-b', f'codex-loop/{run_id}/worker-{task_id}', str(path), base)
     _verify_same_repo(path, run)
     resumed_active = bool(stored and slot['start_commit'])
     resumed_legacy = bool(stored and not slot['start_commit'] and not slot['task_key'])
@@ -523,18 +825,13 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                 db.execute('INSERT OR IGNORE INTO worker_inputs(run_id,task_id,source_slot) VALUES(?,?,?)',
                            (run_id, task_id, source['number']))
         with _connection(write=True) as db:
-            existing_worker = db.execute('SELECT * FROM workers WHERE run_id=? AND task_id=?',
-                                         (run_id, task_id)).fetchone()
-            if not existing_worker:
-                competing = db.execute("""SELECT w.task_id FROM workers w JOIN runs r ON r.id=w.run_id
-                                       WHERE w.worktree=? AND w.task_id!=? AND r.state IN ('open','integrating')""",
-                                       (str(path), task_id)).fetchone()
-                if competing:
-                    raise RuntimeError(f'worktree already belongs to active task {competing["task_id"]}')
-                db.execute('INSERT INTO workers(run_id,task_id,worktree) VALUES(?,?,?)',
-                           (run_id, task_id, str(path)))
-            db.execute('UPDATE slots SET worktree=?,start_commit=? WHERE run_id=? AND number=? AND task_id=?',
-                       (str(path), head, run_id, number, task_id))
+            current = _active_owner(db, run_id, task_id, slot['lease_generation'])
+            if current['number'] != number:
+                raise PermissionError('another task replaced the materializing claim')
+            updated = db.execute('UPDATE slots SET worktree=?,start_commit=? WHERE run_id=? AND number=? AND task_id=?',
+                                 (str(path), head, run_id, number, task_id))
+            if updated.rowcount != 1:
+                raise PermissionError('lease changed while materializing task inputs')
     source = capture_workspace_binding(repo)
     origin = str(source.get('origin_hint') or '')
     provenance = None
@@ -545,11 +842,18 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                       'base_tree': _git(repo, 'rev-parse', f'{base}^{{tree}}'),
                       'path_bound': False, 'verified': True,
                       'verification_basis': 'local_collaboration_target_branch_at_run_creation'}
+    with _connection() as db:
+        recovery = db.execute('SELECT * FROM reclaims WHERE run_id=? AND slot_number=? ORDER BY id DESC LIMIT 1',
+                              (run_id,number)).fetchone()
     return {'run_id': run_id, 'slot': number, 'task_id': task_id,
             'task_key': slot['task_key'] or f'task-{number}', 'pool': slot['pool_id'],
             'depends_on': json.loads(slot['depends_on']),
             'title': slot['title'], 'instructions': slot['instructions'],
             'worktree': str(path), 'strategy': strategy, 'base_commit': base,
+            'lease_generation': slot['lease_generation'],
+            'last_seen': time.time(),
+            'recovery': dict(recovery) if recovery else None,
+            'reconcile_external_effects': bool(recovery),
             'target_branch': run['target_branch'], 'source_provenance': provenance,
             'registered': True,
             'communication': 'read pending messages at next/resume and before shared interface edits'}
@@ -785,13 +1089,20 @@ def _elect(db: sqlite3.Connection, run_id: str, task_id: str) -> dict[str, Any]:
     pending = db.execute("SELECT COUNT(*) FROM delegations WHERE run_id=? AND status NOT IN ('completed','cancelled')",
                          (run_id,)).fetchone()[0]
     if run['state'] == 'open' and counts and set(counts) == {'done'} and not pending:
-        db.execute("UPDATE runs SET state='integrating',integrator_task=? WHERE id=? AND state='open'", (task_id, run_id))
-        return {'integrate_now': True, 'integration_owner': task_id, 'run_state': 'integrating', 'counts': counts, 'pending_delegations': 0}
+        db.execute("""UPDATE runs SET state='integrating',integrator_task=?,
+                      integrator_generation=1,integrator_last_seen=?
+                      WHERE id=? AND state='open'""", (task_id,time.time(),run_id))
+        return {'integrate_now': True, 'integration_owner': task_id,
+                'integrator_generation': 1, 'run_state': 'integrating',
+                'counts': counts, 'pending_delegations': 0}
     return {'integrate_now': run['state'] == 'integrating' and run['integrator_task'] == task_id,
-            'integration_owner': run['integrator_task'], 'run_state': run['state'], 'counts': counts, 'pending_delegations': pending}
+            'integration_owner': run['integrator_task'],
+            'integrator_generation': run['integrator_generation'],
+            'run_state': run['state'], 'counts': counts, 'pending_delegations': pending}
 
 
-def finish(run_id: str, task_id: str, *, commit_sha: str, auto_claim: bool = True, slot_number: int | None = None) -> dict[str, Any]:
+def finish(run_id: str, task_id: str, *, commit_sha: str, auto_claim: bool = True,
+           slot_number: int | None = None, lease_generation: int | None = None) -> dict[str, Any]:
     task_id = _task(task_id)
     if not REF_RE.fullmatch(commit_sha):
         raise ValueError('commit SHA must be a full hexadecimal Git object id')
@@ -817,6 +1128,9 @@ def finish(run_id: str, task_id: str, *, commit_sha: str, auto_claim: bool = Tru
                     'next_slot': active['number'] if active else None,
                     'integrate_now': run['state']=='integrating' and run['integrator_task']==task_id}
         slot = active
+        if slot and ((lease_generation is not None and lease_generation != slot['lease_generation']) or
+                     (lease_generation is None and slot['lease_generation'] > 1)):
+            raise PermissionError('task ownership generation changed or missing after reclaim')
     if not slot or not slot['worktree'] or not slot['start_commit']:
         raise RuntimeError('no materialized, claimed task is registered for this worker')
     worktree = Path(slot['worktree'])
@@ -835,19 +1149,22 @@ def finish(run_id: str, task_id: str, *, commit_sha: str, auto_claim: bool = Tru
     for record in reported_commits:
         if run_git(worktree, ['merge-base', '--is-ancestor', record['commit_sha'], observed]).returncode:
             raise RuntimeError(f'delegation #{record["id"]} commit is missing from final worker HEAD')
-    ref = f'refs/codex-loop/collab/{run_id}/slot-{slot["number"]}'
-    _git(worktree, 'update-ref', ref, observed)
     with _connection(write=True) as db:
         current = db.execute("SELECT * FROM slots WHERE run_id=? AND task_id=? AND status='claimed'",
                              (run_id, task_id)).fetchone()
-        if not current or current['number'] != slot['number']:
-            raise RuntimeError('task ownership changed during finish; reconcile state')
+        if not current or current['number'] != slot['number'] or (
+                current['lease_generation'] != slot['lease_generation']):
+            raise PermissionError('task ownership changed during finish; stale result rejected')
         incomplete = db.execute("""SELECT COUNT(*) FROM delegations WHERE run_id=? AND recipient=?
                                    AND status IN ('offered','accepted')""", (run_id, task_id)).fetchone()[0]
         if incomplete:
             raise RuntimeError(f'{incomplete} delegated task(s) remain unfinished')
         if _run(db, run_id)['state'] != 'open':
             raise RuntimeError('run was closed before this task finished')
+        # The SQLite lease is locked before writing the slot ref: a stale worker
+        # cannot overwrite its replacement's Git result.
+        ref = f'refs/codex-loop/collab/{run_id}/slot-{slot["number"]}'
+        _git(worktree, 'update-ref', ref, observed)
         db.execute("""UPDATE slots SET status='done',commit_sha=?,completed_by=?,task_id=NULL,worktree=NULL
                       WHERE run_id=? AND number=? AND status='claimed'""",
                    (observed, task_id, run_id, current['number']))
@@ -877,6 +1194,63 @@ def elect(run_id: str, task_id: str) -> dict[str, Any]:
         if _slot(db, run_id, task_id)['status'] != 'done':
             raise RuntimeError('only completed workers can claim integration')
         return {'run_id': run_id, **_elect(db, run_id, task_id)}
+
+def reclaim_integrator(run_id: str, task_id: str, *,
+                       integration_worktree: str, force: bool = False,
+                       reason: str = 'Expired integration lease') -> dict[str, Any]:
+    """Transfer a stalled integrator without replaying any ambiguous Git operation."""
+    task_id = _task(task_id)
+    reason = _text(reason, 'takeover reason', 1000)
+    with _connection() as db:
+        run = _run(db, run_id)
+        serial = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
+    tail_open = bool(serial and serial['status'] == 'active')
+    if run['state'] != 'integrating' and not (run['state'] == 'integrated' and tail_open):
+        raise RuntimeError('no active integration or serial continuation to reclaim')
+    if run['integrator_task'] == task_id:
+        return {'run_id': run_id, 'integrator': task_id,
+                'integrator_generation': run['integrator_generation'], 'unchanged': True}
+    if not force and (run['integrator_last_seen'] is None or
+                      time.time() - run['integrator_last_seen'] <= LEASE_SECONDS):
+        raise RuntimeError('integration lease has not expired; use explicit force')
+    root = Path(integration_worktree).expanduser().resolve(strict=True)
+    _verify_same_repo(root, run)
+    if _git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD') != run['target_branch']:
+        raise RuntimeError('integration target must still be checked out on the target branch')
+    if _git(root, 'status', '--porcelain', '--untracked-files=all'):
+        raise RuntimeError('integration target is dirty or has interrupted Git work; reconcile before takeover')
+    if any(run_git(root, ['rev-parse','--verify','-q', marker]).returncode == 0
+           for marker in ('CHERRY_PICK_HEAD','MERGE_HEAD','REBASE_HEAD')):
+        raise RuntimeError('Git merge/rebase/cherry-pick still in progress; reconcile first')
+    head = _git(root, 'rev-parse', '--verify', 'HEAD')
+    if run_git(root, ['merge-base', '--is-ancestor',run['base_commit'],head]).returncode:
+        raise RuntimeError('integration target no longer descends from the run baseline')
+    if run['state'] == 'integrated' and run_git(root, [
+            'merge-base','--is-ancestor',run['candidate_head'],head]).returncode:
+        raise RuntimeError('serial continuation no longer descends from integrated candidate')
+    with _connection(write=True) as db:
+        current = _run(db, run_id)
+        if (current['integrator_task'] != run['integrator_task'] or
+                current['integrator_generation'] != run['integrator_generation'] or
+                current['state'] != run['state']):
+            raise PermissionError('integration ownership changed concurrently')
+        if not force and time.time()-current['integrator_last_seen'] <= LEASE_SECONDS:
+            raise PermissionError('integrator renewed its lease before takeover')
+        db.execute("""UPDATE runs SET integrator_task=?,integrator_generation=integrator_generation+1,
+                      integrator_last_seen=? WHERE id=?""", (task_id,time.time(),run_id))
+        if tail_open:
+            db.execute("""UPDATE serial_tails SET owner_task=? WHERE run_id=? AND status='active'
+                          AND owner_task=?""", (task_id,run_id,run['integrator_task']))
+        _notice(db, run_id, task_id, run['integrator_task'],
+                f'Integrator ownership reclaimed by {task_id}: {reason}')
+    return {'run_id': run_id, 'integrator': task_id,
+            'previous_owner': run['integrator_task'],
+            'integrator_generation': run['integrator_generation']+1,
+            'integration_attempted': bool(run['integration_attempted']),
+            'candidate_head': run['candidate_head'], 'serial_tail_active': tail_open,
+            'reconcile_git_before_replay': bool(run['integration_attempted']),
+            'old_owner_fenced': True}
+
 
 
 def prepare_integration(run_id: str, task_id: str, *, integration_worktree: str) -> dict[str, Any]:
@@ -917,8 +1291,8 @@ def prepare_integration(run_id: str, task_id: str, *, integration_worktree: str)
                 'reason': str(exc), 'action': 'the elected agent must inspect Git cherry-pick state, resolve conflicts or abort safely, then validate; do not automatically replay'}
     head = _git(root, 'rev-parse', '--verify', 'HEAD')
     with _connection(write=True) as db:
-        db.execute('UPDATE runs SET candidate_head=? WHERE id=? AND integrator_task=? AND state=?',
-                   (head, run_id, task_id, 'integrating'))
+        db.execute('UPDATE runs SET candidate_head=?,integrator_last_seen=? WHERE id=? AND integrator_task=? AND state=?',
+                   (head,time.time(), run_id, task_id, 'integrating'))
     return {'run_id': run_id, 'status': 'READY_FOR_TEST', 'candidate_head': head,
             'action': 'run targeted tests; call collab-integration-complete with actual test evidence only after verification'}
 
@@ -955,7 +1329,7 @@ def integration_resolved(run_id: str, task_id: str, *, integration_worktree: str
         fresh = _run(db, run_id)
         if fresh['candidate_head'] or fresh['state'] != 'integrating' or fresh['integrator_task'] != task_id:
             raise RuntimeError('integration state already finalized or changed')
-        db.execute('UPDATE runs SET candidate_head=? WHERE id=?', (head, run_id))
+        db.execute('UPDATE runs SET candidate_head=?,integrator_last_seen=? WHERE id=?', (head,time.time(),run_id))
     return {'run_id': run_id, 'status': 'READY_FOR_TEST', 'candidate_head': head,
             'resolution_evidence': resolution_evidence, 'action': 'review merged diff and run tests before integration-complete'}
 
@@ -981,7 +1355,7 @@ def integration_complete(run_id: str, task_id: str, *, integration_worktree: str
         if row['candidate_head'] != run['candidate_head'] or row['integrator_task'] != task_id:
             raise RuntimeError('integration ownership changed concurrently')
         if row['state'] == 'integrating':
-            db.execute("UPDATE runs SET state='integrated' WHERE id=?", (run_id,))
+            db.execute("UPDATE runs SET state='integrated',integrator_last_seen=? WHERE id=?", (time.time(),run_id))
             # No extra Slot/task_id: the active Integrator automatically owns the
             # full uninterrupted serial chain in the same SQLite transaction.
             db.execute("UPDATE serial_tails SET status='active',owner_task=? WHERE run_id=? AND status='pending'",
@@ -1038,20 +1412,35 @@ def serial_complete(run_id: str, task_id: str, *, integration_worktree: str,
 def status(run_id: str) -> dict[str, Any]:
     with _connection() as db:
         run = _run(db, run_id)
-        rows = db.execute('SELECT number,title,task_key,pool_id,depends_on,status,COALESCE(task_id,completed_by) task_id,commit_sha,worktree,start_commit FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
+        rows = db.execute('SELECT number,title,instructions,task_key,pool_id,depends_on,review_of,exclude_workers,status,COALESCE(task_id,completed_by) task_id,commit_sha,worktree,start_commit,lease_generation,last_seen,checkpoint_sha,checkpoint_note FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
         delegations = db.execute('SELECT * FROM delegations WHERE run_id=? ORDER BY id', (run_id,)).fetchall()
         serial = db.execute('SELECT * FROM serial_tails WHERE run_id=?', (run_id,)).fetchone()
         ready = {slot['number'] for slot in _ready_slots(db, run_id)}
+        reclaims = [dict(row) for row in db.execute(
+            'SELECT * FROM reclaims WHERE run_id=? ORDER BY id', (run_id,))]
     pools: dict[str, dict[str, int]] = {}
     for row in rows:
         counters = pools.setdefault(row['pool_id'], {'ready':0, 'waiting':0, 'claimed':0, 'done':0})
         state = ('ready' if row['number'] in ready else
                  'waiting' if row['status']=='available' else row['status'])
         counters[state] += 1
+    now = time.time()
+    assignments = []
+    for row in rows:
+        item = dict(row)
+        seen = item.get('last_seen')
+        item['seconds_since_activity'] = max(0, round(now - seen, 1)) if seen is not None else None
+        item['lease_reclaimable'] = bool(item['status'] == 'claimed' and
+                                         seen is not None and now - seen > LEASE_SECONDS)
+        assignments.append(item)
     return {'run_id': run_id, 'state': run['state'], 'target_branch': run['target_branch'],
             'pools': pools,
-            'goal_key': run['goal_key'], 'integrator_task': run['integrator_task'],
-            'candidate_head': run['candidate_head'], 'slots': [dict(row) for row in rows],
+            'goal_key': run['goal_key'], 'graph_revision': run['graph_revision'],
+            'lease_seconds': LEASE_SECONDS, 'reclaims': reclaims,
+            'integrator_task': run['integrator_task'],
+            'integrator_generation': run['integrator_generation'],
+            'integrator_last_seen': run['integrator_last_seen'],
+            'candidate_head': run['candidate_head'], 'slots': assignments,
             'delegations': [dict(row) for row in delegations],
             'serial_tail': dict(serial) if serial else None}
 

@@ -88,9 +88,18 @@ retain prior blocker for recheck]
   LC --> REG[Host-local SQLite: runs, workers, task keys/pools/deps, receipts, delegations]
   LC --> CW[Git: one authorized worktree per Chat task_id]
   REG --> READY[Compute Ready tasks from completed upstream keys]
-  READY --> FAIR[Atomic fair claim: prioritize under-served ready pools, no hard caps]
+  REG --> MUT[Worker publish or revise unclaimed DAG tasks; check graph revision]
+  MUT --> READY
+  READY --> QUAL[Filter excluded workers and producer self-review]
+  QUAL --> FAIR[Atomic fair claim: prioritize under-served eligible pools]
   CW --> FAIR
-  FAIR --> EXEC[One Chat executes bounded task on owned worktree]
+  FAIR --> LEASE[Atomic owner generation + 600 second last_seen lease]
+  LEASE --> EXEC[One Chat executes bounded task on its worker-owned worktree]
+  LEASE -. inactivity at next claim .-> RC[Reclaim stale assignment; preserve old worktree and checkpoint]
+  RC --> READY
+  LEASE -. explicit authorized force .-> RC
+  EXEC -. activity .-> HB[Heartbeat / checkpoint]
+  HB --> LEASE
   EXEC --> FIN[finish verifies own commit delta + Git cleanliness]
   FIN --> UNLOCK[Mark done and unlock downstream tasks immediately]
   UNLOCK --> READY
@@ -102,6 +111,8 @@ retain prior blocker for recheck]
   FIN --> ELECTION{All DAG tasks and delegations done?}
   ELECTION -->|No| READY
   ELECTION -->|Yes; atomic last-finisher| INTEG[Topological own-delta cherry-pick into clean target + tests]
+  INTEG -. owner inactive, clean target verified .-> IRC[Reclaim integration / serial owner; no blind Git replay]
+  IRC --> INTEG
   INTEG --> SERIAL{Prewritten serial tail registered?}
   SERIAL -->|Yes| AUTO[Atomic owner assignment to same Integrator task_id]
   AUTO --> STEPS[Same Chat executes full serial chain and distinct planned gates]
@@ -161,7 +172,8 @@ bound to stage + input + instruction + request + generation]
 
 - **Native Git authentication is host-owned.** The Drive Host Profile records only the expected GitHub HTTPS credential helper for each environment. Before native publication, the controller validates protocol and helper; the selected host then runs a noninteractive dry-run. Neither Git tokens nor SSH keys are retrieved or stored by Codex Loop.
 
-- **Local worktree collaboration is an opt-in same-host DAG scheduler, not a general background workflow engine.** Planned tasks declare stable keys, logical Pools and explicit predecessors. The host-local SQLite registry atomically releases only ready tasks and fairly chooses across Pools (favor few active workers and least recently served), without a hard concurrency limit or global Wave barrier. Each Chat retains one worktree and Codex Loop `task_id` across sequential task claims. Completing a task records its verified own commit delta, unlocks descendants and can immediately return the next ready task. Cross-worker inputs are materialized by Git cherry-picking only verified predecessor task deltas; final integration cherry-picks those deltas in topological order, not whole inherited worker histories. This does not change host authorization or wake an inactive Chat. Direct/pooled delegation messages and receipts remain tracked, and pending delegations block last-finisher election. `next`/`resume` expose messages and an Integrator-owned post-global-integration serial chain. Integration and post-integration semantic gates are still performed by the live Chat, never by a daemon. SQLite stores ownership/metadata; Git and the host own source truth and permission.
+- **Local collaboration is an adaptive DAG scheduler with a bounded lease, not a background Chat runtime.** The initial verified Git baseline and task identities remain stable, while an active worker may atomically publish tasks/pools and revise only unclaimed task definitions with a checked graph revision. SQLite filters explicit worker exclusions and producer self-review before assigning a ready task. Each worker has a private stable Worktree; no physical Slot path is reused after reclaim. A claim transaction reclaims assignments with no observed tool activity for 600 seconds; explicit force recovery still preserves the former Worktree, auditable ownership generation, and any verified checkpoint. The new owner must reconcile uncertain Git/external effects before repeating them. Native host tool calls cannot be assumed to emit SQLite heartbeats; workers explicitly report activity. Last-finisher integration and tracked delegations remain protected by verified own-commit deltas and dependency ordering. An inactive integrator/serial owner can be reassigned after target Git state verification without blindly replaying interrupted merges. No daemon, cross-computer SQLite synchronization, authorization transfer or stopped-Chat wakeup is implied.
+
 - **Detached HEAD continuity has explicit provenance.** Workers may use detached HEAD only when the recorded target branch is supported by verified source provenance; the workspace lease distinguishes `branch` (intended target) from `checked_out_branch` (None on detached workers). Unverified detached work is never silently promoted to HOT mutation authority.
 
 - **The connected user Drive profile is the only persistent preference authority.** Each new conversation imports and verifies that profile exactly once on the controller. The controller resolves the selected connector and environment/project locators, passes an explicit execution snapshot to the local runtime, and the private conversation route pins it. Native runtime/task state is independent; no native host preference file participates.
