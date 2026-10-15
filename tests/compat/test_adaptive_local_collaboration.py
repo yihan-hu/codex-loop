@@ -204,6 +204,106 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         self.assertGreaterEqual(result['waited_seconds'], 0.06)
         self.assertEqual(c.status(run)['waiting_workers'][0]['task_id'], 'idle-cli')
 
+    def test_tool_activity_rate_limits_lease_and_delivers_unread_messages(self):
+        run=self.run_tasks([{'key':'A','title':'A','instructions':'A'}])
+        owner=self.claim(run,'work')
+        before=c.status(run)['slots'][0]['last_seen']
+        one=c.activity('work')
+        self.assertTrue(one['registered'])
+        self.assertFalse(one['refreshed'])
+        self.assertFalse(one['stop'])
+        with c._connection(write=True) as db:
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_id=?',
+                       (time.time()-61,run,'work'))
+            c._notice(db,run,'coord','work','Review new instructions')
+        two=c.activity('work')
+        self.assertEqual(two['refreshed'][0]['slot'],owner['slot'])
+        self.assertIn('Review',two['messages'][0]['body'])
+        three=c.activity('work')
+        self.assertEqual(three['refreshed'],[])
+        self.assertEqual([m['id'] for m in three['messages']],
+                         [m['id'] for m in two['messages']])
+        self.assertEqual(c.status(run)['lease_seconds'],600)
+
+    def test_original_verified_finish_preempts_unfinished_successor_and_sends_stop(self):
+        run=self.run_tasks([{'key':'A','title':'A','instructions':'A'}])
+        old=self.claim(run,'original')
+        sha=self.commit(old)
+        self.expire(run)
+        new=self.claim(run,'replacement')
+        self.assertEqual(new['lease_generation'],2)
+        (Path(new['worktree'])/'replacement-draft.txt').write_text('preserve partial new work')
+        result=c.finish(run,'original',commit_sha=sha,slot_number=old['slot'],
+                        lease_generation=old['lease_generation'])
+        self.assertEqual(result['status'],'accepted')
+        self.assertEqual(result['stopped_worker'],'replacement')
+        self.assertTrue(result['integrate_now'])
+        status=c.status(run)
+        self.assertEqual(status['slots'][0]['task_id'],'original')
+        self.assertEqual((Path(new['worktree'])/'replacement-draft.txt').read_text(),
+                         'preserve partial new work')
+        pulse=c.activity('replacement')
+        self.assertTrue(pulse['stop'])
+        self.assertEqual(pulse['messages'][0]['control_action'],'stop_task')
+        self.assertIn('STOP',c.inbox(run,'replacement')['messages'][0]['body'])
+        with self.assertRaisesRegex(PermissionError, 'STOP'):
+            self.claim(run,'replacement')
+        with self.assertRaises(PermissionError):
+            c.finish(run,'replacement',commit_sha=git(new['worktree'],'rev-parse','HEAD'),
+                     slot_number=new['slot'],lease_generation=new['lease_generation'])
+        again=c.finish(run,'original',commit_sha=sha,slot_number=old['slot'],
+                       lease_generation=old['lease_generation'])
+        self.assertTrue(again['already_finished'])
+        self.assertEqual(c.status(run)['slots'][0]['commit_sha'],sha)
+        self.assertEqual(git(self.repo,'rev-parse',
+                        f'refs/codex-loop/collab/{run}/slot-{old["slot"]}'),sha)
+
+    def test_cli_activity_returns_worker_heartbeat_status(self):
+        run=self.run_tasks()
+        owner=self.claim(run,'active-cli')
+        with c._connection(write=True) as db:
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_id=?',
+                       (time.time()-61,run,'active-cli'))
+        output=subprocess.run([
+            sys.executable,str(SCRIPT/'codex_loop.py'),'collab','activity',
+            '--task-id','active-cli','--interval-seconds','60'],
+            capture_output=True,text=True,check=True)
+        data=json.loads(output.stdout)['data']
+        self.assertTrue(data['registered'])
+        self.assertEqual(data['refreshed'][0]['slot'],owner['slot'])
+        self.assertEqual(data['messages'],[])
+
+    def test_successor_finished_first_preserves_original_result_as_alternative(self):
+        run=self.run_tasks([{'key':'A','title':'A','instructions':'A'}])
+        old=self.claim(run,'original')
+        old_sha=self.commit(old)
+        self.expire(run)
+        new=self.claim(run,'replacement')
+        new_sha=self.commit(new)
+        c.finish(run,'replacement',commit_sha=new_sha,
+                 slot_number=new['slot'],lease_generation=new['lease_generation'])
+        late=c.finish(run,'original',commit_sha=old_sha,
+                      slot_number=old['slot'],lease_generation=old['lease_generation'])
+        self.assertEqual(late['status'],'preserved')
+        self.assertEqual(c.status(run)['slots'][0]['commit_sha'],new_sha)
+        self.assertEqual(git(self.repo,'rev-parse',late['late_result_ref']),old_sha)
+        self.assertFalse(c.activity('replacement')['stop'])
+
+    def test_late_finish_legacy_unverified_start_preserves_without_override(self):
+        run=self.run_tasks([{'key':'A','title':'A','instructions':'A'}])
+        old=self.claim(run,'original')
+        old_sha=self.commit(old)
+        self.expire(run)
+        new=self.claim(run,'replacement')
+        with c._connection(write=True) as db:
+            db.execute('UPDATE reclaims SET old_start_commit=NULL WHERE run_id=?',(run,))
+        late=c.finish(run,'original',commit_sha=old_sha,slot_number=old['slot'],
+                      lease_generation=old['lease_generation'])
+        self.assertEqual(late['status'],'preserved')
+        self.assertEqual(c.status(run)['slots'][0]['task_id'],'replacement')
+        self.assertFalse(c.activity('replacement')['stop'])
+        self.assertEqual(git(self.repo,'rev-parse',late['late_result_ref']),old_sha)
+
     def test_ten_minute_reclaim_preserves_dirty_old_worktree_and_fences(self):
         run = self.run_tasks()
         old = self.claim(run, 'old')

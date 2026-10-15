@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS reclaims (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, slot_number INTEGER NOT NULL,
   old_task_id TEXT NOT NULL, old_worktree TEXT, old_generation INTEGER NOT NULL,
   checkpoint_sha TEXT, checkpoint_note TEXT, reason TEXT NOT NULL,
-  reclaimed_at REAL NOT NULL, adopted_by TEXT
+  reclaimed_at REAL NOT NULL, adopted_by TEXT,
+  old_start_commit TEXT, resolution TEXT, resolution_commit TEXT
 );
 CREATE INDEX IF NOT EXISTS reclaimed_slots ON reclaims(run_id,slot_number,id);
 CREATE TABLE IF NOT EXISTS worker_inputs (
@@ -81,7 +82,8 @@ CREATE TABLE IF NOT EXISTS pool_dispatch (
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
   sender TEXT NOT NULL, recipient TEXT, body TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  control_action TEXT
 );
 CREATE TABLE IF NOT EXISTS delegations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -214,6 +216,14 @@ def _connection(*, write: bool = False) -> Iterator[sqlite3.Connection]:
     }.items():
         if name not in run_fields:
             conn.execute(f'ALTER TABLE runs ADD COLUMN {name} {definition}')
+    for table, columns in {
+        'reclaims': {'old_start_commit':'TEXT', 'resolution':'TEXT', 'resolution_commit':'TEXT'},
+        'messages': {'control_action':'TEXT'},
+    }.items():
+        existing = {row['name'] for row in conn.execute(f'PRAGMA table_info({table})')}
+        for key, definition in columns.items():
+            if key not in existing:
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN {key} {definition}')
     # Existing claimed tasks get one grace period on schema upgrade.
     conn.execute("UPDATE slots SET last_seen=? WHERE status='claimed' AND last_seen IS NULL",
                  (time.time(),))
@@ -336,6 +346,13 @@ def _eligible(db: sqlite3.Connection, run: sqlite3.Row,
     return True
 
 
+def _stopped(db: sqlite3.Connection, run_id: str, task_id: str) -> bool:
+    return db.execute('''SELECT 1 FROM messages m LEFT JOIN receipts a
+        ON a.message_id=m.id AND a.task_id=? WHERE m.run_id=?
+        AND m.recipient=? AND m.control_action='stop_task'
+        AND a.message_id IS NULL LIMIT 1''',(task_id,run_id,task_id)).fetchone() is not None
+
+
 def _active_owner(db: sqlite3.Connection, run_id: str, task_id: str,
                   generation: int | None = None) -> sqlite3.Row:
     slot = db.execute("SELECT * FROM slots WHERE run_id=? AND task_id=? AND status='claimed'",
@@ -365,11 +382,11 @@ def _reclaim_slot(db: sqlite3.Connection, run_id: str, slot: sqlite3.Row,
                 'checkpoint_sha': slot['checkpoint_sha'],
                 'checkpoint_note': slot['checkpoint_note']}
     db.execute("""INSERT INTO reclaims(run_id,slot_number,old_task_id,old_worktree,
-                  old_generation,checkpoint_sha,checkpoint_note,reason,reclaimed_at)
-                  VALUES(?,?,?,?,?,?,?,?,?)""",
+                  old_generation,checkpoint_sha,checkpoint_note,reason,reclaimed_at,old_start_commit)
+                  VALUES(?,?,?,?,?,?,?,?,?,?)""",
                (run_id, slot['number'], slot['task_id'], slot['worktree'],
                 slot['lease_generation'], slot['checkpoint_sha'], slot['checkpoint_note'],
-                reason, time.time()))
+                reason, time.time(), slot['start_commit']))
     db.execute("""UPDATE slots SET status='available',task_id=NULL,worktree=NULL,
                   start_commit=NULL,last_seen=NULL,checkpoint_sha=NULL,checkpoint_note=NULL
                   WHERE run_id=? AND number=? AND status='claimed'""",
@@ -399,6 +416,62 @@ def heartbeat(run_id: str, task_id: str, *, lease_generation: int) -> dict[str, 
         slot = _touch_owner(db, run_id, task_id, lease_generation)
         return {'run_id': run_id, 'task_key': slot['task_key'],
                 'lease_generation': lease_generation, 'last_seen': time.time()}
+
+
+def activity(task_id: str, *, interval_seconds: int = 60) -> dict[str, Any]:
+    # Host-tool entry: read the inbox on every call; take a write lock only if
+    # an actual claimed-task or integration heartbeat is due (once per minute).
+    task_id = _task(task_id)
+    if not 10 <= interval_seconds <= 600:
+        raise ValueError('activity interval must be between 10 and 600 seconds')
+    if not db_path().exists():
+        return {'task_id': task_id, 'registered': False, 'messages': [], 'stop': False,
+                'refreshed': []}
+    now = time.time()
+    notices, due = [], []
+    with _connection() as db:
+        runs = db.execute('SELECT run_id FROM workers WHERE task_id=?', (task_id,)).fetchall()
+        for owned in runs:
+            run_id = owned['run_id']
+            run = _run(db, run_id)
+            slot = db.execute("SELECT number,last_seen,lease_generation FROM slots WHERE run_id=? AND task_id=? AND status='claimed'",
+                              (run_id, task_id)).fetchone()
+            if slot and (slot['last_seen'] is None or now-slot['last_seen'] >= interval_seconds):
+                due.append((run_id,'slot',slot['number'],slot['lease_generation']))
+            if run['integrator_task']==task_id and run['state'] in ('integrating','integrated'):
+                if run['integrator_last_seen'] is None or now-run['integrator_last_seen'] >= interval_seconds:
+                    due.append((run_id,'integrator',None,run['integrator_generation']))
+            rows = db.execute('''SELECT m.id,m.sender,m.body,m.control_action,m.created_at
+                FROM messages m LEFT JOIN receipts a ON a.message_id=m.id AND a.task_id=?
+                WHERE m.run_id=? AND m.sender!=? AND (m.recipient IS NULL OR m.recipient=?)
+                  AND a.message_id IS NULL ORDER BY m.id LIMIT 20''',
+                (task_id,run_id,task_id,task_id)).fetchall()
+            notices.extend([{'run_id':run_id,**dict(m)} for m in rows])
+    refreshed = []
+    if due:
+        with _connection(write=True) as db:
+            for run_id,kind,number,generation in due:
+                if kind == 'slot':
+                    current = db.execute('''SELECT last_seen FROM slots WHERE run_id=?
+                        AND number=? AND task_id=? AND status='claimed'
+                        AND lease_generation=?''',(run_id,number,task_id,generation)).fetchone()
+                    if current and (current['last_seen'] is None or now-current['last_seen'] >= interval_seconds):
+                        db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND number=?',
+                                   (now,run_id,number))
+                        refreshed.append({'run_id':run_id,'slot':number,
+                                          'lease_generation':generation})
+                else:
+                    run = _run(db,run_id)
+                    if (run['integrator_task']==task_id and
+                        run['integrator_generation']==generation and
+                        run['state'] in ('integrating','integrated') and
+                        (run['integrator_last_seen'] is None or
+                         now-run['integrator_last_seen']>=interval_seconds)):
+                        db.execute('UPDATE runs SET integrator_last_seen=? WHERE id=?',(now,run_id))
+                        refreshed.append({'run_id':run_id,'integrator':True})
+    return {'task_id':task_id, 'registered':bool(runs), 'refreshed':refreshed,
+            'stop':any(m['control_action']=='stop_task' for m in notices),
+            'messages':notices}
 
 
 def reclaim(run_id: str, task_key: str, *, force: bool = False,
@@ -685,6 +758,8 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
     # independent DAG tasks; SQLite selects a ready task fairly across pools.
     with _connection(write=True) as db:
         run = _run(db, run_id)
+        if _stopped(db,run_id,task_id):
+            raise PermissionError('STOP control pending for this worker; read collab inbox before any new claim')
         parent = Path(worktree_parent).expanduser().resolve(strict=True)
         if str(parent) != run['worktree_parent']:
             raise PermissionError('worktree parent differs from registered authorized parent')
@@ -908,7 +983,12 @@ def inbox(run_id: str, task_id: str, *, ack: list[int] | None = None) -> dict[st
     _task(task_id)
     with _connection(write=bool(ack)) as db:
         _run(db, run_id)
-        slot = _slot(db, run_id, task_id)
+        slot = db.execute("""SELECT number FROM slots WHERE run_id=? AND
+                    (task_id=? OR completed_by=?) ORDER BY number DESC LIMIT 1""",
+                          (run_id, task_id, task_id)).fetchone()
+        if slot is None and not db.execute(
+                'SELECT 1 FROM workers WHERE run_id=? AND task_id=?', (run_id, task_id)).fetchone():
+            raise PermissionError('worker is not a registered collaboration participant')
         if ack:
             for mid in ack:
                 row = db.execute('SELECT id FROM messages WHERE id=? AND run_id=? AND sender!=? AND (recipient IS NULL OR recipient=?)',
@@ -916,13 +996,14 @@ def inbox(run_id: str, task_id: str, *, ack: list[int] | None = None) -> dict[st
                 if row is None:
                     raise ValueError(f'message {mid} is not addressed to this task')
                 db.execute('INSERT OR IGNORE INTO receipts(message_id,task_id) VALUES(?,?)', (mid, task_id))
-        rows = db.execute('''SELECT m.id,m.sender,m.recipient,m.body,m.created_at FROM messages m
+        rows = db.execute('''SELECT m.id,m.sender,m.recipient,m.body,m.created_at,m.control_action FROM messages m
           LEFT JOIN receipts a ON a.message_id=m.id AND a.task_id=?
           WHERE m.run_id=? AND m.sender!=? AND (m.recipient IS NULL OR m.recipient=?)
             AND a.message_id IS NULL ORDER BY m.id''', (task_id, run_id, task_id, task_id)).fetchall()
         serial = db.execute('SELECT * FROM serial_tails WHERE run_id=? AND owner_task=?',
                             (run_id, task_id)).fetchone()
-        return {'run_id': run_id, 'slot': slot['number'], 'messages': [dict(row) for row in rows],
+        return {'run_id': run_id, 'slot': slot['number'] if slot else None,
+                'messages': [dict(row) for row in rows],
                 'delegations': _delegations_for(db, run_id, task_id),
                 'serial_tail': dict(serial) if serial else None}
 
@@ -950,9 +1031,10 @@ def _available_recipient(db: sqlite3.Connection, run_id: str, task_id: str) -> N
         raise RuntimeError('delegation recipient must be an active, worktree-bound participant')
 
 
-def _notice(db: sqlite3.Connection, run_id: str, sender: str, recipient: str, body: str) -> None:
-    db.execute('INSERT INTO messages(run_id,sender,recipient,body) VALUES(?,?,?,?)',
-               (run_id, sender, recipient, body))
+def _notice(db: sqlite3.Connection, run_id: str, sender: str, recipient: str,
+            body: str, *, control_action: str | None = None) -> None:
+    db.execute('INSERT INTO messages(run_id,sender,recipient,body,control_action) VALUES(?,?,?,?,?)',
+               (run_id, sender, recipient, body, control_action))
 
 
 def delegate(run_id: str, task_id: str, *, request_key: str, title: str,
@@ -1132,6 +1214,104 @@ def _elect(db: sqlite3.Connection, run_id: str, task_id: str) -> dict[str, Any]:
             'run_state': run['state'], 'counts': counts, 'pending_delegations': pending}
 
 
+def _finish_reclaimed(run_id: str, task_id: str, *, slot_number: int,
+                      lease_generation: int, commit_sha: str) -> dict[str, Any]:
+    # A reclaimed worker may report a verifiable result. The first recorded
+    # valid completion wins while the replacement is still working; all other
+    # results remain reachable without overwriting the accepted Slot.
+    with _connection() as db:
+        run = _run(db, run_id)
+        prior = db.execute('''SELECT * FROM reclaims WHERE run_id=? AND slot_number=?
+            AND old_task_id=? AND old_generation=? ORDER BY id DESC LIMIT 1''',
+                           (run_id,slot_number,task_id,lease_generation)).fetchone()
+        if not prior:
+            raise PermissionError('no matching reclaimed lease; cannot submit a stale result')
+        previous = dict(prior)
+        if previous['resolution_commit']:
+            if previous['resolution_commit'] != commit_sha:
+                raise PermissionError('late result has already been recorded at another commit')
+            return {'run_id':run_id,'task_id':task_id,'slot':slot_number,
+                    'status':previous['resolution'],'commit_sha':commit_sha,'already_recorded':True}
+    old_path = Path(previous['old_worktree']) if previous['old_worktree'] else None
+    if not old_path or not old_path.is_dir():
+        raise RuntimeError('original worker worktree is not available')
+    _verify_same_repo(old_path, run)
+    actual = _git(old_path,'rev-parse','--verify','HEAD')
+    if actual != commit_sha:
+        raise ValueError('late result SHA does not match the original worker HEAD')
+    start = previous['old_start_commit']
+    if start and run_git(old_path,['merge-base','--is-ancestor',start,commit_sha]).returncode:
+        raise ValueError('late result does not descend from original verified inputs')
+    if not start and run_git(old_path,['merge-base','--is-ancestor',run['base_commit'],commit_sha]).returncode:
+        raise ValueError('late result does not descend from Run baseline')
+    if _git(old_path,'status','--porcelain','--untracked-files=all'):
+        raise RuntimeError('late-result worktree must be clean; commit or preserve changes first')
+    with _connection(write=True) as db:
+        run = _run(db,run_id)
+        record = db.execute('''SELECT * FROM reclaims WHERE run_id=? AND slot_number=?
+            AND old_task_id=? AND old_generation=? ORDER BY id DESC LIMIT 1''',
+                            (run_id,slot_number,task_id,lease_generation)).fetchone()
+        if not record:
+            raise PermissionError('reclaim history changed during late finish')
+        if record['resolution_commit']:
+            if record['resolution_commit'] != commit_sha:
+                raise PermissionError('competing late result already registered')
+            return {'run_id':run_id,'task_id':task_id,'slot':slot_number,
+                    'status':record['resolution'],'commit_sha':commit_sha,'already_recorded':True}
+        # Always preserve the late commit, including when a successor already
+        # finished or the old snapshot lacks verified start_commit provenance.
+        late_ref = f'refs/codex-loop/collab/{run_id}/late-{slot_number}-g{lease_generation}'
+        _git(old_path,'update-ref',late_ref,commit_sha)
+        current=db.execute('SELECT * FROM slots WHERE run_id=? AND number=?',
+                           (run_id,slot_number)).fetchone()
+        replacement=current['task_id'] if current['status']=='claimed' else None
+        obligations = 0
+        if replacement:
+            obligations = db.execute('''SELECT COUNT(*) FROM delegations WHERE run_id=?
+                AND (sender=? OR recipient=?)''',
+                (run_id,replacement,replacement)).fetchone()[0]
+        original_obligations=db.execute('''SELECT COUNT(*) FROM delegations WHERE run_id=?
+            AND (sender=? OR recipient=?) AND status NOT IN ('completed','cancelled')''',
+            (run_id,task_id,task_id)).fetchone()[0]
+        may_accept=(run['state']=='open' and start is not None and
+                    current['status'] in ('available','claimed') and
+                    not obligations and not original_obligations)
+        if may_accept:
+            final_ref=f'refs/codex-loop/collab/{run_id}/slot-{slot_number}'
+            _git(old_path,'update-ref',final_ref,commit_sha)
+            db.execute('''UPDATE slots SET status='done',commit_sha=?,completed_by=?,
+                    task_id=NULL,worktree=NULL WHERE run_id=? AND number=?''',
+                    (commit_sha,task_id,run_id,slot_number))
+            db.execute('UPDATE workers SET last_commit=? WHERE run_id=? AND task_id=?',
+                       (commit_sha,run_id,task_id))
+            db.execute('''INSERT OR IGNORE INTO worker_inputs(run_id,task_id,source_slot)
+                    VALUES(?,?,?)''',(run_id,task_id,slot_number))
+            if replacement and replacement!=task_id:
+                _notice(db,run_id,task_id,replacement,
+                        f'STOP task slot {slot_number}: verified original worker {task_id} '
+                        'completed after lease reclaim. Your result was not overwritten on disk; '
+                        'do not continue this slot. Preserve your worktree and review the new '
+                        'accepted task result before doing more work.',
+                        control_action='stop_task')
+            result=_elect(db,run_id,task_id)
+            state='accepted'
+        else:
+            owner=replacement or current['completed_by'] or run['integrator_task']
+            if owner and owner!=task_id:
+                _notice(db,run_id,task_id,owner,
+                        f'Late verified result for slot {slot_number} at {commit_sha} '
+                        f'preserved as {late_ref}; the accepted task result was NOT replaced. '
+                        'Review the alternative if useful.')
+            result={'integrate_now':False,'run_state':run['state']}
+            state='preserved'
+        db.execute('''UPDATE reclaims SET resolution=?,resolution_commit=? WHERE id=?''',
+                   (state,commit_sha,record['id']))
+    return {'run_id':run_id,'task_id':task_id,'slot':slot_number,
+            'commit_sha':commit_sha,'status':state,
+            'late_result_ref':late_ref,'stopped_worker':replacement if may_accept else None,
+            **result}
+
+
 def finish(run_id: str, task_id: str, *, commit_sha: str, auto_claim: bool = True,
            slot_number: int | None = None, lease_generation: int | None = None) -> dict[str, Any]:
     task_id = _task(task_id)
@@ -1162,6 +1342,9 @@ def finish(run_id: str, task_id: str, *, commit_sha: str, auto_claim: bool = Tru
         if slot and ((lease_generation is not None and lease_generation != slot['lease_generation']) or
                      (lease_generation is None and slot['lease_generation'] > 1)):
             raise PermissionError('task ownership generation changed or missing after reclaim')
+    if slot is None and slot_number is not None and lease_generation is not None:
+        return _finish_reclaimed(run_id,task_id,slot_number=slot_number,
+                                 lease_generation=lease_generation,commit_sha=commit_sha)
     if not slot or not slot['worktree'] or not slot['start_commit']:
         raise RuntimeError('no materialized, claimed task is registered for this worker')
     worktree = Path(slot['worktree'])

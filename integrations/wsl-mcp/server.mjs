@@ -8,6 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { createGrants } from './grants.mjs';
+import {activityBeforeTool} from './activity.mjs';
 
 export const SERVER_VERSION = '0.3.1';
 const OUTPUT_LIMIT = 128 * 1024;
@@ -87,6 +88,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
     if (!Number.isInteger(timeout_seconds) || timeout_seconds < 1 || timeout_seconds > 3600) throw new Error('Invalid timeout.');
     if (!Number.isInteger(wait_ms) || wait_ms < 0 || wait_ms > 5000) throw new Error('Invalid wait.');
     cwd = authorized(cwd, grant ? [grant.root] : []);
+    const activity = await activityBeforeTool(task_id);
     if (budget.active >= budget.limit) throw new Error(`${budget.limit} jobs are already running across connections. Poll or stop one first.`);
     for (const [id, job] of jobs) {
       if (jobs.size < MAX_HISTORY) break;
@@ -95,7 +97,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
     if (grant && !grants.renew(grant)) throw new Error('Grant expired; request authorization again.');
     const child = spawn('/usr/bin/bwrap', [...sandboxArgs(cwd, grant), command], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     budget.active++;
-    const job = { id: randomUUID(), child, cwd, state: 'running', exitCode: null, signal: null,
+    const job = { id: randomUUID(), child, cwd, taskId:task_id, state: 'running', exitCode: null, signal: null,
       grant, output: Buffer.alloc(0), base: 0, total: 0, timedOut: false };
     jobs.set(job.id, job);
     const detachGrant = grant ? grants.attach(grant, () => { terminate(job); return job.done; }) : () => {};
@@ -117,7 +119,7 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
     });
     job.timer = setTimeout(() => { job.timedOut = true; terminate(job); }, timeout_seconds * 1000);
     await Promise.race([job.done, sleep(wait_ms)]);
-    return snapshot(job);
+    return {...snapshot(job),collaboration_messages:activity?.messages??[]};
   }
   const lookup = id => { const job = jobs.get(id); if (!job) throw new Error('Unknown or expired job_id; do not re-run an ambiguous write automatically.'); return job; };
   return {
@@ -135,7 +137,10 @@ export function createExecutor({ roots, runtime = path.join(homedir(), '.codex-l
     grant: grants.grant, revoke: grants.revoke,
     async poll({ job_id, offset = 0, wait_ms = 1000 }) {
       if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(wait_ms) || wait_ms < 0 || wait_ms > 5000) throw new Error('Invalid offset or wait.');
-      const job = lookup(job_id); if (job.grant) grants.renew(job.grant); await Promise.race([job.done, sleep(wait_ms)]); return snapshot(job, offset);
+      const job = lookup(job_id); const activity=await activityBeforeTool(job.taskId);
+      if (job.grant) grants.renew(job.grant);
+      await Promise.race([job.done, sleep(wait_ms)]);
+      return {...snapshot(job, offset),collaboration_messages:activity?.messages??[]};
     },
     async stop({ job_id }) { const job = lookup(job_id); terminate(job); await Promise.race([job.done, sleep(2000)]); return snapshot(job); },
     async close() { const active = [...jobs.values()].filter(job => job.state === 'running'); active.forEach(terminate); await Promise.all(active.map(job => job.done)); },
