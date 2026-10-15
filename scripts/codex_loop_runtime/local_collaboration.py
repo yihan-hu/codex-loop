@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS slots (
   task_key TEXT, pool_id TEXT NOT NULL DEFAULT 'default',
   depends_on TEXT NOT NULL DEFAULT '[]', start_commit TEXT, completed_by TEXT,
   exclude_workers TEXT NOT NULL DEFAULT '[]', review_of TEXT NOT NULL DEFAULT '[]',
+  isolation_spec TEXT NOT NULL DEFAULT '{}',
   lease_generation INTEGER NOT NULL DEFAULT 0, last_seen REAL,
   checkpoint_sha TEXT, checkpoint_note TEXT,
   PRIMARY KEY(run_id, number), UNIQUE(run_id, task_id), UNIQUE(run_id, worktree)
@@ -352,6 +353,7 @@ def _connection(*, write: bool = False) -> Iterator[sqlite3.Connection]:
         'completed_by': 'TEXT',
         'exclude_workers': "TEXT NOT NULL DEFAULT '[]'",
         'review_of': "TEXT NOT NULL DEFAULT '[]'",
+        'isolation_spec': "TEXT NOT NULL DEFAULT '{}'",
         'lease_generation': 'INTEGER NOT NULL DEFAULT 0',
         'last_seen': 'REAL', 'checkpoint_sha': 'TEXT', 'checkpoint_note': 'TEXT',
     }.items():
@@ -420,12 +422,50 @@ def _task(task_id: str) -> str:
     return _identifier(task_id, 'Codex Loop task id', TASK_RE)
 
 
+def _isolation_spec(raw: Any) -> dict[str, Any]:
+    # The same existing Logical Isolation serves source-writing and
+    # reasoning-only tasks. Authoritative semantic work additionally needs
+    # the exact predeclared consumer/stage/input/instruction identity.
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or set(raw) - {'role', 'mutation_policy', 'semantic_work'}:
+        raise ValueError('task isolation supports role, mutation_policy and semantic_work only')
+    from .delegation import ROLES
+    out = {}
+    if 'role' in raw:
+        if raw['role'] not in ROLES:
+            raise ValueError('unsupported task isolation role')
+        out['role'] = raw['role']
+    if 'mutation_policy' in raw:
+        if raw['mutation_policy'] not in ('read_only', 'workspace_write'):
+            raise ValueError('isolation mutation_policy must be read_only or workspace_write')
+        out['mutation_policy'] = raw['mutation_policy']
+    if out.get('role') == 'semantic-worker' and 'semantic_work' not in raw:
+        raise ValueError('semantic-worker role requires an explicit semantic_work binding')
+    if 'semantic_work' in raw:
+        semantic = raw['semantic_work']
+        if not isinstance(semantic, dict) or set(semantic) != {
+            'consumer', 'stage', 'input_sha256', 'instruction_sha256'
+        }:
+            raise ValueError('semantic_work needs consumer, stage, input_sha256 and instruction_sha256')
+        for name in ('consumer', 'stage'):
+            if not isinstance(semantic[name], str) or not semantic[name].strip() or len(semantic[name]) > (512 if name == 'stage' else 256):
+                raise ValueError(f'invalid semantic_work {name}')
+        for name in ('input_sha256', 'instruction_sha256'):
+            if not isinstance(semantic[name], str) or not re.fullmatch(r'[0-9a-f]{64}', semantic[name]):
+                raise ValueError(f'semantic_work {name} must be a lowercase SHA-256 hash')
+        if out.get('mutation_policy', 'read_only') != 'read_only' or out.get('role', 'semantic-worker') != 'semantic-worker':
+            raise ValueError('authoritative semantic isolation must be read_only with semantic-worker role')
+        out.update({'role': 'semantic-worker', 'mutation_policy': 'read_only', 'semantic_work': semantic})
+    return out
+
+
 def _task_specs(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not tasks or len(tasks) > 10000:
         raise ValueError('planned run requires 1-10000 bounded tasks')
     result = []
     allowed = {'title', 'instructions', 'key', 'pool', 'depends_on',
-               'exclude_workers', 'review_of'}
+               'exclude_workers', 'review_of', 'isolation'}
     for i, task in enumerate(tasks, 1):
         if not isinstance(task, dict) or not {'title', 'instructions'} <= set(task) or set(task) - allowed:
             raise ValueError('task requires title/instructions and supported task fields')
@@ -447,7 +487,8 @@ def _task_specs(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result.append({'key': key, 'pool': pool, 'depends_on': deps,
                        'review_of': reviews, 'exclude_workers': excluded,
                        'title': _text(task['title'], 'task title', 200),
-                       'instructions': _text(task['instructions'], 'task instructions', 60000)})
+                       'instructions': _text(task['instructions'], 'task instructions', 60000),
+                       'isolation': _isolation_spec(task.get('isolation'))})
     by_key = {item['key']: item for item in result}
     if len(by_key) != len(result):
         raise ValueError('task keys must be unique')
@@ -470,7 +511,8 @@ def _stored_specs(db: sqlite3.Connection, run_id: str) -> list[dict[str, Any]]:
              'pool': row['pool_id'], 'depends_on': json.loads(row['depends_on']),
              'review_of': json.loads(row['review_of']),
              'exclude_workers': json.loads(row['exclude_workers']),
-             'title': row['title'], 'instructions': row['instructions']}
+             'title': row['title'], 'instructions': row['instructions'],
+             'isolation': json.loads(row['isolation_spec'])}
             for row in db.execute('SELECT * FROM slots WHERE run_id=? ORDER BY number', (run_id,))]
 
 
@@ -667,10 +709,10 @@ def publish_task(run_id: str, task_id: str, tasks: dict[str, Any] | list[dict[st
                                   (run_id,)).fetchone()[0]
         for offset, new in enumerate(new_tasks):
             db.execute("INSERT INTO slots(run_id,number,title,instructions,task_key,pool_id,"
-                       " depends_on,review_of,exclude_workers) VALUES(?,?,?,?,?,?,?,?,?)",
+                       " depends_on,review_of,exclude_workers,isolation_spec) VALUES(?,?,?,?,?,?,?,?,?,?)",
                        (run_id, first_number + offset, new['title'], new['instructions'], new['key'],
                         new['pool'], json.dumps(new['depends_on']), json.dumps(new['review_of']),
-                        json.dumps(new['exclude_workers'])))
+                        json.dumps(new['exclude_workers']), json.dumps(new['isolation'])))
         db.execute('UPDATE runs SET graph_revision=graph_revision+1 WHERE id=?', (run_id,))
         return {'run_id': run_id, 'task_key': new_tasks[0]['key'] if len(new_tasks) == 1 else None,
                 'slot': first_number if len(new_tasks) == 1 else None,
@@ -684,7 +726,7 @@ def revise_task(run_id: str, task_id: str, task_key: str,
                 lease_generation: int, expected_revision: int) -> dict[str, Any]:
     task_id = _task(task_id)
     task_key = _identifier(task_key, 'task key', RUN_RE)
-    editable = {'title','instructions','pool','depends_on','review_of','exclude_workers'}
+    editable = {'title','instructions','pool','depends_on','review_of','exclude_workers','isolation'}
     if not updates or set(updates) - editable:
         raise ValueError('invalid or empty task updates')
     with _connection(write=True) as db:
@@ -706,10 +748,10 @@ def revise_task(run_id: str, task_id: str, task_key: str,
         validated = _task_specs([changed if task['key'] == task_key else task for task in current])
         final = next(t for t in validated if t['key'] == task_key)
         db.execute("""UPDATE slots SET title=?,instructions=?,pool_id=?,depends_on=?,
-                      review_of=?,exclude_workers=? WHERE run_id=? AND task_key=?""",
+                      review_of=?,exclude_workers=?,isolation_spec=? WHERE run_id=? AND task_key=?""",
                    (final['title'], final['instructions'], final['pool'],
                     json.dumps(final['depends_on']), json.dumps(final['review_of']),
-                    json.dumps(final['exclude_workers']), run_id, task_key))
+                    json.dumps(final['exclude_workers']), json.dumps(final['isolation']), run_id, task_key))
         db.execute('UPDATE runs SET graph_revision=graph_revision+1 WHERE id=?', (run_id,))
         return {'run_id': run_id, 'task_key': task_key,
                 'graph_revision': expected_revision + 1}
@@ -842,11 +884,11 @@ def create_run(repo: str, target_branch: str, worktree_parent: str,
         run = _make_run(db, identity, goal=goal_key, strategy=strategy,
                         parent=parent, planned=True, run_id=run_id)
         for i, task in enumerate(specs, 1):
-            db.execute('''INSERT INTO slots(run_id,number,title,instructions,task_key,pool_id,depends_on,review_of,exclude_workers)
-                          VALUES(?,?,?,?,?,?,?,?,?)''',
+            db.execute('''INSERT INTO slots(run_id,number,title,instructions,task_key,pool_id,depends_on,review_of,exclude_workers,isolation_spec)
+                          VALUES(?,?,?,?,?,?,?,?,?,?)''',
                        (run, i, task['title'], task['instructions'], task['key'], task['pool'],
                         json.dumps(task['depends_on']),json.dumps(task['review_of']),
-                        json.dumps(task['exclude_workers'])))
+                        json.dumps(task['exclude_workers']),json.dumps(task['isolation'])))
         if serial_tail is not None:
             db.execute('INSERT INTO serial_tails(run_id,instructions) VALUES(?,?)',
                        (run, serial_tail))
@@ -1116,6 +1158,8 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
             'title': slot['title'], 'instructions': slot['instructions'],
             'worktree': str(path), 'strategy': strategy, 'base_commit': base,
             'lease_generation': slot['lease_generation'],
+            'isolation_spec': json.loads(slot['isolation_spec']),
+            'repo': str(repo),
             'last_seen': time.time(),
             'recovery': dict(recovery) if recovery else None,
             'restored_worktree': restored,

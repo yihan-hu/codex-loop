@@ -13,6 +13,8 @@ SCRIPT = Path(__file__).resolve().parents[2] / 'scripts'
 sys.path.insert(0, str(SCRIPT))
 from codex_loop_runtime import local_collaboration as c
 from codex_loop_runtime.repository_continuity import repository_enter
+from codex_loop_runtime.state import create_store
+from codex_loop_runtime.change_tracker import capture_baseline
 
 
 def git(root: Path, *args: str) -> str:
@@ -41,6 +43,14 @@ class CollaborationTest(unittest.TestCase):
         (self.repo / 'shared.txt').write_text('start\n')
         git(self.repo, 'add', '.')
         git(self.repo, 'commit', '-m', 'initial')
+
+    def register_cli_worker(self, task_id: str):
+        # CLI collaboration now requires a real admitted Chat lifecycle before
+        # any Slot is reserved, not an invented test-only task_id.
+        store=create_store(self.repo,task_id=task_id)
+        store.configure_task(task_id,request_anchor='Participate in this Local collaboration Run')
+        capture_baseline(self.repo,store)
+        return store
 
     def create(self, n=2, strategy='detached'):
         tasks = [{'title': f'work {i}', 'instructions': f'Create file {i} and test'} for i in range(1, n+1)]
@@ -192,6 +202,7 @@ class CollaborationTest(unittest.TestCase):
                      '--tasks-file',str(tasks_file),'--serial-tail-file',str(tail_file))
         run=created['run_id']
         self.assertTrue(created['serial_tail_planned'])
+        self.register_cli_worker('cli-owner')
         worker=call('claim','--run-id',run,'--task-id','cli-owner',
                     '--worktree-parent',str(self.parent))
         sha=self.commit(worker)
@@ -406,6 +417,7 @@ class CollaborationTest(unittest.TestCase):
         result=call('create','--repo',str(self.repo),'--branch','main','--goal-key','cli-demo',
                     '--worktree-parent',str(self.parent),'--tasks-file',str(tasks_file))
         run=result['run_id']
+        self.register_cli_worker('cli-worker')
         worker=call('claim','--run-id',run,'--task-id','cli-worker',
                     '--worktree-parent',str(self.parent))
         self.assertEqual(worker['title'],'add minimal task')
@@ -596,6 +608,8 @@ class CollaborationTest(unittest.TestCase):
                 raise AssertionError(f'CLI {args} failed: {p.stderr} {p.stdout}')
             return json.loads(p.stdout)['data']
         run=self.create(2)['run_id']
+        self.register_cli_worker('task-A')
+        self.register_cli_worker('task-B')
         a=call('claim','--run-id',run,'--task-id','task-A','--worktree-parent',str(self.parent))
         b=call('claim','--run-id',run,'--task-id','task-B','--worktree-parent',str(self.parent))
         item=call('delegate','--run-id',run,'--task-id','task-A','--request-key','cli-job',

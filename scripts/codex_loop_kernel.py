@@ -610,6 +610,7 @@ def cmd_isolate_enter(args: argparse.Namespace) -> None:
         criteria_refs=args.criterion_ref or [],
         requested_capability_overrides=requested_overrides,
         actual_capability_report=actual_report,
+        mutation_policy=args.mutation_policy,
     )
     emit_ok(result)
 
@@ -734,7 +735,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("pause"); _add_scope(p); p.set_defaults(func=cmd_pause)
     p = sub.add_parser("block"); _add_scope(p); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_block)
     p = sub.add_parser("cancel"); _add_scope(p); p.add_argument("--reason"); p.set_defaults(func=cmd_cancel)
-    p = sub.add_parser("isolate-enter"); _add_scope(p); p.add_argument("--role", required=True, choices=["reviewer","researcher","tester","debugger","security-reviewer","architecture-reviewer"]); p.add_argument("--objective", required=True); p.add_argument("--requested-executor", choices=["native_subagent","logical_isolation"], default="native_subagent"); p.add_argument("--actual-executor", choices=["native_subagent","logical_isolation"], default="logical_isolation"); p.add_argument("--project-file", action="append"); p.add_argument("--fact", action="append"); p.add_argument("--criterion-ref", action="append"); p.add_argument("--request-capability", action="append", choices=list(CAPABILITY_KEYS)); p.add_argument("--actual-capability", action="append", choices=list(CAPABILITY_KEYS)); p.set_defaults(func=cmd_isolate_enter)
+    p = sub.add_parser("isolate-enter"); _add_scope(p); p.add_argument("--role", required=True, choices=["reviewer","researcher","tester","debugger","security-reviewer","architecture-reviewer"]); p.add_argument("--objective", required=True); p.add_argument("--requested-executor", choices=["native_subagent","logical_isolation"], default="native_subagent"); p.add_argument("--mutation-policy", choices=["read_only","workspace_write"], default="read_only"); p.add_argument("--actual-executor", choices=["native_subagent","logical_isolation"], default="logical_isolation"); p.add_argument("--project-file", action="append"); p.add_argument("--fact", action="append"); p.add_argument("--criterion-ref", action="append"); p.add_argument("--request-capability", action="append", choices=list(CAPABILITY_KEYS)); p.add_argument("--actual-capability", action="append", choices=list(CAPABILITY_KEYS)); p.set_defaults(func=cmd_isolate_enter)
     p = sub.add_parser("isolate-status"); _add_scope(p); p.set_defaults(func=cmd_isolate_status)
     p = sub.add_parser("isolate-finish"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.set_defaults(func=cmd_isolate_finish)
     p = sub.add_parser("isolate-abort"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_isolate_abort)

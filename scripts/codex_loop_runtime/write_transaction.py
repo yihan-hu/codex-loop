@@ -151,10 +151,15 @@ def guarded_write(
 ) -> WriteResult:
     store.ensure_active()
     active_isolation = store.active_isolation()
-    if active_isolation is not None and str(active_isolation.get("mutation_policy")) == "read_only":
-        raise PermissionError(
-            f"active isolated task {active_isolation.get('isolation_id')} is read-only; local guarded writes are forbidden"
-        )
+    if active_isolation is not None:
+        policy = str(active_isolation.get("mutation_policy"))
+        if policy == "read_only":
+            raise PermissionError(
+                f"active isolated task {active_isolation.get('isolation_id')} is read-only; local guarded writes are forbidden"
+            )
+        slot = (active_isolation.get("context_spec") or {}).get("collaboration")
+        if slot and root.resolve() != Path(slot["worktree"]).resolve():
+            raise PermissionError("active Slot Logical Isolation permits guarded writes only in its own worktree")
     if len(content) > MAX_LOCAL_WRITE_BYTES:
         raise ValueError("local guarded write payload exceeds 16 MiB; use a host-visible file operation")
     profile = str(store.get_meta("profile", "regular"))

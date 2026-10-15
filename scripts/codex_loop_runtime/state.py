@@ -1152,6 +1152,10 @@ self, generation: int) -> dict[str, Any]:
         }
         if not all(fields.values()):
             raise ValueError("isolation role/objective/executor/mutation policy must not be empty")
+        if fields["mutation_policy"] not in ("read_only", "workspace_write"):
+            raise ValueError("unsupported isolation mutation policy")
+        if semantic_work is not None and fields["mutation_policy"] != "read_only":
+            raise ValueError("semantic work must remain read-only")
         safe_context_spec = scrub_persisted_value(context_spec)
         context_encoded = json.dumps(safe_context_spec, ensure_ascii=True, sort_keys=True)
         if len(context_encoded.encode("utf-8")) > 256 * 1024:

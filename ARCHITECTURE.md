@@ -98,10 +98,11 @@ retain prior blocker for recheck]
   CW --> FAIR
   FAIR --> LEASE[Atomic owner generation + 600 second last_seen lease]
   LEASE --> RECOVER{Reclaimed task?}
-  RECOVER -->|No| EXEC[One Chat executes bounded task on its worker-owned worktree]
+  RECOVER -->|No| ISOIN[Existing Logical Isolation: bind Run/Slot/lease in per-Chat lifecycle]
   RECOVER -->|Yes| SNAP[Snapshot old HEAD, Git index, tracked patches and nonignored task files]
   SNAP -->|Consistent and conflict-free| RESTORE[Restore source delta into NEW worktree; old worktree untouched]
-  RESTORE --> EXEC
+  RESTORE --> ISOIN
+  ISOIN -->|Read-only semantic or writable work| EXEC[One Chat executes current Slot using projected evidence]
   SNAP -->|Changed/missing/conflicting| STOPREC[Pause recovery for manual reconciliation; preserve both worktrees]
   EXEC --> MCPHB[Scoped My Mac / WSL call: check inbox/control, heartbeat at most once per minute]
   MCPHB --> LEASE
@@ -114,13 +115,15 @@ retain prior blocker for recheck]
   EXEC -. activity .-> HB[Heartbeat / checkpoint]
   HB --> LEASE
   EXEC --> FIN[finish verifies own commit delta + Git cleanliness]
+  FIN --> ISOEND[Writable closes on verified Git; read-only needs isolate-finish; strict semantic needs semantic-work-finish]
+  ISOEND -->|Auto-claimed next Slot only| ISOIN
   FIN --> UNLOCK[Mark done and unlock downstream tasks immediately]
   UNLOCK --> READY
   FIN --> NEXT{Another Ready task?}
   NEXT -->|Yes| FAIR
   NEXT -->|No Ready and not Integrator| IDLE
   UNLOCK --> DEPS[Cross-worker dependency Git materialization: verified task deltas]
-  DEPS --> EXEC
+  DEPS --> ISOIN
   FIN --> ELECTION{All DAG tasks and delegations done?}
   ELECTION -->|No| READY
   ELECTION -->|Yes; atomic last-finisher| INTEG[Topological own-delta cherry-pick into clean target + tests]

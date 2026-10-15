@@ -1451,6 +1451,7 @@ def _cmd_workspace_forget(argv: list[str]) -> int:
 
 
 def _cmd_collab(argv: list[str]) -> int:
+    from codex_loop_runtime.collab_isolation import preflight_claim, enter_assignment, before_finish, after_finish
     p = argparse.ArgumentParser(prog='codex_loop.py collab')
     sub = p.add_subparsers(dest='action', required=True)
     c = sub.add_parser('create', help='create a planned local run with atomic slot allocation')
@@ -1559,11 +1560,12 @@ def _cmd_collab(argv: list[str]) -> int:
     elif action == 'discover':
         result=collab.discover(a.repo,a.branch)
     elif action == 'claim':
+        preflight_claim(a.task_id,a.run_id)  # never reserve a Slot without compatible lifecycle/isolation
         claim_fn = collab.wait_claim if a.wait else collab.claim
-        result=claim_fn(a.run_id,a.task_id,worktree_parent=a.worktree_parent,
+        result=enter_assignment(claim_fn(a.run_id,a.task_id,worktree_parent=a.worktree_parent,
                         existing_worktree=a.existing_worktree,
                         **({'poll_interval': a.poll_interval, 'max_wait_seconds': a.max_wait_seconds}
-                           if a.wait else {}))
+                           if a.wait else {})))
     elif action == 'activity':
         result=collab.activity(a.task_id,interval_seconds=a.interval_seconds)
     elif action == 'heartbeat':
@@ -1585,9 +1587,10 @@ def _cmd_collab(argv: list[str]) -> int:
     elif action == 'reclaim':
         result=collab.reclaim(a.run_id,a.task_key,force=a.force,reason=a.reason)
     elif action == 'join':
-        result=collab.dynamic_join(a.repo,a.branch,a.worktree_parent,goal_key=a.goal_key,
+        preflight_claim(a.task_id)
+        result=enter_assignment(collab.dynamic_join(a.repo,a.branch,a.worktree_parent,goal_key=a.goal_key,
                                    task_id=a.task_id,title=a.title,instructions=a.instructions,
-                                   strategy=a.strategy,existing_worktree=a.existing_worktree)
+                                   strategy=a.strategy,existing_worktree=a.existing_worktree))
     elif action == 'status':
         result=collab.status(a.run_id)
     elif action == 'inbox':
@@ -1609,8 +1612,10 @@ def _cmd_collab(argv: list[str]) -> int:
         result=collab.complete_delegation(a.run_id,a.task_id,delegation_id=a.delegation_id,
                                          result=a.result,commit_sha=a.commit_sha)
     elif action == 'finish':
+        before_finish(a.run_id,a.task_id,a.slot)
         result=collab.finish(a.run_id,a.task_id,commit_sha=a.commit_sha,slot_number=a.slot,
                              lease_generation=a.lease_generation)
+        result=after_finish(a.run_id,a.task_id,result,a.slot)
     elif action == 'elect':
         result=collab.elect(a.run_id,a.task_id)
     elif action == 'reclaim-integrator':

@@ -193,6 +193,11 @@ class AdaptiveCollaborationTest(unittest.TestCase):
     def test_cli_wait_claim_returns_bounded_waiting_response(self):
         run=self.run_tasks([{'key':'A','title':'A','instructions':'A'}])
         self.claim(run, 'owner')
+        from codex_loop_runtime.state import create_store
+        from codex_loop_runtime.change_tracker import capture_baseline
+        store=create_store(self.repo,task_id='idle-cli')
+        store.configure_task('idle-cli',request_anchor='Wait for the next Ready task')
+        capture_baseline(self.repo,store)
         output=subprocess.run([
             sys.executable, str(SCRIPT / 'codex_loop.py'), 'collab', 'claim',
             '--run-id', run, '--task-id', 'idle-cli',

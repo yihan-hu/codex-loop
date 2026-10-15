@@ -330,7 +330,14 @@ def isolation_projection(facts: dict[str, Any], isolation: dict[str, Any]) -> di
             "facts": list(projected.get("facts", []))[:48],
             "criteria_refs": list(projected.get("criteria_refs", []))[:32],
         },
-        "guardrails": ["read-only", "re-observe evidence independently", "return actionable findings only"],
+        "mutation_policy": isolation.get("mutation_policy"),
+        "collaboration": context_spec.get("collaboration"),
+        "guardrails": (
+            ["read-only", "re-observe evidence independently", "return actionable findings only"]
+            if isolation.get("mutation_policy") == "read_only"
+            else ["modify only the authorized task worktree", "use only the projected Slot inputs",
+                  "do not treat previous Slot reasoning as evidence", "retain Git/lease ownership checks"]
+        ),
         "result_contract": {
             "fields": ["summary", "findings", "recommended_action", "files_inspected", "limitations"],
             "delegated_result_semantics": "evidence_not_truth",

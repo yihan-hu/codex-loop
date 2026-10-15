@@ -10,6 +10,7 @@ from .change_tracker import sync_generation
 from .checkpoint import create as create_checkpoint
 from codex_loop_context_projection import build_isolation, build_working
 from .state import StateStore, scrub_persisted_text, scrub_persisted_value, scrub_semantic_result_value
+from .workspace import workspace_fingerprint
 
 CAPABILITY_KEYS = (
     "fresh_model_context",
@@ -225,6 +226,9 @@ def create_isolation(
     requested_capability_overrides: dict[str, Any] | None = None,
     actual_capability_report: dict[str, Any] | None = None,
     semantic_work: dict[str, str] | None = None,
+    mutation_policy: str = 'read_only',
+    context_binding: dict[str, Any] | None = None,
+    checkpoint_at_entry: bool = True,
 ) -> dict[str, Any]:
     store.ensure_active()
     if role not in ROLES:
@@ -237,17 +241,23 @@ def create_isolation(
     requested = requested_capabilities(requested_executor, requested_capability_overrides)
     actual = executor_capabilities(actual_executor, actual_capability_report)
     missing = calculate_missing_capabilities(requested, actual)
+    if mutation_policy not in ('read_only', 'workspace_write'):
+        raise ValueError('isolation mutation policy must be read_only or workspace_write')
+    if semantic_work is not None and mutation_policy != 'read_only':
+        raise ValueError('semantic authority requires read-only logical isolation')
     context_spec = _context_spec(project_files=project_files, facts=facts, criteria_refs=criteria_refs)
+    if context_binding is not None:
+        context_spec['collaboration'] = dict(context_binding)
 
-    create_checkpoint(
-        root,
-        cwd,
-        store,
-        key_findings=["delegation entry checkpoint; current workspace reality remains authoritative"],
-        next_action=f"complete isolated {role} task and return structured evidence",
-    )
-    checkpoint = store.latest_checkpoint()
-    checkpoint_id = None if checkpoint is None else int(checkpoint["id"])
+    checkpoint_id = None
+    if checkpoint_at_entry:
+        create_checkpoint(
+            root, cwd, store,
+            key_findings=["delegation entry checkpoint; current workspace reality remains authoritative"],
+            next_action=f"complete isolated {role} task and return structured evidence",
+        )
+        checkpoint = store.latest_checkpoint()
+        checkpoint_id = None if checkpoint is None else int(checkpoint["id"])
     isolation_id = "iso_" + uuid.uuid4().hex[:20]
     item = store.create_isolation(
         isolation_id=isolation_id,
@@ -259,7 +269,7 @@ def create_isolation(
         requested_capabilities=requested,
         actual_capabilities=actual,
         missing_capabilities=missing,
-        mutation_policy="read_only",
+        mutation_policy=mutation_policy,
         context_spec=context_spec,
         checkpoint_id=checkpoint_id,
         semantic_work=semantic_work,
@@ -442,6 +452,9 @@ def finish_semantic_isolation(
         raise RuntimeError("isolation is not semantic work; use isolate-finish")
     if str(active.get("actual_executor")) != "logical_isolation":
         raise RuntimeError("semantic work authority requires logical_isolation execution")
+    slot = (active.get("context_spec") or {}).get("collaboration")
+    if slot and workspace_fingerprint(Path(slot["worktree"])) != slot["worktree_fingerprint"]:
+        raise RuntimeError("semantic work became stale because the Slot worktree changed during logical isolation")
 
     if not isinstance(result, dict):
         raise ValueError("semantic result must be a JSON object")
@@ -517,6 +530,10 @@ def resolve_semantic_result(
         raise RuntimeError("semantic result was not produced by logical_isolation")
     if bool(item.get("workspace_changed")):
         raise RuntimeError("semantic result is not authoritative because the workspace changed during isolation")
+    original_isolation = store.isolation(item["isolation_id"])
+    slot = (original_isolation.get("context_spec") or {}).get("collaboration") if original_isolation else None
+    if slot and workspace_fingerprint(Path(slot["worktree"])) != slot["worktree_fingerprint"]:
+        raise RuntimeError("semantic result is stale because the Slot worktree changed")
     current_request_sha256 = store.effective_request_sha256()
     if str(item.get("request_sha256")) != current_request_sha256:
         raise RuntimeError("semantic result is stale because the effective user request changed")
