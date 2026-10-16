@@ -268,8 +268,8 @@ def validate_environment_locations(raw: Any) -> dict[str, Any]:
     for key in ("default_root", "runtime_directory", "state_directory", "git_metadata_root"):
         if result[key] is not None:
             validate_absolute_locator(result[key], key)
-    if not (result["git_auth"] is None or isinstance(result["git_auth"], str) and result["git_auth"] in {"osxkeychain", "windows_gcm"}):
-        raise ValueError("git_auth must be null, osxkeychain, or windows_gcm (credential source, not a secret)")
+    if not (result["git_auth"] is None or isinstance(result["git_auth"], str) and result["git_auth"] in {"osxkeychain", "windows_gcm", "gh_cli"}):
+        raise ValueError("git_auth must be null, gh_cli, osxkeychain, or windows_gcm (credential source, not a secret)")
     projects = result["projects"]
     if not isinstance(projects, dict) or len(projects) > 256:
         raise ValueError("environment projects must be an object of at most 256 aliases")

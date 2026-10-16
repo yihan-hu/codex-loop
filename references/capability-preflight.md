@@ -50,13 +50,7 @@ Tool discovery, connector listing, or reading these instructions never counts as
 
 ### GitHub push
 
-For **Local mode**, prefer native Git from the canonical authorized worktree:
-
-```text
-git push --dry-run <intended-remote> <intended-refspec>
-```
-
-Run it through the normal host-visible Git path. Success must show that the remote was reached and the dry run was push-capable without moving a ref. Do not create a throwaway branch merely to test permission.
+For **Local mode**, use the authorized native Git publication path with the nonsecret credential source selected from Host Profile. No mandatory Credential Helper inspection, authentication probe, or push dry-run is required: execute the planned push directly and diagnose only an actual failure. Host and repository authorization still apply to the real push.
 
 For **Web mode**, test the actual host tools that the later GitHub publication will use, **at admission before substantive work**. A generic `github_push` capability check and an empty Blob do not prewarm the `create_tree`, `create_commit`, `update_ref` or `update_file` tool interfaces. Use this safe, ref-nonmutating sequence against the exact intended repository:
 
@@ -140,7 +134,7 @@ For `local_chrome`, keep `browser_host_health` separate from `browser_session_he
 - Web repository edit only: routing session resolves `workspace_mode=web`; current writable Web workspace; no GitHub/Drive probe unless the reviewed workflow includes publication or another external action.
 - Web-mode GitHub publication: `github_push` + `google_drive_write` (plus `google_drive_delete` when the workflow will actually use the separate Drive delete API). The import workflow is push-triggered, so publication does not call a host Actions write API. Prove Actions execution after the request push by binding the matching workflow run/receipt to that trigger. Request `github_actions` separately only when the host will actually dispatch or rerun a workflow.
 - ChatGPT Web Skill install/update without source publication: native Skill surface capability only; do not probe Drive/GitHub merely because they are connected.
-- Local native-Git publication: `github_push`; use native `git push --dry-run` from the canonical authorized worktree before substantial work when publication is already part of the reviewed objective.
+- Local native-Git publication: authorize the selected host and repository, then use the Host Profile credential source on the actual push; diagnose and retry only if push fails.
 - Optional cross-conversation persistence: `google_drive_read` and/or `google_drive_write` only when persistence is enabled or recoverability is an acceptance requirement. Persistence is off by default.
 - Local repository read/inspection: selected local file/shell connector access plus resolved/authorized `LOCAL_ROOT`; this does not authorize source mutation.
 - Local repository edit: the Local read capabilities plus explicit current-task local-source-mutation authorization **and an early live `local_project_write` sentinel via the actual selected connector**.
