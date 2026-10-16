@@ -64,6 +64,44 @@ class AdaptiveCollaborationTest(unittest.TestCase):
             db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_key=?',
                        (time.time()-601, run, task_key))
 
+    def test_retired_worker_receives_durable_stop_and_cannot_claim(self):
+        run=self.run_tasks([{'key':'A','title':'Model','pool':'model','instructions':'Generate'},
+                            {'key':'B','title':'QA','pool':'qa','instructions':'Review'}])
+        task=self.claim(run,'old-chat')
+        result=c.retire_worker(run,'old-chat','Switch to native generation')
+        self.assertTrue(result['new_claims_blocked'])
+        self.assertEqual(result['active_task']['task_key'],'A')
+        self.assertTrue(c.activity('old-chat')['stop'])
+        with self.assertRaises(PermissionError):
+            self.claim(run,'old-chat')
+        self.assertFalse(c.retire_worker(run,'old-chat','Switch to native generation')['already_retired'] is False)
+        c.finish(run,'old-chat',commit_sha=self.commit(task),auto_claim=False,
+                 lease_generation=task['lease_generation'])
+        with self.assertRaises(PermissionError):
+            self.claim(run,'old-chat')
+        self.assertEqual(self.claim(run,'other-chat')['pool'],'qa')
+
+    def test_due_review_and_machine_pool_owners(self):
+        run=self.run_tasks([{'key':'g','pool':'qwen','title':'Generate','instructions':'G'},
+                            {'key':'h','pool':'qa','title':'Inspect','instructions':'H'}])
+        c.configure_pool_operators(run,['machine1'],['qwen'])
+        c.configure_recurring_review(run,'native-health','health',1200,'Inspect running process')
+        reviewer=self.claim(run,'chat1')
+        self.assertEqual(reviewer['pool'],'health')
+        self.assertEqual(reviewer['isolation_spec']['mutation_policy'],'read_only')
+        self.assertEqual(self.claim(run,'chat2')['pool'],'qa')
+        self.assertEqual(self.claim(run,'machine1')['pool'],'qwen')
+        with c._connection(write=True) as db:
+            db.execute('UPDATE recurring_reviews SET last_published=? WHERE run_id=?',
+                       (time.time()-1201,run))
+        self.assertEqual(c.claim(run,'chat3',worktree_parent=str(self.parent),
+                                 wait_if_empty=True)['status'],'waiting')
+        self.assertEqual(sum(x['pool_id']=='health' for x in c.status(run)['slots']),1)
+        c.finish(run,'chat1',commit_sha=self.commit(reviewer),auto_claim=False,
+                 lease_generation=reviewer['lease_generation'])
+        self.assertEqual(self.claim(run,'chat4')['pool'],'health')
+        self.assertEqual(sum(x['pool_id']=='health' for x in c.status(run)['slots']),2)
+
     def test_shared_gpu_cap_skips_both_pools_and_dispatches_ready_qa(self):
         run = self.run_tasks([
             {'key':'qwen-1', 'pool':'qwen', 'title':'Qwen 1', 'instructions':'GPU'},

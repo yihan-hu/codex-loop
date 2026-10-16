@@ -1466,6 +1466,7 @@ def _cmd_collab(argv: list[str]) -> int:
     c = sub.add_parser('claim', help='claim a ready DAG task fairly across pools; reuse current Chat worktree')
     c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
     c.add_argument('--worktree-parent', required=True); c.add_argument('--existing-worktree')
+    c.add_argument('--only-pool', action='append', help='restrict work to listed pools')
     c.add_argument('--wait', action='store_true', help='wait for Ready work while heartbeating idle status')
     c.add_argument('--poll-interval', type=float, default=30)
     c.add_argument('--max-wait-seconds', type=float, default=60)
@@ -1501,6 +1502,20 @@ def _cmd_collab(argv: list[str]) -> int:
     c.add_argument('--slot', required=True, type=int)
     c.add_argument('--lease-generation', required=True, type=int)
     c.add_argument('--resource', required=True); c.add_argument('--reason', required=True)
+    c = sub.add_parser('stop-worker', help='retire a Chat worker and notify on next activity')
+    c.add_argument('--run-id', required=True)
+    c.add_argument('--worker', required=True)
+    c.add_argument('--reason', required=True)
+    c = sub.add_parser('pool-operators', help='reserve local code generation pools')
+    c.add_argument('--run-id', required=True)
+    c.add_argument('--worker', action='append', required=True)
+    c.add_argument('--pool', action='append', required=True)
+    c = sub.add_parser('recurring-review', help='queue reviewer task on active claims when due')
+    c.add_argument('--run-id', required=True)
+    c.add_argument('--review-key', required=True)
+    c.add_argument('--pool', required=True)
+    c.add_argument('--interval-seconds', required=True, type=int)
+    c.add_argument('--instructions-file', required=True)
     c = sub.add_parser('resource-cap', help='set an opt-in shared resource cap for this run')
     c.add_argument('--run-id', required=True); c.add_argument('--resource', required=True)
     c.add_argument('--max-claimed', required=True, type=int)
@@ -1533,6 +1548,7 @@ def _cmd_collab(argv: list[str]) -> int:
     c.add_argument('--commit-sha')
     c = sub.add_parser('finish'); c.add_argument('--run-id', required=True)
     c.add_argument('--task-id', required=True); c.add_argument('--commit-sha', required=True)
+    c.add_argument('--no-auto-claim', action='store_true')
     c.add_argument('--slot', type=int, help='claimed slot number; disambiguates retried or no-op finishes')
     c.add_argument('--lease-generation', type=int, help='claim token; required after any reclaim')
     c = sub.add_parser('elect'); c.add_argument('--run-id', required=True)
@@ -1573,6 +1589,7 @@ def _cmd_collab(argv: list[str]) -> int:
         claim_fn = collab.wait_claim if a.wait else collab.claim
         result=enter_assignment(claim_fn(a.run_id,a.task_id,worktree_parent=a.worktree_parent,
                         existing_worktree=a.existing_worktree,
+                        only_pools=tuple(a.only_pool) if a.only_pool else None,
                         **({'poll_interval': a.poll_interval, 'max_wait_seconds': a.max_wait_seconds}
                            if a.wait else {})))
     elif action == 'activity':
@@ -1603,6 +1620,16 @@ def _cmd_collab(argv: list[str]) -> int:
     elif action == 'resource-blocked':
         result=collab.resource_blocked(a.run_id,a.task_id,slot_number=a.slot,
                 lease_generation=a.lease_generation,resource_key=a.resource,reason=a.reason)
+    elif action == 'stop-worker':
+        result=collab.retire_worker(a.run_id,a.worker,a.reason)
+    elif action == 'pool-operators':
+        result=collab.configure_pool_operators(a.run_id,a.worker,a.pool)
+    elif action == 'recurring-review':
+        source=Path(a.instructions_file)
+        if not source.is_file() or source.stat().st_size > 60000:
+            raise ValueError('review instructions file must be bounded')
+        result=collab.configure_recurring_review(a.run_id,a.review_key,a.pool,
+                                                 a.interval_seconds,source.read_text())
     elif action == 'resource-cap':
         result=collab.set_resource_cap(a.run_id,a.resource,a.max_claimed,a.pool)
     elif action == 'status':
@@ -1628,7 +1655,8 @@ def _cmd_collab(argv: list[str]) -> int:
     elif action == 'finish':
         before_finish(a.run_id,a.task_id,a.slot)
         result=collab.finish(a.run_id,a.task_id,commit_sha=a.commit_sha,slot_number=a.slot,
-                             lease_generation=a.lease_generation)
+                             lease_generation=a.lease_generation,
+                             auto_claim=not a.no_auto_claim)
         result=after_finish(a.run_id,a.task_id,result,a.slot)
     elif action == 'elect':
         result=collab.elect(a.run_id,a.task_id)

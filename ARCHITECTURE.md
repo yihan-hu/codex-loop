@@ -87,10 +87,14 @@ retain prior blocker for recheck]
   H -. same-host local parallel development .-> LC[Local Worktree DAG Collaboration]
   LC --> REG[Host-local SQLite: runs, workers, task keys/pools/deps, receipts, delegations]
   LC --> CW[Git: one authorized worktree per Chat task_id]
+  REG --> OWNERS[Generation pools reserved for native workers]
+  REG --> REVIEWS[Publish overdue health review on next active claim]
+  REVIEWS --> READY
+  OWNERS --> QUAL
   REG --> READY[Compute Ready tasks from completed upstream keys]
   REG --> MUT[Worker publish or revise unclaimed DAG tasks; check graph revision]
   MUT --> READY
-  READY --> QUAL[Filter excluded workers and producer self-review]
+  READY --> QUAL[Filter exclusions, operator ownership and producer self-review]
   REG --> RES[Optional run resource caps: shared groups across GPU pools]
   QUAL --> CAP[Atomic capacity filter: skip resource-full task pools]
   RES --> CAP

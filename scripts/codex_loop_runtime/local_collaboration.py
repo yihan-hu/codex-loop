@@ -98,6 +98,20 @@ CREATE TABLE IF NOT EXISTS resource_caps (
   pools_json TEXT NOT NULL,
   PRIMARY KEY(run_id, resource_key)
 );
+CREATE TABLE IF NOT EXISTS pool_operators (
+  run_id TEXT NOT NULL REFERENCES runs(id), pool_id TEXT NOT NULL,
+  task_ids_json TEXT NOT NULL, PRIMARY KEY(run_id,pool_id)
+);
+CREATE TABLE IF NOT EXISTS recurring_reviews (
+  run_id TEXT NOT NULL REFERENCES runs(id), review_key TEXT NOT NULL,
+  pool_id TEXT NOT NULL, interval_seconds INTEGER NOT NULL,
+  instructions TEXT NOT NULL, last_published REAL NOT NULL DEFAULT 0,
+  latest_task_key TEXT, PRIMARY KEY(run_id,review_key)
+);
+CREATE TABLE IF NOT EXISTS retired_workers (
+  run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL,
+  reason TEXT NOT NULL, PRIMARY KEY(run_id,task_id)
+);
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
   sender TEXT NOT NULL, recipient TEXT, body TEXT NOT NULL,
@@ -581,6 +595,9 @@ def _eligible(db: sqlite3.Connection, run: sqlite3.Row,
 
 
 def _stopped(db: sqlite3.Connection, run_id: str, task_id: str) -> bool:
+    if db.execute('SELECT 1 FROM retired_workers WHERE run_id=? AND task_id=?',
+                  (run_id,task_id)).fetchone():
+        return True
     return db.execute('''SELECT 1 FROM messages m LEFT JOIN receipts a
         ON a.message_id=m.id AND a.task_id=? WHERE m.run_id=?
         AND m.recipient=? AND m.control_action='stop_task'
@@ -944,9 +961,112 @@ def resource_blocked(run_id: str, task_id: str, *, slot_number: int,
                 'action':'claim_other_ready_pool'}
 
 
-def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str) -> sqlite3.Row | None:
+def configure_pool_operators(run_id: str, task_ids: list[str], pools: list[str]) -> dict[str, Any]:
+    if len(set(task_ids)) != len(task_ids) or not task_ids or not pools:
+        raise ValueError('provide unique operator task IDs and at least one pool')
+    task_ids = [_task(x) for x in task_ids]
+    pools = [_identifier(x,'pool',TASK_RE) for x in pools]
+    with _connection(write=True) as db:
+        if _run(db,run_id)['state'] != 'open':
+            raise RuntimeError('run is not open')
+        known = {r['pool_id'] for r in db.execute('SELECT DISTINCT pool_id FROM slots WHERE run_id=?',(run_id,))}
+        if not set(pools) <= known:
+            raise ValueError('unknown task pool')
+        for pool in pools:
+            db.execute("""INSERT INTO pool_operators(run_id,pool_id,task_ids_json)
+                          VALUES(?,?,?) ON CONFLICT(run_id,pool_id)
+                          DO UPDATE SET task_ids_json=excluded.task_ids_json""",
+                       (run_id,pool,json.dumps(task_ids)))
+        return {'run_id':run_id,'pools':pools,'task_ids':task_ids}
+
+
+def configure_recurring_review(run_id: str, review_key: str, pool_id: str,
+                               interval_seconds: int, instructions: str) -> dict[str, Any]:
+    review_key = _identifier(review_key,'review key',TASK_RE)
+    pool_id = _identifier(pool_id,'review pool',TASK_RE)
+    if not 60 <= interval_seconds <= 86400:
+        raise ValueError('review interval must be 60..86400 seconds')
+    instructions = _text(instructions,'review instructions',60000)
+    with _connection(write=True) as db:
+        if _run(db,run_id)['state'] != 'open':
+            raise RuntimeError('run not open')
+        db.execute("""INSERT INTO recurring_reviews(run_id,review_key,pool_id,interval_seconds,instructions)
+                      VALUES(?,?,?,?,?) ON CONFLICT(run_id,review_key)
+                      DO UPDATE SET pool_id=excluded.pool_id,interval_seconds=excluded.interval_seconds,
+                                    instructions=excluded.instructions""",
+                   (run_id,review_key,pool_id,interval_seconds,instructions))
+    return {'run_id':run_id,'review_key':review_key,'pool':pool_id,
+            'interval_seconds':interval_seconds}
+
+
+def _publish_due_reviews(db: sqlite3.Connection, run_id: str) -> None:
+    # Trigger only at active claim boundaries. An ended Chat is never woken.
+    now = time.time()
+    # Do not perpetually publish monitoring Slots after native generation is finished.
+    owned = [r['pool_id'] for r in db.execute(
+        'SELECT pool_id FROM pool_operators WHERE run_id=?',(run_id,))]
+    if owned and not db.execute(
+        "SELECT 1 FROM slots WHERE run_id=? AND pool_id IN (%s) AND status!='done' LIMIT 1" %
+        ','.join('?'*len(owned)),(run_id,*owned)).fetchone():
+        return
+    for item in db.execute('SELECT * FROM recurring_reviews WHERE run_id=?',(run_id,)).fetchall():
+        if item['last_published'] and now-item['last_published'] < item['interval_seconds']:
+            continue
+        if item['latest_task_key']:
+            pending = db.execute('SELECT status FROM slots WHERE run_id=? AND task_key=?',
+                                 (run_id,item['latest_task_key'])).fetchone()
+            if pending and pending['status'] != 'done':
+                continue
+        key = item['review_key']+'-'+str(int(now))
+        if db.execute('SELECT 1 FROM slots WHERE run_id=? AND task_key=?',(run_id,key)).fetchone():
+            continue
+        number = db.execute('SELECT COALESCE(MAX(number),0)+1 FROM slots WHERE run_id=?',
+                            (run_id,)).fetchone()[0]
+        db.execute("""INSERT INTO slots(run_id,number,title,instructions,task_key,pool_id,
+                      isolation_spec) VALUES(?,?,?,?,?,?,?)""",
+                   (run_id,number,'Independent local generation health review',
+                    item['instructions'],key,item['pool_id'],
+                    json.dumps({'role':'reviewer','mutation_policy':'read_only'})))
+        db.execute("""UPDATE recurring_reviews SET last_published=?,latest_task_key=?
+                      WHERE run_id=? AND review_key=?""",(now,key,run_id,item['review_key']))
+        db.execute('UPDATE runs SET graph_revision=graph_revision+1 WHERE id=?',(run_id,))
+
+
+def retire_worker(run_id: str, task_id: str, reason: str) -> dict[str, Any]:
+    """Stop this worker from claiming again, without overwriting its active task."""
+    task_id = _task(task_id)
+    reason = _text(reason, 'retirement reason', 1000)
+    with _connection(write=True) as db:
+        _run(db, run_id)
+        registered = db.execute('SELECT 1 FROM workers WHERE run_id=? AND task_id=?',
+                                (run_id, task_id)).fetchone()
+        if not registered:
+            raise ValueError('target task ID has not participated in this run')
+        existing = db.execute('SELECT reason FROM retired_workers WHERE run_id=? AND task_id=?',
+                              (run_id,task_id)).fetchone()
+        if not existing:
+            db.execute('INSERT INTO retired_workers(run_id,task_id,reason) VALUES(?,?,?)',
+                       (run_id,task_id,reason))
+            _notice(db,run_id,'run-operator',task_id,
+                    'USER STOP DIRECTIVE: '+reason+
+                    ' Preserve ongoing output/checkpoints; stop this Chat worker and do not claim any new task.',
+                    control_action='stop_task')
+        active = db.execute("""SELECT task_key,status FROM slots WHERE run_id=?
+                  AND task_id=? AND status='claimed'""",(run_id,task_id)).fetchone()
+        return {'run_id':run_id,'retired':task_id,'already_retired':bool(existing),
+                'active_task':dict(active) if active else None,
+                'new_claims_blocked':True}
+
+
+def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str,
+                 only_pools: tuple[str, ...] | None = None) -> sqlite3.Row | None:
     run = _run(db, run_id)
-    ready = [slot for slot in _ready_slots(db, run_id) if _eligible(db, run, slot, task_id)]
+    owners = {r['pool_id']: set(json.loads(r['task_ids_json']))
+              for r in db.execute('SELECT pool_id,task_ids_json FROM pool_operators WHERE run_id=?',(run_id,))}
+    ready = [slot for slot in _ready_slots(db, run_id)
+             if _eligible(db, run, slot, task_id)
+             and (only_pools is None or slot['pool_id'] in only_pools)
+             and (slot['pool_id'] not in owners or task_id in owners[slot['pool_id']])]
     # Once the last active owner releases the resource, discard the temporary
     # learned ceiling so later workers can probe newly free capacity again.
     learned = db.execute('SELECT * FROM learned_resource_caps WHERE run_id=?', (run_id,)).fetchall()
@@ -987,7 +1107,10 @@ def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str) -> sqlite3.R
         'SELECT pool_id,last_claim FROM pool_dispatch WHERE run_id=?', (run_id,))}
     # Fair selection among pools with available shared resource capacity.
     # Runs without configured caps retain the original uncapped behavior.
-    chosen = min(ready, key=lambda slot: (active.get(slot['pool_id'], 0),
+    overdue = {r['latest_task_key'] for r in db.execute(
+        'SELECT latest_task_key FROM recurring_reviews WHERE run_id=?', (run_id,))}
+    chosen = min(ready, key=lambda slot: (0 if slot['task_key'] in overdue else 1,
+                                          active.get(slot['pool_id'], 0),
                                           last.get(slot['pool_id'], 0), slot['number']))
     next_seq = 1 + max(last.values(), default=0)
     db.execute('INSERT INTO pool_dispatch(run_id,pool_id,last_claim) VALUES(?,?,?) '
@@ -1115,7 +1238,8 @@ def dynamic_join(repo: str, target_branch: str, worktree_parent: str, *, goal_ke
 
 def claim(run_id: str, task_id: str, *, worktree_parent: str,
           existing_worktree: str | None = None,
-          wait_if_empty: bool = False) -> dict[str, Any]:
+          wait_if_empty: bool = False,
+          only_pools: tuple[str, ...] | None = None) -> dict[str, Any]:
     task_id = _task(task_id)
     # One Codex Loop task_id/Chat owns one worktree, but can finish and pull many
     # independent DAG tasks; SQLite selects a ready task fairly across pools.
@@ -1145,7 +1269,8 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                             'status': last['status'], 'worktree': worker['worktree'],
                             'registered': True, 'run_state': run['state']}
                 raise RuntimeError('run is not accepting slot claims')
-            slot = _choose_slot(db, run_id, task_id)
+            _publish_due_reviews(db, run_id)
+            slot = _choose_slot(db, run_id, task_id, only_pools)
             if not run['planned'] and slot is None:
                 raise RuntimeError('unplanned participants must register through collab join')
             if slot is None:
@@ -2047,7 +2172,8 @@ def serial_complete(run_id: str, task_id: str, *, integration_worktree: str,
 
 def wait_claim(run_id: str, task_id: str, *, worktree_parent: str,
                existing_worktree: str | None = None, poll_interval: float = 30,
-               max_wait_seconds: float = 60) -> dict[str, Any]:
+               max_wait_seconds: float = 60,
+               only_pools: tuple[str, ...] | None = None) -> dict[str, Any]:
     # Bounded foreground wait: no daemon and no changes to claimed-task leases.
     if not 0 < poll_interval <= 60 or not 0 < max_wait_seconds <= 300:
         raise ValueError('poll-interval must be in (0, 60]; max-wait-seconds in (0, 300]')
@@ -2055,7 +2181,8 @@ def wait_claim(run_id: str, task_id: str, *, worktree_parent: str,
     deadline = began + max_wait_seconds
     while True:
         result = claim(run_id, task_id, worktree_parent=worktree_parent,
-                       existing_worktree=existing_worktree, wait_if_empty=True)
+                       existing_worktree=existing_worktree, wait_if_empty=True,
+                       only_pools=only_pools)
         if result.get('status') != 'waiting':
             return result
         remaining = deadline - time.monotonic()
