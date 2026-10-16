@@ -83,6 +83,14 @@ CREATE TABLE IF NOT EXISTS pool_dispatch (
   run_id TEXT NOT NULL, pool_id TEXT NOT NULL, last_claim INTEGER NOT NULL,
   PRIMARY KEY(run_id,pool_id)
 );
+CREATE TABLE IF NOT EXISTS learned_resource_caps (
+  run_id TEXT NOT NULL, resource_key TEXT NOT NULL, original_max INTEGER,
+  PRIMARY KEY(run_id,resource_key)
+);
+CREATE TABLE IF NOT EXISTS resource_blocks (
+  run_id TEXT NOT NULL, resource_key TEXT NOT NULL, retry_after REAL NOT NULL,
+  PRIMARY KEY(run_id,resource_key)
+);
 CREATE TABLE IF NOT EXISTS resource_caps (
   run_id TEXT NOT NULL REFERENCES runs(id),
   resource_key TEXT NOT NULL,
@@ -874,15 +882,102 @@ def set_resource_cap(run_id: str, resource_key: str, max_claimed: int,
                       VALUES(?,?,?,?) ON CONFLICT(run_id,resource_key)
                       DO UPDATE SET max_claimed=excluded.max_claimed,pools_json=excluded.pools_json""",
                    (run_id, resource_key, max_claimed, json.dumps(sorted(pools))))
+        # An explicit operator cap supersedes prior automatic learning.
+        db.execute('DELETE FROM learned_resource_caps WHERE run_id=? AND resource_key=?',
+                   (run_id,resource_key))
+        db.execute('DELETE FROM resource_blocks WHERE run_id=? AND resource_key=?',
+                   (run_id,resource_key))
         return next(r for r in _resource_usage(db, run_id) if r['resource_key'] == resource_key)
+
+
+def resource_blocked(run_id: str, task_id: str, *, slot_number: int,
+                     lease_generation: int, resource_key: str, reason: str) -> dict[str, Any]:
+    """Return an unstarted clean task and learn resource capacity from active peers."""
+    resource_key = _identifier(resource_key, 'resource key', TASK_RE)
+    reason = _text(reason, 'resource block reason', 2000)
+    with _connection() as db:
+        slot = _active_owner(db, run_id, task_id, lease_generation)
+        if slot['number'] != slot_number or not slot['worktree'] or not slot['start_commit']:
+            raise PermissionError('resource report does not match a materialized active task')
+        worktree = Path(slot['worktree'])
+        _verify_same_repo(worktree, _run(db, run_id))
+        if _git(worktree, 'rev-parse', 'HEAD') != slot['start_commit'] or _git(worktree, 'status', '--porcelain', '--untracked-files=all'):
+            raise RuntimeError('task has local changes; preserve and finish it instead of requeueing')
+        if db.execute("""SELECT 1 FROM delegations WHERE run_id=? AND sender=?
+            AND status NOT IN ('completed','cancelled') LIMIT 1""", (run_id,task_id)).fetchone():
+            raise RuntimeError('task has outstanding delegations; cannot requeue')
+    # The worker has positively determined that resource acquisition failed before
+    # task work began. End its old behavioral scope before claiming another Slot.
+    from .collab_isolation import abort_resource_isolation
+    abort_resource_isolation(run_id, task_id, slot_number, lease_generation, reason)
+    with _connection(write=True) as db:
+        slot = _active_owner(db, run_id, task_id, lease_generation)
+        if slot['number'] != slot_number or _run(db,run_id)['state'] != 'open':
+            raise PermissionError('slot ownership changed before resource release')
+        known = db.execute('SELECT * FROM resource_caps WHERE run_id=? AND resource_key=?',
+                           (run_id,resource_key)).fetchone()
+        pools = json.loads(known['pools_json']) if known else [slot['pool_id']]
+        if slot['pool_id'] not in pools:
+            raise ValueError('resource key does not govern this task pool')
+        active = db.execute("""SELECT COUNT(*) FROM slots WHERE run_id=? AND status='claimed'
+             AND task_id!=? AND pool_id IN (%s)""" % ','.join('?'*len(pools)),
+             (run_id,task_id,*pools)).fetchone()[0]
+        learned = max(1,active)
+        # Failed attempts lower an existing ceiling; do not raise a proven cap.
+        capacity = min(learned, known['max_claimed']) if known else learned
+        db.execute('INSERT OR IGNORE INTO learned_resource_caps(run_id,resource_key,original_max) VALUES(?,?,?)',
+                   (run_id,resource_key,known['max_claimed'] if known else None))
+        db.execute("""INSERT INTO resource_caps(run_id,resource_key,max_claimed,pools_json)
+            VALUES(?,?,?,?) ON CONFLICT(run_id,resource_key)
+            DO UPDATE SET max_claimed=excluded.max_claimed""",
+            (run_id,resource_key,capacity,json.dumps(pools)))
+        if active == 0:
+            db.execute("""INSERT INTO resource_blocks(run_id,resource_key,retry_after) VALUES(?,?,?)
+                ON CONFLICT(run_id,resource_key) DO UPDATE SET retry_after=excluded.retry_after""",
+                (run_id,resource_key,time.time()+60))
+        db.execute("""UPDATE slots SET status='available',task_id=NULL,worktree=NULL,
+            start_commit=NULL,last_seen=NULL,lease_generation=lease_generation+1
+            WHERE run_id=? AND number=?""",(run_id,slot_number))
+        return {'run_id':run_id,'task_id':task_id,'released_slot':slot_number,
+                'resource_key':resource_key,'observed_active':active,
+                'learned_capacity':capacity,'retry_after_seconds':60 if active==0 else 0,
+                'action':'claim_other_ready_pool'}
 
 
 def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str) -> sqlite3.Row | None:
     run = _run(db, run_id)
     ready = [slot for slot in _ready_slots(db, run_id) if _eligible(db, run, slot, task_id)]
+    # Once the last active owner releases the resource, discard the temporary
+    # learned ceiling so later workers can probe newly free capacity again.
+    learned = db.execute('SELECT * FROM learned_resource_caps WHERE run_id=?', (run_id,)).fetchall()
+    for record in learned:
+        row = db.execute('SELECT pools_json FROM resource_caps WHERE run_id=? AND resource_key=?',
+                         (run_id,record['resource_key'])).fetchone()
+        if row is None:
+            continue
+        pools = json.loads(row['pools_json'])
+        active_count = db.execute(
+            "SELECT COUNT(*) FROM slots WHERE run_id=? AND status='claimed' AND pool_id IN (%s)" %
+            ','.join('?'*len(pools)), (run_id,*pools)).fetchone()[0]
+        cooldown = db.execute('SELECT retry_after FROM resource_blocks WHERE run_id=? AND resource_key=?',
+                              (run_id,record['resource_key'])).fetchone()
+        if active_count == 0 and (cooldown is None or cooldown['retry_after'] <= time.time()):
+            if record['original_max'] is None:
+                db.execute('DELETE FROM resource_caps WHERE run_id=? AND resource_key=?',
+                           (run_id,record['resource_key']))
+            else:
+                db.execute('UPDATE resource_caps SET max_claimed=? WHERE run_id=? AND resource_key=?',
+                           (record['original_max'],run_id,record['resource_key']))
+            db.execute('DELETE FROM learned_resource_caps WHERE run_id=? AND resource_key=?',
+                       (run_id,record['resource_key']))
+            db.execute('DELETE FROM resource_blocks WHERE run_id=? AND resource_key=?',
+                       (run_id,record['resource_key']))
     limits = _resource_usage(db, run_id)
+    blocked = {r['resource_key'] for r in db.execute(
+        'SELECT resource_key FROM resource_blocks WHERE run_id=? AND retry_after>?',
+        (run_id,time.time()))}
     ready = [slot for slot in ready if all(
-        slot['pool_id'] not in cap['pools'] or cap['claimed'] < cap['max_claimed']
+        slot['pool_id'] not in cap['pools'] or (cap['resource_key'] not in blocked and cap['claimed'] < cap['max_claimed'])
         for cap in limits)]
     if not ready:
         return None

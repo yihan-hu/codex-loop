@@ -303,3 +303,15 @@ def after_finish(run_id: str, task_id: str, result: dict[str, Any],
 def _run_repo(run_id: str) -> str:
     with collab._connection() as db:
         return collab._run(db, run_id)['repo']
+
+
+def abort_resource_isolation(run_id: str, task_id: str, slot: int,
+                             lease_generation: int, reason: str) -> None:
+    """Close only the exact resource-blocked Slot scope."""
+    store = open_store(None, task_id)
+    active = store.active_isolation()
+    token = {'run_id': run_id, 'slot': slot, 'lease_generation': lease_generation}
+    if not active or not all((_binding(active) or {}).get(k) == v for k,v in token.items()):
+        raise RuntimeError('resource release requires its active Slot isolation')
+    abort_isolation(Path(_run_repo(run_id)),Path(_run_repo(run_id)),store,
+                    active['isolation_id'],reason)

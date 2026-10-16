@@ -94,6 +94,9 @@ retain prior blocker for recheck]
   REG --> RES[Optional run resource caps: shared groups across GPU pools]
   QUAL --> CAP[Atomic capacity filter: skip resource-full task pools]
   RES --> CAP
+  EXEC -->|Resource acquisition failed before work| RB[Verify clean input HEAD; abort old isolation and atomically requeue]
+  RB --> LEARN[Learn live peer concurrency; short zero-peer cooldown]
+  LEARN --> RES
   CAP --> FAIR[Atomic fair claim: prioritize under-served eligible pools]
   FAIR -->|No eligible task| IDLE[Bounded wait: idle heartbeat every 30s, no claimed Slot]
   IDLE -->|Poll and check Ready| READY

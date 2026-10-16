@@ -836,3 +836,57 @@ class AdaptiveCollaborationTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+# Resource feedback is exercised at the SQLite boundary; the Logical Isolation
+# abort is separately verified by the existing isolation integration surface.
+def _test_resource_feedback(self):
+    run = self.run_tasks([
+        {'key':'gpu1','pool':'gpu','title':'GPU 1','instructions':'GPU'},
+        {'key':'gpu2','pool':'gpu','title':'GPU 2','instructions':'GPU'},
+        {'key':'gpu3','pool':'gpu','title':'GPU 3','instructions':'GPU'},
+        {'key':'cpu1','pool':'cpu','title':'CPU','instructions':'CPU'},
+        {'key':'cpu2','pool':'cpu','title':'CPU 2','instructions':'CPU'}])
+    one = self.claim(run,'first')
+    cpu = self.claim(run,'cpu-owner')
+    two = self.claim(run,'second')
+    self.assertEqual(one['pool'],'gpu')
+    self.assertEqual(cpu['pool'],'cpu')
+    self.assertEqual(two['pool'],'gpu')
+    with mock.patch('codex_loop_runtime.collab_isolation.abort_resource_isolation'):
+        released = c.resource_blocked(run,'second',slot_number=two['slot'],
+            lease_generation=two['lease_generation'],resource_key='gpu',reason='GPU busy')
+    self.assertEqual(released['observed_active'],1)
+    self.assertEqual(released['learned_capacity'],1)
+    other = self.claim(run,'second')
+    self.assertEqual(other['pool'],'cpu')
+    (Path(one['worktree']) / 'untracked').write_text('work in progress')
+    with self.assertRaises(RuntimeError):
+        c.resource_blocked(run,'first',slot_number=one['slot'],
+            lease_generation=one['lease_generation'],resource_key='gpu',reason='dirty')
+    (Path(one['worktree']) / 'untracked').unlink()
+    c.finish(run,'first',commit_sha=self.commit(one),auto_claim=False,
+             lease_generation=one['lease_generation'])
+    next_gpu = self.claim(run,'third')
+    self.assertEqual(next_gpu['pool'],'gpu')
+
+AdaptiveCollaborationTest.test_resource_feedback_requeues_and_claims_other_pool = _test_resource_feedback
+
+
+def _test_zero_peer_backoff(self):
+    run = self.run_tasks([
+        {'key':'gpu','pool':'gpu','title':'GPU','instructions':'GPU'}])
+    assignment = self.claim(run,'owner')
+    with mock.patch('codex_loop_runtime.collab_isolation.abort_resource_isolation'):
+        report = c.resource_blocked(run,'owner',slot_number=assignment['slot'],
+            lease_generation=assignment['lease_generation'],resource_key='gpu',reason='external GPU occupied')
+    self.assertEqual(report['observed_active'],0)
+    self.assertEqual(report['retry_after_seconds'],60)
+    idle = c.claim(run,'other',worktree_parent=str(self.parent),wait_if_empty=True)
+    self.assertEqual(idle['status'],'waiting')
+    with c._connection(write=True) as db:
+        db.execute('UPDATE resource_blocks SET retry_after=? WHERE run_id=?',
+                   (time.time()-1,run))
+    reclaimed = self.claim(run,'other')
+    self.assertEqual(reclaimed['task_key'],'gpu')
+
+AdaptiveCollaborationTest.test_zero_peer_resource_busy_uses_backoff = _test_zero_peer_backoff
