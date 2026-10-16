@@ -83,6 +83,13 @@ CREATE TABLE IF NOT EXISTS pool_dispatch (
   run_id TEXT NOT NULL, pool_id TEXT NOT NULL, last_claim INTEGER NOT NULL,
   PRIMARY KEY(run_id,pool_id)
 );
+CREATE TABLE IF NOT EXISTS resource_caps (
+  run_id TEXT NOT NULL REFERENCES runs(id),
+  resource_key TEXT NOT NULL,
+  max_claimed INTEGER NOT NULL CHECK(max_claimed > 0),
+  pools_json TEXT NOT NULL,
+  PRIMARY KEY(run_id, resource_key)
+);
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
   sender TEXT NOT NULL, recipient TEXT, body TEXT NOT NULL,
@@ -832,17 +839,59 @@ def _ready_slots(db: sqlite3.Connection, run_id: str) -> list[sqlite3.Row]:
             set(json.loads(slot['depends_on'])).issubset(done)]
 
 
+def _resource_usage(db: sqlite3.Connection, run_id: str) -> list[dict[str, Any]]:
+    """Current leases are the resource reservations; finish/reclaim releases them."""
+    active = {r['pool_id']: r['n'] for r in db.execute(
+        "SELECT pool_id,COUNT(*) n FROM slots WHERE run_id=? AND status='claimed' GROUP BY pool_id",
+        (run_id,))}
+    return [
+        {'resource_key': row['resource_key'], 'max_claimed': row['max_claimed'],
+         'pools': json.loads(row['pools_json']),
+         'claimed': sum(active.get(p, 0) for p in json.loads(row['pools_json']))}
+        for row in db.execute('SELECT * FROM resource_caps WHERE run_id=? ORDER BY resource_key', (run_id,))
+    ]
+
+
+def set_resource_cap(run_id: str, resource_key: str, max_claimed: int,
+                     pools: list[str]) -> dict[str, Any]:
+    """Run-scoped resource capacity shared by all listed pools."""
+    resource_key = _identifier(resource_key, 'resource key', TASK_RE)
+    if isinstance(max_claimed, bool) or not isinstance(max_claimed, int) or max_claimed < 1:
+        raise ValueError('max_claimed must be a positive integer')
+    if not pools or len(set(pools)) != len(pools):
+        raise ValueError('resource pools must be a nonempty list without duplicates')
+    pools = [_identifier(p, 'resource pool', TASK_RE) for p in pools]
+    with _connection(write=True) as db:
+        run = _run(db, run_id)
+        if run['state'] != 'open':
+            raise RuntimeError('resource limits can only be changed on an open run')
+        known = {r['pool_id'] for r in db.execute(
+            'SELECT DISTINCT pool_id FROM slots WHERE run_id=?', (run_id,))}
+        unknown = set(pools) - known
+        if unknown:
+            raise ValueError(f'unknown resource pools: {sorted(unknown)}')
+        db.execute("""INSERT INTO resource_caps(run_id,resource_key,max_claimed,pools_json)
+                      VALUES(?,?,?,?) ON CONFLICT(run_id,resource_key)
+                      DO UPDATE SET max_claimed=excluded.max_claimed,pools_json=excluded.pools_json""",
+                   (run_id, resource_key, max_claimed, json.dumps(sorted(pools))))
+        return next(r for r in _resource_usage(db, run_id) if r['resource_key'] == resource_key)
+
+
 def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str) -> sqlite3.Row | None:
     run = _run(db, run_id)
     ready = [slot for slot in _ready_slots(db, run_id) if _eligible(db, run, slot, task_id)]
+    limits = _resource_usage(db, run_id)
+    ready = [slot for slot in ready if all(
+        slot['pool_id'] not in cap['pools'] or cap['claimed'] < cap['max_claimed']
+        for cap in limits)]
     if not ready:
         return None
     active = {r['pool_id']: r['n'] for r in db.execute(
         "SELECT pool_id,COUNT(*) n FROM slots WHERE run_id=? AND status='claimed' GROUP BY pool_id", (run_id,))}
     last = {r['pool_id']: r['last_claim'] for r in db.execute(
         'SELECT pool_id,last_claim FROM pool_dispatch WHERE run_id=?', (run_id,))}
-    # No capacity ceiling: protect a ready pool with zero active workers first,
-    # then rotate under-served pools, while using every available Chat.
+    # Fair selection among pools with available shared resource capacity.
+    # Runs without configured caps retain the original uncapped behavior.
     chosen = min(ready, key=lambda slot: (active.get(slot['pool_id'], 0),
                                           last.get(slot['pool_id'], 0), slot['number']))
     next_seq = 1 + max(last.values(), default=0)
@@ -1930,6 +1979,7 @@ def status(run_id: str) -> dict[str, Any]:
         waiting = db.execute('SELECT task_id,last_seen FROM waiting_workers WHERE run_id=?',
                              (run_id,)).fetchall()
         ready = {slot['number'] for slot in _ready_slots(db, run_id)}
+        resource_caps = _resource_usage(db, run_id)
         reclaims = [dict(row) for row in db.execute(
             'SELECT * FROM reclaims WHERE run_id=? ORDER BY id', (run_id,))]
     pools: dict[str, dict[str, int]] = {}
@@ -1948,7 +1998,7 @@ def status(run_id: str) -> dict[str, Any]:
                                          seen is not None and now - seen > LEASE_SECONDS)
         assignments.append(item)
     return {'run_id': run_id, 'state': run['state'], 'target_branch': run['target_branch'],
-            'pools': pools,
+            'pools': pools, 'resource_caps': resource_caps,
             'goal_key': run['goal_key'], 'graph_revision': run['graph_revision'],
             'lease_seconds': LEASE_SECONDS, 'reclaims': reclaims,
             'waiting_workers': [

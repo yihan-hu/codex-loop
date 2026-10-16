@@ -64,6 +64,36 @@ class AdaptiveCollaborationTest(unittest.TestCase):
             db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_key=?',
                        (time.time()-601, run, task_key))
 
+    def test_shared_gpu_cap_skips_both_pools_and_dispatches_ready_qa(self):
+        run = self.run_tasks([
+            {'key':'qwen-1', 'pool':'qwen', 'title':'Qwen 1', 'instructions':'GPU'},
+            {'key':'chain-1', 'pool':'chain', 'title':'Chain 1', 'instructions':'GPU'},
+            {'key':'qwen-2', 'pool':'qwen', 'title':'Qwen 2', 'instructions':'GPU'},
+            {'key':'chain-2', 'pool':'chain', 'title':'Chain 2', 'instructions':'GPU'},
+            {'key':'qa-1', 'pool':'qa', 'title':'QA 1', 'instructions':'QA'},
+        ])
+        with self.assertRaises(ValueError):
+            c.set_resource_cap(run, 'local_mlx_gpu', 0, ['qwen','chain'])
+        with self.assertRaises(ValueError):
+            c.set_resource_cap(run, 'local_mlx_gpu', 2, ['missing'])
+        limit = c.set_resource_cap(run, 'local_mlx_gpu', 2, ['qwen','chain'])
+        self.assertEqual(limit['claimed'], 0)
+        first = self.claim(run, 'gpu-qwen')
+        second = self.claim(run, 'gpu-chain')
+        self.assertEqual({first['pool'],second['pool']}, {'qwen','chain'})
+        self.assertEqual(c.status(run)['resource_caps'][0]['claimed'], 2)
+        qa = self.claim(run, 'scientist')
+        self.assertEqual(qa['pool'], 'qa')
+        idle = c.claim(run, 'gpu-waiter', worktree_parent=str(self.parent),
+                       wait_if_empty=True)
+        self.assertEqual(idle['status'], 'waiting')
+        self.assertEqual(c.status(run)['resource_caps'][0]['claimed'], 2)
+        c.finish(run, 'gpu-qwen', commit_sha=self.commit(first), auto_claim=False,
+                 lease_generation=first['lease_generation'])
+        resumed = self.claim(run, 'gpu-waiter')
+        self.assertEqual(resumed['pool'], 'qwen')
+        self.assertEqual(c.status(run)['resource_caps'][0]['claimed'], 2)
+
     def test_waiting_heartbeats_do_not_refresh_the_600_second_claimed_lease(self):
         run = self.run_tasks([
             {'key':'A', 'title':'A', 'instructions':'A'},

@@ -1496,6 +1496,10 @@ def _cmd_collab(argv: list[str]) -> int:
     c.add_argument('--task-id', required=True); c.add_argument('--title', required=True)
     c.add_argument('--instructions', required=True); c.add_argument('--existing-worktree')
     c.add_argument('--strategy', choices=['detached', 'branches'], default='detached')
+    c = sub.add_parser('resource-cap', help='set an opt-in shared resource cap for this run')
+    c.add_argument('--run-id', required=True); c.add_argument('--resource', required=True)
+    c.add_argument('--max-claimed', required=True, type=int)
+    c.add_argument('--pool', action='append', required=True)
     c = sub.add_parser('status'); c.add_argument('--run-id', required=True)
     c = sub.add_parser('inbox'); c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
     c.add_argument('--ack', action='append', type=int)
@@ -1591,6 +1595,8 @@ def _cmd_collab(argv: list[str]) -> int:
         result=enter_assignment(collab.dynamic_join(a.repo,a.branch,a.worktree_parent,goal_key=a.goal_key,
                                    task_id=a.task_id,title=a.title,instructions=a.instructions,
                                    strategy=a.strategy,existing_worktree=a.existing_worktree))
+    elif action == 'resource-cap':
+        result=collab.set_resource_cap(a.run_id,a.resource,a.max_claimed,a.pool)
     elif action == 'status':
         result=collab.status(a.run_id)
     elif action == 'inbox':
