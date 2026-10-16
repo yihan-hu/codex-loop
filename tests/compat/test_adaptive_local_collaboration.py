@@ -336,6 +336,36 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         self.assertTrue(final['integrate_now'])
         self.assertEqual(len(c.status(run)['reclaims']), 1)
 
+    def test_reclaim_after_unmaterialized_restore_skips_only_empty_lease(self):
+        run=self.run_tasks()
+        first=self.claim(run,'first')
+        self.expire(run)
+        # A technical failure after lease adoption but before start_commit
+        # persists must not permanently poison all subsequent claims.
+        with mock.patch.object(c, '_restore_reclaimed_worktree',
+                               side_effect=RuntimeError('simulated interrupted restore')):
+            with self.assertRaisesRegex(RuntimeError,'simulated interrupted restore'):
+                self.claim(run,'second')
+        with c._connection() as db:
+            abandoned=db.execute('SELECT worktree,start_commit FROM slots WHERE run_id=?',
+                                 (run,)).fetchone()
+            self.assertEqual((abandoned['worktree'],abandoned['start_commit']),(None,None))
+        self.expire(run)
+        third=self.claim(run,'third')
+        self.assertEqual(third['lease_generation'],3)
+        self.assertEqual(third['restored_worktree']['status'],'skipped_unmaterialized_lease')
+        self.assertEqual(third['restored_worktree']['replayed_commits'],0)
+        self.assertTrue(third['restored_worktree']['prior_recovery_history_preserved'])
+        self.assertTrue(Path(first['worktree']).exists())
+        with c._connection() as db:
+            older=db.execute('SELECT COUNT(*) FROM reclaims WHERE run_id=?',(run,)).fetchone()[0]
+            self.assertEqual(older,2)
+        sha=self.commit(third)
+        result=c.finish(run,'third',commit_sha=sha,
+                        slot_number=third['slot'],lease_generation=third['lease_generation'])
+        self.assertTrue(result['integrate_now'])
+        self.assertEqual(c.status(run)['slots'][0]['status'], 'done')
+
     def test_reclaim_without_checkpoint_recovers_git_index_worktree_and_untracked_outputs(self):
         run=self.run_tasks()
         old=self.claim(run,'original')

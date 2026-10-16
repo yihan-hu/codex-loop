@@ -158,6 +158,13 @@ def _restore_reclaimed_worktree(run: sqlite3.Row, recovery: sqlite3.Row,
     # Snapshot only the old task's own Git delta; no checkpoint is required.
     # Original worktree and index are read-only. New files go only to the
     # distinct registered replacement worktree.
+    # A preceding claim can expire before its worktree and start commit are
+    # registered. That empty lease has no verified task delta to restore.
+    # Never replay an older worker's later commits as this task's own changes.
+    if not recovery['old_worktree'] and not recovery['old_start_commit']:
+        return {'status': 'skipped_unmaterialized_lease',
+                'replayed_commits': 0, 'untracked_files': 0,
+                'prior_recovery_history_preserved': True}
     source = Path(recovery['old_worktree'] or '').expanduser()
     if not recovery['old_worktree'] or not source.is_dir():
         raise RuntimeError('reclaimed worktree is missing; inspect recovery history before proceeding')
