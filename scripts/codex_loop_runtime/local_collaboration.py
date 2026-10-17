@@ -31,6 +31,7 @@ RUN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 TASK_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 REF_RE = re.compile(r"^[a-f0-9]{40,64}$")
 LEASE_SECONDS = 600
+PRIORITY_RECLAIM_SECONDS = 1800
 
 
 SCHEMA = """
@@ -577,23 +578,6 @@ def _owner_alias(db: sqlite3.Connection, run: sqlite3.Row, task_id: str) -> str:
     return f'{project}-worker{number}'
 
 
-def _eligible(db: sqlite3.Connection, run: sqlite3.Row,
-              slot: sqlite3.Row, task_id: str) -> bool:
-    alias = _owner_alias(db, run, task_id)
-    n = alias.rsplit('worker', 1)[-1]
-    excluded = set(json.loads(slot['exclude_workers']))
-    if {task_id, alias, f'worker{n}'} & excluded:
-        return False
-    reviews = set(json.loads(slot['review_of']))
-    if not reviews:
-        return True
-    for source in db.execute('SELECT task_key,number,completed_by FROM slots WHERE run_id=?',
-                             (run['id'],)):
-        if (source['task_key'] or f'task-{source["number"]}') in reviews and source['completed_by'] == task_id:
-            return False
-    return True
-
-
 def _stopped(db: sqlite3.Connection, run_id: str, task_id: str) -> bool:
     if db.execute('SELECT 1 FROM retired_workers WHERE run_id=? AND task_id=?',
                   (run_id,task_id)).fetchone():
@@ -1053,95 +1037,135 @@ def retire_worker(run_id: str, task_id: str, reason: str) -> dict[str, Any]:
 def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str,
                  only_pools: tuple[str, ...] | None = None) -> sqlite3.Row | None:
     run = _run(db, run_id)
-    owners = {r['pool_id']: set(json.loads(r['task_ids_json']))
-              for r in db.execute('SELECT pool_id,task_ids_json FROM pool_operators WHERE run_id=?',(run_id,))}
+    slots = db.execute('SELECT * FROM slots WHERE run_id=? ORDER BY number', (run_id,)).fetchall()
     now = time.time()
-    stale = db.execute("""SELECT * FROM slots WHERE run_id=? AND status='claimed'
-                          AND task_id!=? AND last_seen IS NOT NULL AND last_seen<?
-                          ORDER BY number""", (run_id, task_id, now - LEASE_SECONDS)).fetchall()
-    candidates = [slot for slot in _ready_slots(db, run_id) + stale
-                  if _eligible(db, run, slot, task_id)
-                  and (only_pools is None or slot['pool_id'] in only_pools)
-                  and (slot['pool_id'] not in owners or task_id in owners[slot['pool_id']])]
-    # Once the last active owner releases the resource, discard the temporary
-    # learned ceiling so later workers can probe newly free capacity again.
-    learned = db.execute('SELECT * FROM learned_resource_caps WHERE run_id=?', (run_id,)).fetchall()
-    for record in learned:
+    stale_cutoff = now - LEASE_SECONDS
+    done = {row['task_key'] or f'task-{row["number"]}' for row in slots
+            if row['status'] == 'done'}
+    produced = {row['task_key'] or f'task-{row["number"]}' for row in slots
+                if row['completed_by'] == task_id}
+    owners = {row['pool_id']: set(json.loads(row['task_ids_json'])) for row in
+              db.execute('SELECT pool_id,task_ids_json FROM pool_operators WHERE run_id=?',
+                         (run_id,))}
+    alias = _owner_alias(db, run, task_id)
+    excluded_names = {task_id, alias, f'worker{alias.rsplit("worker", 1)[-1]}'}
+
+    # A single snapshot provides all Ready, Stale, pool-load and DAG evidence.
+    # In particular, eligibility must not re-query all workers per candidate.
+    claimed: dict[str, int] = {}
+    live: dict[str, int] = {}
+    ready, stale, waiting = [], [], []
+    all_stale_keys = set()
+    for slot in slots:
+        pool = slot['pool_id']
+        if slot['status'] == 'claimed':
+            claimed[pool] = claimed.get(pool, 0) + 1
+            if slot['last_seen'] is None or slot['last_seen'] >= stale_cutoff:
+                live[pool] = live.get(pool, 0) + 1
+            elif slot['task_id'] != task_id:
+                stale.append(slot)
+                all_stale_keys.add(slot['task_key'] or f'task-{slot["number"]}')
+        elif slot['status'] == 'available':
+            missing = set(json.loads(slot['depends_on'])) - done
+            if missing:
+                waiting.append((pool, missing))
+            else:
+                ready.append(slot)
+
+    def eligible(slot: sqlite3.Row) -> bool:
+        return ((only_pools is None or slot['pool_id'] in only_pools)
+                and (slot['pool_id'] not in owners or task_id in owners[slot['pool_id']])
+                and not (set(json.loads(slot['exclude_workers'])) & excluded_names)
+                and not (set(json.loads(slot['review_of'])) & produced))
+
+    candidates = [slot for slot in ready + stale if eligible(slot)]
+
+    # Learned resource ceilings reset only after the last reservation has gone.
+    for record in db.execute('SELECT * FROM learned_resource_caps WHERE run_id=?',
+                             (run_id,)).fetchall():
+        resource = record['resource_key']
         row = db.execute('SELECT pools_json FROM resource_caps WHERE run_id=? AND resource_key=?',
-                         (run_id,record['resource_key'])).fetchone()
+                         (run_id, resource)).fetchone()
         if row is None:
             continue
         pools = json.loads(row['pools_json'])
-        active_count = db.execute(
-            "SELECT COUNT(*) FROM slots WHERE run_id=? AND status='claimed' AND pool_id IN (%s)" %
-            ','.join('?'*len(pools)), (run_id,*pools)).fetchone()[0]
+        active_count = sum(claimed.get(pool, 0) for pool in pools)
         cooldown = db.execute('SELECT retry_after FROM resource_blocks WHERE run_id=? AND resource_key=?',
-                              (run_id,record['resource_key'])).fetchone()
-        if active_count == 0 and (cooldown is None or cooldown['retry_after'] <= time.time()):
+                              (run_id, resource)).fetchone()
+        if active_count == 0 and (cooldown is None or cooldown['retry_after'] <= now):
             if record['original_max'] is None:
                 db.execute('DELETE FROM resource_caps WHERE run_id=? AND resource_key=?',
-                           (run_id,record['resource_key']))
+                           (run_id, resource))
             else:
                 db.execute('UPDATE resource_caps SET max_claimed=? WHERE run_id=? AND resource_key=?',
-                           (record['original_max'],run_id,record['resource_key']))
+                           (record['original_max'], run_id, resource))
             db.execute('DELETE FROM learned_resource_caps WHERE run_id=? AND resource_key=?',
-                       (run_id,record['resource_key']))
+                       (run_id, resource))
             db.execute('DELETE FROM resource_blocks WHERE run_id=? AND resource_key=?',
-                       (run_id,record['resource_key']))
+                       (run_id, resource))
+
     limits = _resource_usage(db, run_id)
+    for cap in limits:
+        cap['live_claimed'] = sum(live.get(pool, 0) for pool in cap['pools'])
     blocked = {r['resource_key'] for r in db.execute(
         'SELECT resource_key FROM resource_blocks WHERE run_id=? AND retry_after>?',
-        (run_id,time.time()))}
+        (run_id, now))}
+    # A takeover *replaces* an expired reservation. After a cap is lowered,
+    # unrelated expired claims do not prevent recovery, but healthy workers
+    # still count against the hard concurrency ceiling.
     candidates = [slot for slot in candidates if all(
-        slot['pool_id'] not in cap['pools'] or
-        (cap['resource_key'] not in blocked and
-         cap['claimed'] - int(slot['status'] == 'claimed') < cap['max_claimed'])
+        slot['pool_id'] not in cap['pools'] or (
+            cap['resource_key'] not in blocked and
+            (cap['claimed'] if slot['status'] == 'available' else
+             cap['live_claimed']) < cap['max_claimed'])
         for cap in limits)]
     if not candidates:
         return None
-    # Stale leases do not count as functioning workers in pool fairness.
-    active = {r['pool_id']: r['n'] for r in db.execute(
-        """SELECT pool_id,COUNT(*) n FROM slots WHERE run_id=? AND status='claimed'
-           AND (last_seen IS NULL OR last_seen>=?) GROUP BY pool_id""",
-        (run_id, now - LEASE_SECONDS))}
+
+    ready = [slot for slot in candidates if slot['status'] == 'available']
+    stale = [slot for slot in candidates if slot['status'] == 'claimed']
     last = {r['pool_id']: r['last_claim'] for r in db.execute(
         'SELECT pool_id,last_claim FROM pool_dispatch WHERE run_id=?', (run_id,))}
     overdue = {r['latest_task_key'] for r in db.execute(
         'SELECT latest_task_key FROM recurring_reviews WHERE run_id=?', (run_id,))}
-    ready = [slot for slot in candidates if slot['status'] == 'available']
-    stale = [slot for slot in candidates if slot['status'] == 'claimed']
-    # Only a stale task whose completion would immediately unlock a dependent
-    # may outrank available work in a less-served pool.
-    unlocks: dict[int, list[str]] = {}
-    if stale:
-        done = {r['task_key'] or f'task-{r["number"]}' for r in db.execute(
-            "SELECT task_key,number FROM slots WHERE run_id=? AND status='done'", (run_id,))}
-        waiting = [(r['pool_id'], set(json.loads(r['depends_on']))) for r in db.execute(
-            "SELECT pool_id,depends_on FROM slots WHERE run_id=? AND status='available'", (run_id,))]
-        for slot in stale:
-            key = slot['task_key'] or f'task-{slot["number"]}'
-            unlocks[slot['number']] = [pool for pool, deps in waiting
-                                      if key in deps and deps - {key} <= done]
 
-    def pool_load(slot: sqlite3.Row) -> int:
-        load = active.get(slot['pool_id'], 0)
+    # A blocked fan-in can need several expired predecessors. Prefer their
+    # rescue only when *all* currently missing direct predecessors are stale;
+    # a healthy in-progress predecessor does not justify preempting Ready.
+    blocked_pools: dict[str, list[str]] = {}
+    for pool, missing in waiting:
+        if missing <= all_stale_keys:
+            for key in missing:
+                blocked_pools.setdefault(key, []).append(pool)
+
+    def load(slot: sqlite3.Row) -> int:
+        pool_count = live.get(slot['pool_id'], 0)
         if slot['status'] == 'claimed':
-            load = min([load] + [active.get(pool, 0) for pool in unlocks[slot['number']]])
-        return load
+            key = slot['task_key'] or f'task-{slot["number"]}'
+            for pool in blocked_pools.get(key, ()):
+                pool_count = min(pool_count, live.get(pool, 0))
+        return pool_count
 
-    if ready:
-        preferred = min(ready, key=lambda slot: (
-            0 if slot['task_key'] in overdue else 1,
-            active.get(slot['pool_id'], 0), last.get(slot['pool_id'], 0), slot['number']))
-        stale = [slot for slot in stale
-                 if unlocks[slot['number']] and
-                 pool_load(slot) < active.get(preferred['pool_id'], 0)]
-    # Equal service favors Ready. The sole exception is an expired dependency
-    # blocking a less-served pool; selection and reclaim share one SQLite lock.
-    chosen = min(ready + stale, key=lambda slot: (
-        0 if slot['task_key'] in overdue else 1, pool_load(slot),
-        0 if slot['status'] == 'available' else 1,
-        last.get(slot['pool_id'], 0), slot['number']))
+    urgent = [slot for slot in stale if now - slot['last_seen'] >= PRIORITY_RECLAIM_SECONDS]
+    if urgent:
+        # At 30 minutes an eligible stale lease outranks every Ready task.
+        chosen = min(urgent, key=lambda slot: (slot['last_seen'], load(slot),
+                                               last.get(slot['pool_id'], 0), slot['number']))
+    elif ready:
+        best_ready = min(ready, key=lambda slot: (
+            slot['task_key'] not in overdue, live.get(slot['pool_id'], 0),
+            last.get(slot['pool_id'], 0), slot['number']))
+        critical = [slot for slot in stale
+                    if blocked_pools.get(slot['task_key'] or f'task-{slot["number"]}')
+                    and load(slot) < live.get(best_ready['pool_id'], 0)]
+        # Due independent reviews keep their priority until 30-minute rescue.
+        chosen = (min(critical, key=lambda slot: (
+            load(slot), last.get(slot['pool_id'], 0), slot['number']))
+            if critical and best_ready['task_key'] not in overdue else best_ready)
+    else:
+        chosen = min(stale, key=lambda slot: (
+            load(slot), last.get(slot['pool_id'], 0), slot['number']))
+
     next_seq = 1 + max(last.values(), default=0)
     db.execute('INSERT INTO pool_dispatch(run_id,pool_id,last_claim) VALUES(?,?,?) '
                'ON CONFLICT(run_id,pool_id) DO UPDATE SET last_claim=excluded.last_claim',
@@ -2253,6 +2277,8 @@ def status(run_id: str) -> dict[str, Any]:
         item['seconds_since_activity'] = max(0, round(now - seen, 1)) if seen is not None else None
         item['lease_reclaimable'] = bool(item['status'] == 'claimed' and
                                          seen is not None and now - seen > LEASE_SECONDS)
+        item['priority_reclaimable'] = bool(item['lease_reclaimable'] and
+                                            now - seen >= PRIORITY_RECLAIM_SECONDS)
         assignments.append(item)
     return {'run_id': run_id, 'state': run['state'], 'target_branch': run['target_branch'],
             'pools': pools, 'resource_caps': resource_caps,

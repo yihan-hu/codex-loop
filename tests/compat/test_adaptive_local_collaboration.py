@@ -508,6 +508,167 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         self.assertEqual(self.claim(run, 'new')['task_key'], 'B-ready')
         self.assertEqual(c.status(run)['reclaims'], [])
 
+    def test_priority_takeover_after_thirty_minutes_even_when_ready_exists(self):
+        run = self.run_tasks([
+            {'key': 'lost', 'pool': 'A', 'title': 'lost', 'instructions': 'work'},
+            {'key': 'ready', 'pool': 'B', 'title': 'ready', 'instructions': 'work'},
+        ])
+        old = self.claim(run, 'old')
+        with c._connection(write=True) as db:
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_key=?',
+                       (time.time()-1801, run, 'lost'))
+        self.assertTrue(c.status(run)['slots'][0]['priority_reclaimable'])
+        replacement = self.claim(run, 'new')
+        self.assertEqual(replacement['task_key'], 'lost')
+        self.assertEqual(replacement['lease_generation'], old['lease_generation'] + 1)
+        self.assertEqual(c.status(run)['pools']['B']['ready'], 1)
+
+    def test_under_thirty_minutes_ready_still_wins_without_blocking_dependencies(self):
+        run = self.run_tasks([
+            {'key': 'lost', 'pool': 'A', 'title': 'lost', 'instructions': 'work'},
+            {'key': 'ready', 'pool': 'B', 'title': 'ready', 'instructions': 'work'},
+        ])
+        self.claim(run, 'old')
+        with c._connection(write=True) as db:
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_key=?',
+                       (time.time()-1790, run, 'lost'))
+        self.assertFalse(c.status(run)['slots'][0]['priority_reclaimable'])
+        self.assertEqual(self.claim(run, 'new')['task_key'], 'ready')
+        self.assertEqual(c.status(run)['reclaims'], [])
+
+    def test_priority_takeover_respects_operator_restrictions(self):
+        run = self.run_tasks([
+            {'key': 'gpu-lost', 'pool': 'gpu', 'title': 'lost', 'instructions': 'work'},
+            {'key': 'qa-ready', 'pool': 'qa', 'title': 'qa', 'instructions': 'work'},
+        ])
+        c.configure_pool_operators(run, ['owner', 'gpu-worker'], ['gpu'])
+        self.claim(run, 'owner')
+        with c._connection(write=True) as db:
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_key=?',
+                       (time.time()-1801, run, 'gpu-lost'))
+        self.assertEqual(self.claim(run, 'qa-worker')['task_key'], 'qa-ready')
+        self.assertEqual(c.status(run)['reclaims'], [])
+
+    def test_shrunk_gpu_capacity_recovers_one_stale_claim_at_a_time(self):
+        run = self.run_tasks([
+            {'key': 'gpu-a', 'pool': 'gpu', 'title': 'a', 'instructions': 'work'},
+            {'key': 'gpu-b', 'pool': 'gpu', 'title': 'b', 'instructions': 'work'},
+            {'key': 'gpu-c', 'pool': 'gpu', 'title': 'c', 'instructions': 'work'},
+        ])
+        c.set_resource_cap(run, 'gpu', 2, ['gpu'])
+        self.claim(run, 'old-a')
+        self.claim(run, 'old-b')
+        c.set_resource_cap(run, 'gpu', 1, ['gpu'])
+        self.expire(run, 'gpu-a')
+        self.expire(run, 'gpu-b')
+        recovered = self.claim(run, 'new-a')
+        self.assertEqual(recovered['task_key'], 'gpu-a')
+        blocked = c.claim(run, 'new-b', worktree_parent=str(self.parent), wait_if_empty=True)
+        self.assertEqual(blocked['status'], 'waiting')
+        self.assertEqual(len(c.status(run)['reclaims']), 1)
+        c.finish(run, 'new-a', commit_sha=self.commit(recovered),
+                 lease_generation=recovered['lease_generation'], auto_claim=False)
+        self.assertEqual(self.claim(run, 'new-b')['task_key'], 'gpu-b')
+
+    def test_all_stale_multidependency_fanin_gets_fair_recovery(self):
+        run = self.run_tasks([
+            {'key': 'A-1', 'pool': 'A', 'title': 'A1', 'instructions': 'work'},
+            {'key': 'A-2', 'pool': 'A', 'title': 'A2', 'instructions': 'work'},
+            {'key': 'A-child', 'pool': 'A', 'title': 'dependent', 'instructions': 'work',
+             'depends_on': ['A-1', 'A-2']},
+            *[{'key': f'B-{i}', 'pool': 'B', 'title': f'B{i}', 'instructions': 'work'}
+              for i in range(5)],
+        ])
+        self.claim(run, 'A-owner-1')
+        self.claim(run, 'A-owner-2')
+        for i in range(4):
+            self.claim(run, f'B-owner-{i}')
+        self.expire(run, 'A-1')
+        self.expire(run, 'A-2')
+        first = self.claim(run, 'rescue-1')
+        self.assertIn(first['task_key'], ('A-1', 'A-2'))
+        c.finish(run, 'rescue-1', commit_sha=self.commit(first),
+                 lease_generation=first['lease_generation'], auto_claim=False)
+        second = self.claim(run, 'rescue-2')
+        self.assertIn(second['task_key'], ('A-1', 'A-2'))
+        self.assertNotEqual(second['task_key'], first['task_key'])
+        c.finish(run, 'rescue-2', commit_sha=self.commit(second),
+                 lease_generation=second['lease_generation'], auto_claim=False)
+        self.assertEqual(self.claim(run, 'A-next')['task_key'], 'A-child')
+
+    def test_large_ready_pool_selection_uses_bounded_sql_queries(self):
+        run = self.run_tasks([
+            {'key': f'A-{i}', 'pool': 'A', 'title': f'A{i}', 'instructions': 'work'}
+            for i in range(240)
+        ])
+        with c._connection(write=True) as db:
+            queries = []
+            db.set_trace_callback(lambda sql: queries.append(sql) if sql.lstrip().upper().startswith('SELECT') else None)
+            selected = c._choose_slot(db, run, 'worker')
+            db.set_trace_callback(None)
+        self.assertIsNotNone(selected)
+        self.assertLess(len(queries), 35,
+                        f'SQL query count should not increase per candidate: {len(queries)}')
+
+    def test_thirty_minute_priority_outranks_due_review(self):
+        run = self.run_tasks([
+            {'key': 'lost', 'pool': 'A', 'title': 'lost', 'instructions': 'work'},
+        ])
+        self.claim(run, 'old')
+        c.configure_recurring_review(run, 'safety-review', 'health', 1200, 'Inspect health')
+        with c._connection(write=True) as db:
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_key=?',
+                       (time.time()-1801, run, 'lost'))
+        takeover = self.claim(run, 'new')
+        self.assertEqual(takeover['task_key'], 'lost')
+        self.assertEqual(c.status(run)['pools']['health']['ready'], 1)
+
+    def test_30_minute_priority_respects_live_resource_capacity(self):
+        run = self.run_tasks([
+            {'key': 'gpu-a', 'pool': 'gpu', 'title': 'a', 'instructions': 'work'},
+            {'key': 'gpu-b', 'pool': 'gpu', 'title': 'b', 'instructions': 'work'},
+            {'key': 'qa', 'pool': 'qa', 'title': 'qa', 'instructions': 'work'},
+        ])
+        c.set_resource_cap(run, 'gpu', 2, ['gpu'])
+        self.claim(run, 'old-a')
+        active = c.claim(run, 'active-b', worktree_parent=str(self.parent),
+                         only_pools=('gpu',))
+        c.set_resource_cap(run, 'gpu', 1, ['gpu'])
+        with c._connection(write=True) as db:
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND task_key=?',
+                       (time.time()-1801, run, 'gpu-a'))
+        self.assertEqual(self.claim(run, 'qa-worker')['task_key'], 'qa')
+        self.assertEqual(c.status(run)['reclaims'], [])
+        c.finish(run, 'active-b', commit_sha=self.commit(active),
+                 lease_generation=active['lease_generation'], auto_claim=False)
+        self.assertEqual(self.claim(run, 'replacement')['task_key'], 'gpu-a')
+
+    def test_many_expired_blocking_predecessors_keep_query_count_bounded(self):
+        specs = [
+            {'key': f'A-{i}', 'pool': 'A', 'title': f'A{i}', 'instructions': 'work'}
+            for i in range(100)
+        ] + [
+            {'key': f'child-{i}', 'pool': 'A', 'title': 'child', 'instructions': 'work',
+             'depends_on': [f'A-{i}', f'A-{(i+1)%100}']}
+            for i in range(100)
+        ] + [
+            {'key': f'B-{i}', 'pool': 'B', 'title': 'ready', 'instructions': 'work'}
+            for i in range(50)
+        ]
+        run = self.run_tasks(specs)
+        with c._connection(write=True) as db:
+            db.execute("""UPDATE slots SET status='claimed',task_id='fake-'||task_key,
+                           lease_generation=1,last_seen=?
+                           WHERE run_id=? AND pool_id='A' AND depends_on='[]'""",
+                       (time.time()-1200, run))
+            queries = []
+            db.set_trace_callback(lambda sql: queries.append(sql) if sql.lstrip().upper().startswith('SELECT') else None)
+            selection = c._choose_slot(db, run, 'fresh')
+            db.set_trace_callback(None)
+        self.assertIsNotNone(selection)
+        self.assertLess(len(queries), 45,
+                        f'Expired DAG selection should avoid N squared SQL: {len(queries)}')
+
     def test_stale_lease_not_reclaimed_for_ineligible_pool(self):
         run = self.run_tasks([
             {'key': 'stale', 'pool': 'gpu', 'title': 'GPU', 'instructions': 'work'},
