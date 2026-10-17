@@ -645,14 +645,6 @@ def _reclaim_slot(db: sqlite3.Connection, run_id: str, slot: sqlite3.Row,
     return previous
 
 
-def _expire_slots(db: sqlite3.Connection, run_id: str, *, returning_task: str | None = None) -> None:
-    now = time.time()
-    for slot in db.execute("SELECT * FROM slots WHERE run_id=? AND status='claimed'",
-                           (run_id,)).fetchall():
-        if slot['task_id'] != returning_task and slot['last_seen'] is not None and now - slot['last_seen'] > LEASE_SECONDS:
-            _reclaim_slot(db, run_id, slot, '600 seconds without recorded tool activity')
-
-
 def heartbeat(run_id: str, task_id: str, *, lease_generation: int) -> dict[str, Any]:
     task_id = _task(task_id)
     with _connection(write=True) as db:
@@ -1059,12 +1051,19 @@ def retire_worker(run_id: str, task_id: str, reason: str) -> dict[str, Any]:
 
 
 def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str,
-                 only_pools: tuple[str, ...] | None = None) -> sqlite3.Row | None:
+                 only_pools: tuple[str, ...] | None = None, *,
+                 reclaim_stale: bool = False) -> sqlite3.Row | None:
     run = _run(db, run_id)
     owners = {r['pool_id']: set(json.loads(r['task_ids_json']))
               for r in db.execute('SELECT pool_id,task_ids_json FROM pool_operators WHERE run_id=?',(run_id,))}
-    ready = [slot for slot in _ready_slots(db, run_id)
-             if _eligible(db, run, slot, task_id)
+    candidates = (db.execute("SELECT * FROM slots WHERE run_id=? AND status='claimed' ORDER BY number",
+                             (run_id,)).fetchall() if reclaim_stale else _ready_slots(db, run_id))
+    now = time.time()
+    ready = [slot for slot in candidates
+             if (not reclaim_stale or
+                 (slot['task_id'] != task_id and slot['last_seen'] is not None
+                  and now - slot['last_seen'] > LEASE_SECONDS))
+             and _eligible(db, run, slot, task_id)
              and (only_pools is None or slot['pool_id'] in only_pools)
              and (slot['pool_id'] not in owners or task_id in owners[slot['pool_id']])]
     # Once the last active owner releases the resource, discard the temporary
@@ -1097,7 +1096,9 @@ def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str,
         'SELECT resource_key FROM resource_blocks WHERE run_id=? AND retry_after>?',
         (run_id,time.time()))}
     ready = [slot for slot in ready if all(
-        slot['pool_id'] not in cap['pools'] or (cap['resource_key'] not in blocked and cap['claimed'] < cap['max_claimed'])
+        slot['pool_id'] not in cap['pools'] or
+        (cap['resource_key'] not in blocked and
+         cap['claimed'] - int(reclaim_stale) < cap['max_claimed'])
         for cap in limits)]
     if not ready:
         return None
@@ -1221,14 +1222,15 @@ def dynamic_join(repo: str, target_branch: str, worktree_parent: str, *, goal_ke
             if run['strategy'] != strategy or run['worktree_parent'] != str(parent):
                 raise ValueError('existing collaboration uses a different strategy or worktree parent')
             run_id = run['id']
-        if run['state'] == 'open':
-            _expire_slots(db, run_id, returning_task=task_id)
         existing = db.execute('SELECT * FROM slots WHERE run_id=? AND (task_id=? OR completed_by=?) ORDER BY number DESC LIMIT 1', (run_id, task_id, task_id)).fetchone()
         abandoned = db.execute("SELECT 1 FROM slots WHERE run_id=? AND status='available' LIMIT 1", (run_id,)).fetchone()
+        stale = db.execute("""SELECT 1 FROM slots WHERE run_id=? AND status='claimed'
+                              AND task_id!=? AND last_seen IS NOT NULL AND last_seen<? LIMIT 1""",
+                           (run_id, task_id, time.time() - LEASE_SECONDS)).fetchone()
         if existing is not None:
             number = existing['number']
-        elif abandoned:
-            number = None  # Claim an expired unplanned slot instead of orphaning it.
+        elif abandoned or (run['state'] == 'open' and stale):
+            number = None  # Let the common Ready-first claim choose or reclaim one slot.
         else:
             number = int(db.execute('SELECT COALESCE(MAX(number),0)+1 FROM slots WHERE run_id=?', (run_id,)).fetchone()[0])
             db.execute("INSERT INTO slots(run_id,number,title,instructions,status,task_id) VALUES(?,?,?,?, 'claimed', ?)",
@@ -1250,8 +1252,6 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
         parent = Path(worktree_parent).expanduser().resolve(strict=True)
         if str(parent) != run['worktree_parent']:
             raise PermissionError('worktree parent differs from registered authorized parent')
-        if run['state'] == 'open':
-            _expire_slots(db, run_id, returning_task=task_id)
         worker = db.execute('SELECT * FROM workers WHERE run_id=? AND task_id=?',
                             (run_id, task_id)).fetchone()
         slot = db.execute("SELECT * FROM slots WHERE run_id=? AND task_id=? AND status='claimed'",
@@ -1271,6 +1271,15 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                 raise RuntimeError('run is not accepting slot claims')
             _publish_due_reviews(db, run_id)
             slot = _choose_slot(db, run_id, task_id, only_pools)
+            if slot is None:
+                # One atomic Ready-first decision. Only the eligible stale
+                # assignment being adopted loses its previous lease.
+                slot = _choose_slot(db, run_id, task_id, only_pools, reclaim_stale=True)
+                if slot is not None:
+                    number = slot['number']
+                    _reclaim_slot(db, run_id, slot, '600 seconds without recorded tool activity')
+                    slot = db.execute('SELECT * FROM slots WHERE run_id=? AND number=?',
+                                      (run_id, number)).fetchone()
             if not run['planned'] and slot is None:
                 raise RuntimeError('unplanned participants must register through collab join')
             if slot is None:

@@ -378,6 +378,59 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         self.assertFalse(c.activity('replacement')['stop'])
         self.assertEqual(git(self.repo,'rev-parse',late['late_result_ref']),old_sha)
 
+    def test_available_task_is_claimed_before_stale_lease(self):
+        run = self.run_tasks([
+            {'key': 'stale', 'pool': 'work', 'title': 'stale', 'instructions': 'old work'},
+            {'key': 'fresh', 'pool': 'work', 'title': 'fresh', 'instructions': 'new work'},
+        ])
+        old = self.claim(run, 'old')
+        self.expire(run, 'stale')
+        fresh = self.claim(run, 'fresh-worker')
+        self.assertEqual(fresh['task_key'], 'fresh')
+        self.assertEqual(c.status(run)['reclaims'], [])
+        self.assertEqual(c.status(run)['slots'][0]['task_id'], 'old')
+        self.assertEqual(c.heartbeat(run, 'old',
+                         lease_generation=old['lease_generation'])['task_key'], 'stale')
+        c.finish(run, 'fresh-worker', commit_sha=self.commit(fresh),
+                 lease_generation=fresh['lease_generation'], auto_claim=False)
+        self.expire(run, 'stale')
+        successor = self.claim(run, 'successor')
+        self.assertEqual(successor['task_key'], 'stale')
+        self.assertEqual(successor['lease_generation'], old['lease_generation'] + 1)
+        self.assertEqual(successor['recovery']['old_task_id'], 'old')
+        with self.assertRaises(PermissionError):
+            c.heartbeat(run, 'old', lease_generation=old['lease_generation'])
+
+    def test_stale_lease_not_reclaimed_for_ineligible_pool(self):
+        run = self.run_tasks([
+            {'key': 'stale', 'pool': 'gpu', 'title': 'GPU', 'instructions': 'work'},
+            {'key': 'qa', 'pool': 'qa', 'title': 'QA', 'instructions': 'review'},
+        ])
+        old = self.claim(run, 'old')
+        self.claim(run, 'qa-owner')
+        self.expire(run, 'stale')
+        idle = c.claim(run, 'qa-only', worktree_parent=str(self.parent),
+                       only_pools=('qa',), wait_if_empty=True)
+        self.assertEqual(idle['status'], 'waiting')
+        self.assertEqual(c.status(run)['reclaims'], [])
+        self.assertEqual(c.status(run)['slots'][0]['task_id'], 'old')
+        successor = self.claim(run, 'gpu-worker')
+        self.assertEqual(successor['task_key'], 'stale')
+        self.assertEqual(successor['lease_generation'], old['lease_generation'] + 1)
+
+    def test_expired_owner_can_release_resource_for_stale_fallback(self):
+        run = self.run_tasks([
+            {'key': 'gpu-a', 'pool': 'gpu', 'title': 'GPU A', 'instructions': 'A'},
+            {'key': 'gpu-b', 'pool': 'gpu', 'title': 'GPU B', 'instructions': 'B'},
+        ])
+        c.set_resource_cap(run, 'gpu', 1, ['gpu'])
+        owner = self.claim(run, 'old')
+        self.expire(run, 'gpu-a')
+        successor = self.claim(run, 'new')
+        self.assertEqual(successor['task_key'], 'gpu-a')
+        self.assertEqual(successor['lease_generation'], owner['lease_generation'] + 1)
+        self.assertEqual(c.status(run)['resource_caps'][0]['claimed'], 1)
+
     def test_ten_minute_reclaim_preserves_dirty_old_worktree_and_fences(self):
         run = self.run_tasks()
         old = self.claim(run, 'old')
@@ -777,6 +830,24 @@ class AdaptiveCollaborationTest(unittest.TestCase):
                             for v in entries))
         self.assertTrue(any(v['request_key']=='incoming' and v['recipient'] is None
                             and v['status']=='offered' for v in entries))
+
+    def test_unplanned_join_prefers_available_over_stale_owner(self):
+        kw = dict(repo=str(self.repo), target_branch='main',
+                  worktree_parent=str(self.parent), goal_key='ready-first-unplanned',
+                  title='task', instructions='do work')
+        old = c.dynamic_join(task_id='old', **kw)
+        other = c.dynamic_join(task_id='other', **kw)
+        run = old['run_id']
+        c.reclaim(run, f'task-{other["slot"]}', force=True, reason='release for test')
+        with c._connection(write=True) as db:
+            db.execute('UPDATE slots SET last_seen=? WHERE run_id=? AND number=?',
+                       (time.time()-601, run, old['slot']))
+        fresh = c.dynamic_join(task_id='fresh', **kw)
+        self.assertEqual(fresh['slot'], other['slot'])
+        self.assertEqual(len(c.status(run)['reclaims']), 1)
+        self.assertEqual(c.status(run)['slots'][old['slot']-1]['task_id'], 'old')
+        self.assertIsNone(c.heartbeat(run, 'old',
+                          lease_generation=old['lease_generation'])['task_key'])
 
     def test_unplanned_run_recovers_expired_slot_without_creating_another(self):
         kw=dict(repo=str(self.repo),target_branch='main',worktree_parent=str(self.parent),
