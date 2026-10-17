@@ -99,7 +99,7 @@ Use this continuation contract after admission:
 2. Work from current repository, tool, process, and external state. Re-observe anything that may have gone stale; current reality outranks lifecycle summaries, plans, checkpoints, and historical validation.
 3. Make concrete progress toward the requested end state. A status explanation or plan update without executed work/evidence is not progress.
 4. If task-owned work is confirmed live, observe the existing handle instead of restarting it. An observation timeout or transient polling failure is not terminal evidence.
-5. Repair resolvable failures and continue. Use `blocked` only for a genuine impasse with no remaining safe useful work; do not use it merely because work is difficult, slow, uncertain, or incomplete.
+5. Repair resolvable failures and continue **within the owning domain Skill's exposed commands and state transitions**. A domain `BLOCKED`/`USER_INPUT_REQUIRED`, or exhausted repairs with `prose_authority: RUNTIME_ONLY`, is itself a genuine impasse for that domain deliverable: use lifecycle `block` with its failure code and preserve its `completed_work` handoff. Do not circumvent that stop by producing the deliverable in the host loop. Otherwise use `blocked` only for a genuine impasse with no remaining safe useful work; do not use it merely because work is difficult, slow, uncertain, or incomplete.
 6. Treat completion as unproven until the actual request is verified requirement by requirement against current authoritative evidence.
 
 For repository or filesystem work, bind/orient the existing lifecycle once before the first mutation. Repository discovery normally uses native Git directly. If that normal probe fails for a Host Profile registered shared project and its selected environment has `git_metadata_root`, Codex Loop may perform one bounded host-path repair before treating the workspace as missing/broken: validate `<git_metadata_root>/<project-alias>` against the exact registered worktree, repair the shared `.git` pointer/current-host `core.worktree`, preserve a conflicting synced `.git` directory outside the worktree, and retry once. Do not use this repair for unregistered paths or as a general fallback for arbitrary Git errors:
@@ -126,7 +126,7 @@ After mandatory admission and any required one-time orientation, use the host-na
 
 Ordinary shell/file/edit/test operations go directly through host tools. Do not wrap them in lifecycle commands, record every step, or call `next` between actions. The lifecycle stays active without being polled. A strong model should choose its own execution trajectory and rerun only checks plausibly affected by a repair.
 
-If another selected Skill requires its own domain workflow or state machine, that workflow remains authoritative inside that Skill's scope. Codex Loop wraps it with the durable lifecycle but must not flatten, replace, reinterpret, or bypass its required states/transitions. The domain Skill owns its workflow semantics and persistence; Codex Loop owns task identity, retained user authority, routing/side-effect safety, and final lifecycle completion.
+If another selected Skill requires its own domain workflow or state machine, that workflow remains authoritative inside that Skill's scope **over Codex Loop's generic continue-and-repair rule**. Codex Loop wraps it with the durable lifecycle but must not flatten, replace, reinterpret, or bypass its required states/transitions. The domain Skill owns its workflow semantics and persistence; Codex Loop owns task identity, retained user authority, routing/side-effect safety, and final lifecycle completion. The host may advance the domain task only through the Skill's own exposed commands and transitions, even when its runtime fails or stops. Paths declared as domain-owned outputs (including prose, delivery status and archives) must not be written, rewritten, moved, replaced, or archived by host tools outside the owning Skill's command. A domain failure handoff with `completed_work` must remain intact for the author; never convert it into a host-authored draft or a claimed successful delivery.
 
 When a coupled domain Skill requires a semantic stage whose execution itself is completion-relevant, route that stage through Codex Loop semantic work instead of accepting a caller-authored result artifact:
 
@@ -153,7 +153,7 @@ Before finishing:
 7. If any material requirement remains unsatisfied or unverified, continue working. If no safe useful action remains because of a concrete external/user dependency, use `block --reason ...`.
 8. Otherwise run `completion` once. A `PASS` transitions the lifecycle to terminal `complete`; do not use `completion` as a mid-task probe.
 
-Passing tests or a clear lifecycle status never substitutes for this semantic acceptance.
+Passing tests or a clear lifecycle status never substitutes for this semantic acceptance. In particular, independent host-authored QA cannot certify a host-authored domain deliverable, cannot satisfy the domain Skill's final gate, and cannot turn bypassed workflow output into accepted work.
 
 ## Continuation and steering
 
