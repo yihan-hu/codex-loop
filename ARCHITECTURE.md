@@ -79,7 +79,11 @@ retain prior blocker for recheck]
   CC --> DS{Domain Skill owns workflow?}
   DS -->|no| H[Host-native agent loop]
   DS -->|yes| DW[Domain Skill-owned workflow/state]
-  DW --> H
+  DW --> DG{Domain transition permitted?}
+  DG -->|yes: Skill command only| H
+  DG -->|BLOCKED / USER_INPUT_REQUIRED / runtime-only exhausted| BK
+  DW -. owns declared output paths .-> OWN[Host cannot alter domain deliverables, status or archives]
+  OWN -. final gate remains domain-owned .-> F
   RI --> H
   PW --> H
 
