@@ -101,14 +101,13 @@ retain prior blocker for recheck]
   EXEC -->|Resource acquisition failed before work| RB[Verify clean input HEAD; abort old isolation and atomically requeue]
   RB --> LEARN[Learn live peer concurrency; short zero-peer cooldown]
   LEARN --> RES
-  CAP --> FAIR[Atomic Ready-first fair claim: eligible unclaimed tasks across pools]
-  FAIR -->|No eligible unclaimed task| STALE{Eligible claimed task with expired 600s lease?}
-  STALE -->|Yes; same SQLite transaction| RC[Reclaim only selected stale assignment; preserve old worktree]
-  STALE -->|No| IDLE[Bounded wait: idle heartbeat every 30s, no claimed Slot]
+  CAP --> FAIR[Atomic fairness: eligible Ready + expired leases; count functioning pool workers]
+  FAIR -->|Ready wins normally| LEASE[Atomic owner generation + 600 second last_seen lease]
+  FAIR -->|Stale unlocks under-served downstream, or no Ready| RC[Reclaim only selected stale assignment; preserve old worktree]
+  FAIR -->|No eligible task| IDLE[Bounded wait: idle heartbeat every 30s, no claimed Slot]
   IDLE -->|Poll and check Ready| READY
   IDLE -->|Run closed / all tasks done| IDLEDONE[Idle Chat exits]
   CW --> FAIR
-  FAIR --> LEASE[Atomic owner generation + 600 second last_seen lease]
   LEASE --> RECOVER{Reclaimed task?}
   RECOVER -->|No| ISOIN[Existing Logical Isolation: bind Run/Slot/lease and exact instructions]
   RECOVER -->|Yes| SNAP[Snapshot old HEAD, Git index, tracked patches and nonignored task files]
@@ -121,7 +120,7 @@ retain prior blocker for recheck]
   EXEC --> MCPHB[Scoped My Mac / WSL call: check inbox/control, heartbeat at most once per minute]
   MCPHB --> LEASE
   MCPHB -->|stop_task| STOPWORK[Block next operation, preserve worktree]
-  LEASE -. expired; considered after Ready exhausted .-> STALE
+  LEASE -. expired; considered at next fair claim .-> FAIR
   RC --> LEASE
   RC -. verified original finishes first .-> LATE[Atomic late finish: accept verified Git commit and send STOP]
   LATE --> STOPWORK
@@ -133,9 +132,9 @@ retain prior blocker for recheck]
   ISOEND -->|Auto-claimed next Slot; retry recovers entire next-task scope| ISOIN
   FIN --> UNLOCK[Mark done and unlock downstream tasks immediately]
   UNLOCK --> READY
-  FIN --> NEXT{Another Ready task?}
+  FIN --> NEXT{Another eligible Ready or stale claim candidate?}
   NEXT -->|Yes| FAIR
-  NEXT -->|No Ready and not Integrator| IDLE
+  NEXT -->|No eligible claim and not Integrator| IDLE
   UNLOCK --> DEPS[Cross-worker dependency Git materialization: verified task deltas]
   DEPS --> ISOIN
   FIN --> ELECTION{All DAG tasks and delegations done?}
@@ -208,7 +207,7 @@ bound to stage + input + instruction + request + generation]
 
 - **Native Git authentication is host-owned.** The Drive Host Profile records the last successful nonsecret Git credential source for each environment. Native publication applies that source without preflight; clear authentication failures may select an already available same-host alternative. Only an authoritative successful push triggers Host Profile update and Drive readback, never token storage. Neither Git tokens nor SSH keys are retrieved or stored by Codex Loop.
 
-- **Local collaboration is an adaptive DAG scheduler with a bounded lease, not a background Chat runtime.** The initial verified Git baseline and task identities remain stable, while an active worker may atomically publish tasks/pools and revise only unclaimed task definitions with a checked graph revision. SQLite filters explicit worker exclusions and producer self-review before assigning a ready task. An optional run-scoped shared-resource cap filters GPU-consuming pools before atomic fair selection, using the current claimed Slot count across all grouped pools. This does not interrupt existing claims, does not impose generic per-Pool quotas, and releases capacity when a Slot finishes or is reclaimed. Each worker has a private stable Worktree; no physical Slot path is reused after reclaim. A bounded foreground idle wait records separate SQLite waiter heartbeats and checks Ready every 30 seconds; it cannot wake or prove the liveness of a stopped Chat. No waiting heartbeat refreshes a claimed-task lease. A claim transaction selects eligible unclaimed Ready tasks first. Only if none qualifies does it consider expired claimed tasks (600 seconds without observed tool activity), atomically reclaiming the one it adopts and preserving every other owner's lease; pool eligibility and shared resource ceilings apply to both choices. Explicit force recovery still preserves the former Worktree, auditable ownership generation, and any verified checkpoint. The new owner must reconcile uncertain Git/external effects before repeating them. An installed My Mac/WSL MCP hook reports scoped host-tool activity, checks unread control, and throttles SQLite lease writes to one per 60 seconds. Uninstrumented tools and model thinking still need explicit activity reports. A reclaimed original worker may submit a verified late result if the successor remains unfinished; completed successor results are never overwritten. Last-finisher integration and tracked delegations remain protected by verified own-commit deltas and dependency ordering. An inactive integrator/serial owner can be reassigned after target Git state verification without blindly replaying interrupted merges. No daemon, cross-computer SQLite synchronization, authorization transfer or stopped-Chat wakeup is implied.
+- **Local collaboration is an adaptive DAG scheduler with a bounded lease, not a background Chat runtime.** The initial verified Git baseline and task identities remain stable, while an active worker may atomically publish tasks/pools and revise only unclaimed task definitions with a checked graph revision. SQLite filters explicit worker exclusions and producer self-review before assigning a ready task. An optional run-scoped shared-resource cap filters GPU-consuming pools before atomic fair selection, using the current claimed Slot count across all grouped pools. This does not interrupt existing claims, does not impose generic per-Pool quotas, and releases capacity when a Slot finishes or is reclaimed. Each worker has a private stable Worktree; no physical Slot path is reused after reclaim. A bounded foreground idle wait records separate SQLite waiter heartbeats and checks Ready every 30 seconds; it cannot wake or prove the liveness of a stopped Chat. No waiting heartbeat refreshes a claimed-task lease. A claim transaction fairly compares eligible unclaimed Ready work with expired claimed tasks (600 seconds without observed tool activity), counting only non-stale leases as functioning Pool workers. Ready normally wins. An expired task can outrank it if finishing that task would immediately release a direct DAG dependent in an under-served Pool; otherwise reclaim happens only when no eligible Ready task remains. Only the selected lease is revoked, and Pool eligibility and shared resource ceilings apply to both choices. Explicit force recovery still preserves the former Worktree, auditable ownership generation, and any verified checkpoint. The new owner must reconcile uncertain Git/external effects before repeating them. An installed My Mac/WSL MCP hook reports scoped host-tool activity, checks unread control, and throttles SQLite lease writes to one per 60 seconds. Uninstrumented tools and model thinking still need explicit activity reports. A reclaimed original worker may submit a verified late result if the successor remains unfinished; completed successor results are never overwritten. Last-finisher integration and tracked delegations remain protected by verified own-commit deltas and dependency ordering. An inactive integrator/serial owner can be reassigned after target Git state verification without blindly replaying interrupted merges. No daemon, cross-computer SQLite synchronization, authorization transfer or stopped-Chat wakeup is implied.
 
 - **Detached HEAD continuity has explicit provenance.** Workers may use detached HEAD only when the recorded target branch is supported by verified source provenance; the workspace lease distinguishes `branch` (intended target) from `checked_out_branch` (None on detached workers). Unverified detached work is never silently promoted to HOT mutation authority.
 

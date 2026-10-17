@@ -1051,21 +1051,18 @@ def retire_worker(run_id: str, task_id: str, reason: str) -> dict[str, Any]:
 
 
 def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str,
-                 only_pools: tuple[str, ...] | None = None, *,
-                 reclaim_stale: bool = False) -> sqlite3.Row | None:
+                 only_pools: tuple[str, ...] | None = None) -> sqlite3.Row | None:
     run = _run(db, run_id)
     owners = {r['pool_id']: set(json.loads(r['task_ids_json']))
               for r in db.execute('SELECT pool_id,task_ids_json FROM pool_operators WHERE run_id=?',(run_id,))}
-    candidates = (db.execute("SELECT * FROM slots WHERE run_id=? AND status='claimed' ORDER BY number",
-                             (run_id,)).fetchall() if reclaim_stale else _ready_slots(db, run_id))
     now = time.time()
-    ready = [slot for slot in candidates
-             if (not reclaim_stale or
-                 (slot['task_id'] != task_id and slot['last_seen'] is not None
-                  and now - slot['last_seen'] > LEASE_SECONDS))
-             and _eligible(db, run, slot, task_id)
-             and (only_pools is None or slot['pool_id'] in only_pools)
-             and (slot['pool_id'] not in owners or task_id in owners[slot['pool_id']])]
+    stale = db.execute("""SELECT * FROM slots WHERE run_id=? AND status='claimed'
+                          AND task_id!=? AND last_seen IS NOT NULL AND last_seen<?
+                          ORDER BY number""", (run_id, task_id, now - LEASE_SECONDS)).fetchall()
+    candidates = [slot for slot in _ready_slots(db, run_id) + stale
+                  if _eligible(db, run, slot, task_id)
+                  and (only_pools is None or slot['pool_id'] in only_pools)
+                  and (slot['pool_id'] not in owners or task_id in owners[slot['pool_id']])]
     # Once the last active owner releases the resource, discard the temporary
     # learned ceiling so later workers can probe newly free capacity again.
     learned = db.execute('SELECT * FROM learned_resource_caps WHERE run_id=?', (run_id,)).fetchall()
@@ -1095,24 +1092,56 @@ def _choose_slot(db: sqlite3.Connection, run_id: str, task_id: str,
     blocked = {r['resource_key'] for r in db.execute(
         'SELECT resource_key FROM resource_blocks WHERE run_id=? AND retry_after>?',
         (run_id,time.time()))}
-    ready = [slot for slot in ready if all(
+    candidates = [slot for slot in candidates if all(
         slot['pool_id'] not in cap['pools'] or
         (cap['resource_key'] not in blocked and
-         cap['claimed'] - int(reclaim_stale) < cap['max_claimed'])
+         cap['claimed'] - int(slot['status'] == 'claimed') < cap['max_claimed'])
         for cap in limits)]
-    if not ready:
+    if not candidates:
         return None
+    # Stale leases do not count as functioning workers in pool fairness.
     active = {r['pool_id']: r['n'] for r in db.execute(
-        "SELECT pool_id,COUNT(*) n FROM slots WHERE run_id=? AND status='claimed' GROUP BY pool_id", (run_id,))}
+        """SELECT pool_id,COUNT(*) n FROM slots WHERE run_id=? AND status='claimed'
+           AND (last_seen IS NULL OR last_seen>=?) GROUP BY pool_id""",
+        (run_id, now - LEASE_SECONDS))}
     last = {r['pool_id']: r['last_claim'] for r in db.execute(
         'SELECT pool_id,last_claim FROM pool_dispatch WHERE run_id=?', (run_id,))}
-    # Fair selection among pools with available shared resource capacity.
-    # Runs without configured caps retain the original uncapped behavior.
     overdue = {r['latest_task_key'] for r in db.execute(
         'SELECT latest_task_key FROM recurring_reviews WHERE run_id=?', (run_id,))}
-    chosen = min(ready, key=lambda slot: (0 if slot['task_key'] in overdue else 1,
-                                          active.get(slot['pool_id'], 0),
-                                          last.get(slot['pool_id'], 0), slot['number']))
+    ready = [slot for slot in candidates if slot['status'] == 'available']
+    stale = [slot for slot in candidates if slot['status'] == 'claimed']
+    # Only a stale task whose completion would immediately unlock a dependent
+    # may outrank available work in a less-served pool.
+    unlocks: dict[int, list[str]] = {}
+    if stale:
+        done = {r['task_key'] or f'task-{r["number"]}' for r in db.execute(
+            "SELECT task_key,number FROM slots WHERE run_id=? AND status='done'", (run_id,))}
+        waiting = [(r['pool_id'], set(json.loads(r['depends_on']))) for r in db.execute(
+            "SELECT pool_id,depends_on FROM slots WHERE run_id=? AND status='available'", (run_id,))]
+        for slot in stale:
+            key = slot['task_key'] or f'task-{slot["number"]}'
+            unlocks[slot['number']] = [pool for pool, deps in waiting
+                                      if key in deps and deps - {key} <= done]
+
+    def pool_load(slot: sqlite3.Row) -> int:
+        load = active.get(slot['pool_id'], 0)
+        if slot['status'] == 'claimed':
+            load = min([load] + [active.get(pool, 0) for pool in unlocks[slot['number']]])
+        return load
+
+    if ready:
+        preferred = min(ready, key=lambda slot: (
+            0 if slot['task_key'] in overdue else 1,
+            active.get(slot['pool_id'], 0), last.get(slot['pool_id'], 0), slot['number']))
+        stale = [slot for slot in stale
+                 if unlocks[slot['number']] and
+                 pool_load(slot) < active.get(preferred['pool_id'], 0)]
+    # Equal service favors Ready. The sole exception is an expired dependency
+    # blocking a less-served pool; selection and reclaim share one SQLite lock.
+    chosen = min(ready + stale, key=lambda slot: (
+        0 if slot['task_key'] in overdue else 1, pool_load(slot),
+        0 if slot['status'] == 'available' else 1,
+        last.get(slot['pool_id'], 0), slot['number']))
     next_seq = 1 + max(last.values(), default=0)
     db.execute('INSERT INTO pool_dispatch(run_id,pool_id,last_claim) VALUES(?,?,?) '
                'ON CONFLICT(run_id,pool_id) DO UPDATE SET last_claim=excluded.last_claim',
@@ -1230,7 +1259,7 @@ def dynamic_join(repo: str, target_branch: str, worktree_parent: str, *, goal_ke
         if existing is not None:
             number = existing['number']
         elif abandoned or (run['state'] == 'open' and stale):
-            number = None  # Let the common Ready-first claim choose or reclaim one slot.
+            number = None  # Let the shared fair claim choose or reclaim one slot.
         else:
             number = int(db.execute('SELECT COALESCE(MAX(number),0)+1 FROM slots WHERE run_id=?', (run_id,)).fetchone()[0])
             db.execute("INSERT INTO slots(run_id,number,title,instructions,status,task_id) VALUES(?,?,?,?, 'claimed', ?)",
@@ -1271,15 +1300,12 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
                 raise RuntimeError('run is not accepting slot claims')
             _publish_due_reviews(db, run_id)
             slot = _choose_slot(db, run_id, task_id, only_pools)
-            if slot is None:
-                # One atomic Ready-first decision. Only the eligible stale
-                # assignment being adopted loses its previous lease.
-                slot = _choose_slot(db, run_id, task_id, only_pools, reclaim_stale=True)
-                if slot is not None:
-                    number = slot['number']
-                    _reclaim_slot(db, run_id, slot, '600 seconds without recorded tool activity')
-                    slot = db.execute('SELECT * FROM slots WHERE run_id=? AND number=?',
-                                      (run_id, number)).fetchone()
+            if slot is not None and slot['status'] == 'claimed':
+                # Revoke only the stale lease selected by fair DAG scheduling.
+                number = slot['number']
+                _reclaim_slot(db, run_id, slot, '600 seconds without recorded tool activity')
+                slot = db.execute('SELECT * FROM slots WHERE run_id=? AND number=?',
+                                  (run_id, number)).fetchone()
             if not run['planned'] and slot is None:
                 raise RuntimeError('unplanned participants must register through collab join')
             if slot is None:

@@ -401,6 +401,113 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             c.heartbeat(run, 'old', lease_generation=old['lease_generation'])
 
+    def test_understaffed_pool_stale_preempts_busy_pool_ready_to_unlock_downstream(self):
+        run = self.run_tasks([
+            {'key': 'A-source', 'pool': 'A', 'title': 'source', 'instructions': 'source'},
+            {'key': 'A-dependent', 'pool': 'A', 'title': 'dependent',
+             'instructions': 'depends on source', 'depends_on': ['A-source']},
+            *[{'key': f'B-{i}', 'pool': 'B', 'title': f'B {i}', 'instructions': 'work'}
+              for i in range(5)],
+        ])
+        c.set_resource_cap(run, 'A-only', 1, ['A'])
+        old = self.claim(run, 'A-owner')
+        self.assertEqual(old['task_key'], 'A-source')
+        for i in range(4):
+            self.assertEqual(self.claim(run, f'B-owner-{i}')['pool'], 'B')
+        self.expire(run, 'A-source')
+        takeover = self.claim(run, 'new-worker')
+        self.assertEqual(takeover['task_key'], 'A-source')
+        self.assertEqual(takeover['recovery']['old_task_id'], 'A-owner')
+        self.assertEqual(c.status(run)['pools']['B']['ready'], 1)
+        c.finish(run, 'new-worker', commit_sha=self.commit(takeover),
+                 lease_generation=takeover['lease_generation'], auto_claim=False)
+        self.assertEqual(c.status(run)['pools']['A']['ready'], 1)
+        self.assertEqual(self.claim(run, 'downstream-worker')['task_key'], 'A-dependent')
+
+    def test_finished_busy_pool_worker_reclaims_blocking_understaffed_pool(self):
+        run = self.run_tasks([
+            {'key': 'A-root', 'pool': 'A', 'title': 'root', 'instructions': 'root'},
+            {'key': 'A-child', 'pool': 'A', 'title': 'child',
+             'instructions': 'unlocked by root', 'depends_on': ['A-root']},
+            *[{'key': f'B-{i}', 'pool': 'B', 'title': f'B {i}', 'instructions': 'work'}
+              for i in range(5)],
+        ])
+        self.claim(run, 'lost-A')
+        busy = [self.claim(run, f'B-worker-{i}') for i in range(4)]
+        self.expire(run, 'A-root')
+        finished = c.finish(run, 'B-worker-0', commit_sha=self.commit(busy[0]))
+        self.assertTrue(finished['continue_now'])
+        takeover = finished['next_task']
+        self.assertEqual(takeover['task_key'], 'A-root')
+        self.assertEqual(takeover['worktree'], busy[0]['worktree'])
+        self.assertEqual(takeover['recovery']['old_task_id'], 'lost-A')
+        c.finish(run, 'B-worker-0', commit_sha=self.commit(takeover),
+                 lease_generation=takeover['lease_generation'], auto_claim=False)
+        self.assertEqual(c.status(run)['pools']['A']['ready'], 1)
+
+    def test_stale_upstream_unlocks_understaffed_pool_across_pool_boundary(self):
+        run = self.run_tasks([
+            {'key': 'B-source', 'pool': 'B', 'title': 'source', 'instructions': 'source'},
+            {'key': 'A-dependent', 'pool': 'A', 'title': 'A dependent',
+             'instructions': 'blocked', 'depends_on': ['B-source']},
+            *[{'key': f'B-{i}', 'pool': 'B', 'title': f'B {i}', 'instructions': 'work'}
+              for i in range(5)],
+        ])
+        self.assertEqual(self.claim(run, 'old')['task_key'], 'B-source')
+        for i in range(4):
+            self.claim(run, f'B-worker-{i}')
+        self.expire(run, 'B-source')
+        self.assertEqual(self.claim(run, 'new')['task_key'], 'B-source')
+        self.assertEqual(c.status(run)['pools']['B']['ready'], 1)
+
+    def test_parallel_claims_split_dependency_takeover_and_ready_task(self):
+        run = self.run_tasks([
+            {'key': 'A-source', 'pool': 'A', 'title': 'source', 'instructions': 'source'},
+            {'key': 'A-dependent', 'pool': 'A', 'title': 'dependent',
+             'instructions': 'blocked', 'depends_on': ['A-source']},
+            *[{'key': f'B-{i}', 'pool': 'B', 'title': f'B {i}', 'instructions': 'work'}
+              for i in range(5)],
+        ])
+        self.claim(run, 'A-owner')
+        for i in range(4):
+            self.claim(run, f'B-worker-{i}')
+        self.expire(run, 'A-source')
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            chosen = list(executor.map(lambda worker: self.claim(run, worker),
+                                       ('parallel-1', 'parallel-2')))
+        self.assertEqual({item['task_key'] for item in chosen}, {'A-source', 'B-4'})
+        self.assertEqual(len(c.status(run)['reclaims']), 1)
+        self.assertNotEqual(chosen[0]['worktree'], chosen[1]['worktree'])
+
+    def test_stale_without_immediate_downstream_unlock_does_not_preempt_ready(self):
+        run = self.run_tasks([
+            {'key': 'A-source', 'pool': 'A', 'title': 'source', 'instructions': 'source'},
+            {'key': 'C-source', 'pool': 'C', 'title': 'source', 'instructions': 'source'},
+            {'key': 'A-dependent', 'pool': 'A', 'title': 'dependent',
+             'instructions': 'blocked', 'depends_on': ['A-source', 'C-source']},
+            *[{'key': f'B-{i}', 'pool': 'B', 'title': f'B {i}', 'instructions': 'work'}
+              for i in range(5)],
+        ])
+        self.assertEqual(self.claim(run, 'A-owner')['task_key'], 'A-source')
+        self.assertEqual(self.claim(run, 'C-owner')['task_key'], 'C-source')
+        for i in range(4):
+            self.claim(run, f'B-worker-{i}')
+        self.expire(run, 'A-source')
+        self.assertEqual(self.claim(run, 'new')['task_key'], 'B-4')
+        self.assertEqual(c.status(run)['reclaims'], [])
+
+    def test_stale_dependency_ties_yield_to_ready(self):
+        run = self.run_tasks([
+            {'key': 'A-source', 'pool': 'A', 'title': 'source', 'instructions': 'source'},
+            {'key': 'A-dependent', 'pool': 'A', 'title': 'dependent',
+             'instructions': 'blocked', 'depends_on': ['A-source']},
+            {'key': 'B-ready', 'pool': 'B', 'title': 'ready', 'instructions': 'ready'},
+        ])
+        self.assertEqual(self.claim(run, 'old')['task_key'], 'A-source')
+        self.expire(run, 'A-source')
+        self.assertEqual(self.claim(run, 'new')['task_key'], 'B-ready')
+        self.assertEqual(c.status(run)['reclaims'], [])
+
     def test_stale_lease_not_reclaimed_for_ineligible_pool(self):
         run = self.run_tasks([
             {'key': 'stale', 'pool': 'gpu', 'title': 'GPU', 'instructions': 'work'},
