@@ -122,6 +122,26 @@ class SlotLogicalIsolationTests(unittest.TestCase):
         self.assertEqual([x['status'] for x in store.isolation_history()],
                          ['finished','finished'])
 
+    def test_reclaimed_run_guidance_is_reflected_in_reused_slot_projection(self):
+        run=self.new_run([{'key':'A','title':'A','instructions':'Implement A'}])
+        tid,store=self.worker('u')
+        first=self.claim(run,tid)
+        isolation_id=first['logical_isolation']['isolation_id']
+        original=''.join(first['logical_isolation']['collaboration']['instructions_chunks'])
+        self.assertNotIn('preserve 1:4',original)
+        collab.set_run_guidance(
+            run,tid,'preserve 1:4; no unnecessary independent review',
+            expected_revision=collab.run_context(run)['graph_revision'],
+            lease_generation=first['lease_generation'])
+        retried=self.claim(run,tid)
+        self.assertEqual(retried['logical_isolation']['isolation_id'],isolation_id)
+        current=''.join(retried['logical_isolation']['collaboration']['instructions_chunks'])
+        self.assertIn('preserve 1:4',current)
+        from codex_loop_context_projection import build_isolation
+        resumed=build_isolation(self.repo,self.repo,store,isolation_id,reconcile=False)
+        self.assertIn('preserve 1:4',
+                      ''.join(resumed['collaboration']['instructions_chunks']))
+
     def test_writable_slot_guarded_write_is_limited_to_its_assigned_worktree(self):
         run=self.new_run([{'key':'W','title':'Writable','instructions':'Produce result'}])
         tid,store=self.worker('w')
@@ -284,7 +304,8 @@ class SlotLogicalIsolationTests(unittest.TestCase):
             'key':'R','title':'Review','instructions':'Review output',
             'depends_on':['A'], 'review_of':['A'],
             'isolation':{'role':'reviewer','mutation_policy':'read_only'}
-        },lease_generation=assignment['lease_generation'])
+        },lease_generation=assignment['lease_generation'],
+           expected_revision=collab.run_context(run)['graph_revision'])
         self.finish(run,tid,assignment,self.commit(assignment))
         next_assignment=self.claim(run,reviewer)
         self.assertEqual(next_assignment['task_key'],'R')

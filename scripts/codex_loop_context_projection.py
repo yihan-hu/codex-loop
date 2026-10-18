@@ -373,7 +373,28 @@ def build_isolation(root: Path, cwd: Path, store: StateStore, isolation_id: str,
     semantic = store.semantic_work_for_isolation(isolation_id)
     if semantic is not None:
         isolation["semantic_work"] = semantic
-    return isolation_projection(facts, isolation)
+    projection = isolation_projection(facts, isolation)
+    link = projection.get("collaboration")
+    if isolation.get("status") == "active" and isinstance(link, dict) and link.get("run_id"):
+        # The Slot identity stays fixed; Run guidance may change mid-Slot.
+        # Rebuild only the returned context from the live SQLite source.
+        from codex_loop_runtime import local_collaboration
+        with local_collaboration._connection() as db:
+            slot = db.execute("""SELECT instructions FROM slots
+                WHERE run_id=? AND number=? AND task_id=? AND lease_generation=?
+                  AND status='claimed'""",
+                (link["run_id"], link["slot"], store.task_id,
+                 link["lease_generation"])).fetchone()
+            if slot is not None:
+                current = local_collaboration._effective_instructions(
+                    db, link["run_id"], slot["instructions"])
+                projection["collaboration"] = {
+                    **link,
+                    "instructions_chunks": [
+                        current[i:i + 3500] for i in range(0, len(current), 3500)
+                    ],
+                }
+    return projection
 
 
 def build_full(root: Path, cwd: Path, store: StateStore, *, reconcile: bool = True) -> dict[str, Any]:

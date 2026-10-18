@@ -625,13 +625,22 @@ def _verify_editor_scope(run: sqlite3.Row, task_id: str, session_id: str,
     if not session_id or not connector:
         raise PermissionError('Run Editor requires a pinned conversation and connector')
     open_store(None, task_id).ensure_active()
-    grants = set(session_grants(session_id=session_id)['granted'])
+    grants = session_grants(session_id=session_id)['granted']
     registered = load_registry(session_id)['workspaces']
     repo = Path(run['repo']).resolve(strict=True)
-    if not any(name in grants and
-               (repo == Path(entry['path']).resolve(strict=True) or
-                repo.is_relative_to(Path(entry['path']).resolve(strict=True)))
-               for name, entry in registered.items()):
+    authorized = False
+    for name in grants:
+        entry = registered.get(name)
+        if entry is None:
+            continue
+        try:
+            granted_root = Path(entry['path']).resolve(strict=True)
+        except (OSError, ValueError):
+            continue  # An unrelated missing workspace cannot revoke this Run's valid grant.
+        if repo == granted_root or repo.is_relative_to(granted_root):
+            authorized = True
+            break
+    if not authorized:
         raise PermissionError('Run Editor lacks a current-conversation grant for the Run repository')
     route = route_check(action='local_repository', session_id=session_id,
                         dispatch_connector=connector, local_root=str(repo),
@@ -727,13 +736,19 @@ def set_run_guidance(run_id: str, task_id: str, guidance: str, *,
                       ON CONFLICT(run_id) DO UPDATE SET body=excluded.body,
                       revision=excluded.revision''', (run_id, guidance, revision))
         db.execute('UPDATE runs SET graph_revision=graph_revision+1 WHERE id=?',(run_id,))
-        # Claimed work cannot be rewritten; deliver new decisions through existing inbox.
+        # Claimed work is immutable; only the latest update stays unread.
         for owner in db.execute("SELECT task_id FROM slots WHERE run_id=? AND status='claimed'",
                                 (run_id,)).fetchall():
-            db.execute('INSERT INTO messages(run_id,sender,recipient,body) VALUES(?,?,?,?)',
+            db.execute("""INSERT OR IGNORE INTO receipts(message_id,task_id)
+                          SELECT id, ? FROM messages WHERE run_id=? AND recipient=?
+                            AND control_action='run_guidance_update'""",
+                       (owner['task_id'], run_id, owner['task_id']))
+            db.execute('''INSERT INTO messages(run_id,sender,recipient,body,control_action)
+                          VALUES(?,?,?,?,?)''',
                        (run_id, task_id, owner['task_id'],
                         'RUN_GUIDANCE_UPDATED (apply to current task):\n' +
-                        (guidance or '(Run-wide additional guidance cleared)')))
+                        (guidance or '(Run-wide additional guidance cleared)'),
+                        'run_guidance_update'))
         return {'run_id': run_id, 'graph_revision': expected_revision+1,
                 'guidance_revision': revision,
                 'notified_claimed_workers': db.execute(
@@ -857,7 +872,7 @@ def reclaim(run_id: str, task_key: str, *, force: bool = False,
                 'reclaimable': True, 'reconcile_external_effects': True}
 
 def publish_task(run_id: str, task_id: str, tasks: dict[str, Any] | list[dict[str, Any]], *,
-                 lease_generation: int | None = None, expected_revision: int | None = None,
+                 expected_revision: int, lease_generation: int | None = None,
                  editor_session_id: str | None = None, connector: str | None = None) -> dict[str, Any]:
     # Publish one new task or an entire cross-dependent task pool atomically.
     task_id = _task(task_id)
@@ -869,10 +884,8 @@ def publish_task(run_id: str, task_id: str, tasks: dict[str, Any] | list[dict[st
         if run['state'] != 'open' or not run['planned']:
             raise RuntimeError('dynamic tasks require an open planned run')
         _permit_graph_edit(db, run, task_id, lease_generation, editor_session_id, connector)
-        if expected_revision is not None and run['graph_revision'] != expected_revision:
+        if run['graph_revision'] != expected_revision:
             raise RuntimeError('Run graph changed; reload Run context before publishing')
-        if editor_session_id is not None and expected_revision is None:
-            raise ValueError('Run Editor publish requires the current graph revision')
         current = _stored_specs(db, run_id)
         validated = _task_specs(current + batch)
         new_tasks = validated[len(current):]

@@ -49,7 +49,7 @@ An authorized local Run may reserve generation pools for named code-worker task 
 
 ## Local mutable DAG, review tags and activity leases
 
-For Local planned Runs, active Workers and explicitly authorized Run Editors without a Slot may publish new tasks/pools and modify *available* tasks. The initial PLAN remains the baseline. One host-local SQLite guidance record holds current Run-wide user decisions. **Before publishing or revising**, the actor reads `collab context` and its `graph_revision`; newly claimed task instructions include current guidance without another Worker read. Changing guidance notifies already-claimed Workers through the existing inbox. Claimed/Done tasks remain immutable; create follow-up tasks only when truly necessary.
+For Local planned Runs, active Workers and explicitly authorized Run Editors without a Slot may publish new tasks/pools and modify *available* tasks. The initial PLAN remains the baseline. One host-local SQLite guidance record holds current Run-wide user decisions. Every publish, including Worker publication, requires an expected graph revision. **Before publishing or revising**, the actor reads `collab context` and its `graph_revision`; newly claimed task instructions include current guidance without another Worker read. Changing guidance notifies already-claimed Workers through the existing inbox; older unread guidance notices are superseded without removing their audit records. A reused active Slot refreshes its returned instruction projection from current Run guidance without creating another isolation. Claimed/Done tasks remain immutable; create follow-up tasks only when truly necessary.
 
 ```bash
 # Inside the already admitted, authorized Local worker. Files contain JSON.

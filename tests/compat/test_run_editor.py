@@ -127,6 +127,29 @@ class RunEditorTest(unittest.TestCase):
         self.assertNotIn(guidance, next_task['instructions'])
         self.assertEqual(next_task['task_key'], 'B')
 
+    def test_multiple_rapid_updates_deliver_only_latest_run_guidance(self):
+        self.admit()
+        c.claim(self.run,'worker-1',worktree_parent=str(self.parent))
+        first=c.set_run_guidance(self.run,'editor-lifecycle','Old decision',
+                                 expected_revision=1,**self.editor())
+        second=c.set_run_guidance(self.run,'editor-lifecycle','Current decision',
+                                  expected_revision=first['graph_revision'],**self.editor())
+        pending=c.inbox(self.run,'worker-1')['messages']
+        self.assertEqual(len(pending),1)
+        self.assertIn('Current decision',pending[0]['body'])
+        self.assertNotIn('Old decision',pending[0]['body'])
+
+    def test_missing_unrelated_workspace_does_not_block_authorized_run(self):
+        from codex_loop_runtime.workspace_registry import admit_workspace
+        missing=self.root/'unrelated'
+        missing.mkdir()
+        admit_workspace('a-unrelated',str(missing),'repository','Authorized other workspace',
+                        session_id=self.sid,host_authorized_roots=[str(missing)],
+                        current_user_authorization_observed=True)
+        missing.rmdir()
+        result=self.admit()
+        self.assertEqual(result['role'],'run_editor')
+
     def test_initial_guidance_is_available_before_first_claim(self):
         new = c.create_run(str(self.repo), 'main', str(self.parent),
                            [{'key': 'X', 'title': 'X', 'instructions': 'Do X'}],
@@ -142,6 +165,10 @@ class RunEditorTest(unittest.TestCase):
     def test_worker_still_publishes_and_stale_lease_cannot_edit(self):
         assigned = c.claim(self.run, 'worker-1', worktree_parent=str(self.parent))
         revision = c.run_context(self.run)['graph_revision']
+        with self.assertRaises(TypeError):
+            c.publish_task(self.run, 'worker-1',
+                           {'key': 'stale', 'title': 'stale', 'instructions': 'old'},
+                           lease_generation=assigned['lease_generation'])
         new = c.publish_task(self.run, 'worker-1',
                              {'key': 'B', 'title': 'B', 'instructions': 'B'},
                              lease_generation=assigned['lease_generation'],
