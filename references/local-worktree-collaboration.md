@@ -49,13 +49,16 @@ An authorized local Run may reserve generation pools for named code-worker task 
 
 ## Local mutable DAG, review tags and activity leases
 
-For Local planned Runs only, workers may atomically publish one task or a JSON array of an entire new Pool (including internal dependencies), and modify *available* tasks during execution. Only the initial PLAN/task file is hashed for launch; the mutable task state is the host-local SQLite registry. Read `collab status` for its current `graph_revision` and avoid applying old PLAN content over newer task instructions. Claimed/Done tasks remain immutable; create follow-up tasks instead of editing them.
+For Local planned Runs, active Workers and explicitly authorized Run Editors without a Slot may publish new tasks/pools and modify *available* tasks. The initial PLAN remains the baseline. One host-local SQLite guidance record holds current Run-wide user decisions. **Before publishing or revising**, the actor reads `collab context` and its `graph_revision`; newly claimed task instructions include current guidance without another Worker read. Changing guidance notifies already-claimed Workers through the existing inbox. Claimed/Done tasks remain immutable; create follow-up tasks only when truly necessary.
 
 ```bash
 # Inside the already admitted, authorized Local worker. Files contain JSON.
-python3 scripts/codex_loop.py collab publish --run-id RUN --task-id TASK   --lease-generation GENERATION --task-file new-task-or-task-array.json
-python3 scripts/codex_loop.py collab revise --run-id RUN --task-id TASK   --lease-generation GENERATION --task-key later-task   --expected-revision CURRENT_REVISION --updates-file changes.json
+python3 scripts/codex_loop.py collab context --run-id RUN
+python3 scripts/codex_loop.py collab publish --run-id RUN --task-id TASK --lease-generation GENERATION --expected-revision REV --task-file new-task-or-task-array.json
+python3 scripts/codex_loop.py collab revise --run-id RUN --task-id TASK --lease-generation GENERATION --task-key later-task --expected-revision REV --updates-file changes.json
 ```
+
+A Slot-free Chat first admits its own active Codex Loop lifecycle, project workspace grant and pinned Local route, then uses `collab editor-admit --run-id RUN --task-id EDITOR_TASK --session-id SESSION --dispatch-connector 'My Mac' --reason 'authorized Run management' --current-user-authorization-observed`. It then calls `collab context --run-id RUN` and uses `collab publish` or `collab revise` with `--task-id EDITOR_TASK --editor-session-id SESSION --dispatch-connector 'My Mac' --expected-revision REV`, **without** a lease or claimed Slot. For new user steering, use `collab guidance-set` with a bounded text file, same editor/Worker authorization and `--expected-revision REV`. The update replaces the current full guidance and messages claimed Workers; it does not rewrite claimed/done Slots. A competing update fails on revision mismatch and must be read and reconciled before retrying.
 
 The new task JSON uses `key`, `pool`, `depends_on`, `title`, `instructions`, plus optional `exclude_workers`, `review_of` and `isolation`. Dynamic publication and revision preserve the same isolation configuration until a task is claimed. For an independent review, `review_of` names the producing task key(s): this adds the required task dependencies and excludes the actual producers automatically, even if the author is not known when the review task was planned. `exclude_workers` accepts stable registered names such as `Repo-worker3`, ordinal aliases such as `worker3`, or exact task IDs. All filtering happens before atomic assignment.
 
