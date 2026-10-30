@@ -1202,7 +1202,9 @@ class AdaptiveCollaborationTest(unittest.TestCase):
             self.assertEqual(proc.returncode,0,proc.stderr)
             return json.loads(proc.stdout)['data']
         common=('--run-id',run,'--task-id','owner','--lease-generation',str(old['lease_generation']))
-        result=call('publish',*common,'--task-file',str(task_file))
+        revision=c.run_context(run)['graph_revision']
+        result=call('publish',*common,'--task-file',str(task_file),
+                    '--expected-revision',str(revision))
         changes=self.root / 'change.json'
         changes.write_text(json.dumps({'pool':'second-review'}))
         call('revise',*common,'--task-key','B','--expected-revision',
