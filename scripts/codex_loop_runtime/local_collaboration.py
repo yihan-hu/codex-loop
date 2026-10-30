@@ -46,6 +46,15 @@ CREATE TABLE IF NOT EXISTS runs (
   integrator_generation INTEGER NOT NULL DEFAULT 0, integrator_last_seen REAL
 );
 CREATE INDEX IF NOT EXISTS active_runs ON runs(repo_key, target_branch, goal_key, state);
+CREATE TABLE IF NOT EXISTS run_guidance (
+  run_id TEXT PRIMARY KEY REFERENCES runs(id), body TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS run_editors (
+  run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL,
+  session_id TEXT NOT NULL, connector TEXT NOT NULL, evidence_sha256 TEXT NOT NULL,
+  PRIMARY KEY(run_id,task_id,session_id)
+);
 CREATE TABLE IF NOT EXISTS slots (
   run_id TEXT NOT NULL REFERENCES runs(id), number INTEGER NOT NULL,
   title TEXT NOT NULL, instructions TEXT NOT NULL,
@@ -607,6 +616,146 @@ def _touch_owner(db: sqlite3.Connection, run_id: str, task_id: str,
     return slot
 
 
+def _verify_editor_scope(run: sqlite3.Row, task_id: str, session_id: str,
+                         connector: str) -> None:
+    # A Run Editor is a separate admitted Chat lifecycle, not a Worker Slot.
+    from .state import open_store
+    from .workspace_registry import load_registry, session_grants
+    from .routing_state import route_check
+    if not session_id or not connector:
+        raise PermissionError('Run Editor requires a pinned conversation and connector')
+    open_store(None, task_id).ensure_active()
+    grants = session_grants(session_id=session_id)['granted']
+    registered = load_registry(session_id)['workspaces']
+    repo = Path(run['repo']).resolve(strict=True)
+    authorized = False
+    for name in grants:
+        entry = registered.get(name)
+        if entry is None:
+            continue
+        try:
+            granted_root = Path(entry['path']).resolve(strict=True)
+        except (OSError, ValueError):
+            continue  # An unrelated missing workspace cannot revoke this Run's valid grant.
+        if repo == granted_root or repo.is_relative_to(granted_root):
+            authorized = True
+            break
+    if not authorized:
+        raise PermissionError('Run Editor lacks a current-conversation grant for the Run repository')
+    route = route_check(action='local_repository', session_id=session_id,
+                        dispatch_connector=connector, local_root=str(repo),
+                        workspace_granted=True)
+    if not (route['allowed'] and route['dispatch_connector_verified']):
+        raise PermissionError('Run Editor requires the pinned Local route and connector')
+
+
+def admit_run_editor(run_id: str, task_id: str, *, session_id: str,
+                     connector: str, reason: str,
+                     current_user_authorization_observed: bool = False) -> dict[str, Any]:
+    if not current_user_authorization_observed:
+        raise PermissionError('Run Editor requires explicit current-chat user authorization')
+    reason = _text(reason, 'Run management authorization evidence', 2000)
+    task_id = _task(task_id)
+    with _connection(write=True) as db:
+        run = _run(db, run_id)
+        if not run['planned'] or run['state'] != 'open':
+            raise RuntimeError('Run management requires an open planned Run')
+        _verify_editor_scope(run, task_id, session_id, connector)
+        db.execute('''INSERT INTO run_editors(run_id,task_id,session_id,connector,evidence_sha256)
+                      VALUES(?,?,?,?,?) ON CONFLICT(run_id,task_id,session_id)
+                      DO UPDATE SET connector=excluded.connector,
+                                    evidence_sha256=excluded.evidence_sha256''',
+                   (run_id, task_id, session_id, connector,
+                    hashlib.sha256(reason.encode('utf-8')).hexdigest()))
+    return {'run_id': run_id, 'task_id': task_id, 'role': 'run_editor',
+            'slot_required': False, 'session_id': session_id}
+
+
+def _permit_graph_edit(db: sqlite3.Connection, run: sqlite3.Row, task_id: str,
+                       generation: int | None, editor_session_id: str | None,
+                       connector: str | None) -> None:
+    if editor_session_id is None:
+        if generation is None:
+            raise PermissionError('graph edits require an active Slot or admitted Run Editor')
+        _touch_owner(db, run['id'], task_id, generation)
+        return
+    if generation is not None or not connector:
+        raise ValueError('Run Editor does not use a Slot lease and needs its pinned connector')
+    editor = db.execute('''SELECT 1 FROM run_editors
+        WHERE run_id=? AND task_id=? AND session_id=? AND connector=?''',
+        (run['id'], task_id, editor_session_id, connector)).fetchone()
+    if editor is None:
+        raise PermissionError('Run Editor has not been authorized for this Run and Chat')
+    _verify_editor_scope(run, task_id, editor_session_id, connector)
+
+
+def _effective_instructions(db: sqlite3.Connection, run_id: str,
+                            instructions: str) -> str:
+    row = db.execute('SELECT body FROM run_guidance WHERE run_id=?', (run_id,)).fetchone()
+    if not row or not row['body']:
+        return instructions
+    return ('CURRENT RUN-WIDE USER DECISIONS (supersede conflicting task text):\n'
+            + row['body'] + '\n\nTASK INSTRUCTIONS:\n' + instructions)
+
+
+def run_context(run_id: str) -> dict[str, Any]:
+    with _connection() as db:
+        run = _run(db, run_id)
+        guidance = db.execute('SELECT * FROM run_guidance WHERE run_id=?',
+                              (run_id,)).fetchone()
+        return {'run_id': run_id, 'goal_key': run['goal_key'],
+                'graph_revision': run['graph_revision'],
+                'guidance_revision': guidance['revision'] if guidance else 0,
+                'guidance': guidance['body'] if guidance else '',
+                'plan_remains_initial_baseline': True}
+
+
+def set_run_guidance(run_id: str, task_id: str, guidance: str, *,
+                     expected_revision: int, lease_generation: int | None = None,
+                     editor_session_id: str | None = None,
+                     connector: str | None = None) -> dict[str, Any]:
+    task_id = _task(task_id)
+    if not isinstance(guidance, str) or len(guidance) > 16000:
+        raise ValueError('Run guidance must be bounded UTF-8 text')
+    guidance = guidance.strip()
+    with _connection(write=True) as db:
+        run = _run(db, run_id)
+        if run['state'] != 'open' or not run['planned']:
+            raise RuntimeError('guidance updates require an open planned Run')
+        _permit_graph_edit(db, run, task_id, lease_generation, editor_session_id, connector)
+        if run['graph_revision'] != expected_revision:
+            raise RuntimeError('Run graph changed; reload Run context before editing')
+        old = db.execute('SELECT revision,body FROM run_guidance WHERE run_id=?',
+                         (run_id,)).fetchone()
+        if old and old['body'] == guidance:
+            return {'run_id': run_id, 'graph_revision': run['graph_revision'],
+                    'guidance_revision': old['revision'], 'unchanged': True,
+                    'notified_claimed_workers': 0}
+        revision = (old['revision'] if old else 0) + 1
+        db.execute('''INSERT INTO run_guidance(run_id,body,revision) VALUES(?,?,?)
+                      ON CONFLICT(run_id) DO UPDATE SET body=excluded.body,
+                      revision=excluded.revision''', (run_id, guidance, revision))
+        db.execute('UPDATE runs SET graph_revision=graph_revision+1 WHERE id=?',(run_id,))
+        # Claimed work is immutable; only the latest update stays unread.
+        for owner in db.execute("SELECT task_id FROM slots WHERE run_id=? AND status='claimed'",
+                                (run_id,)).fetchall():
+            db.execute("""INSERT OR IGNORE INTO receipts(message_id,task_id)
+                          SELECT id, ? FROM messages WHERE run_id=? AND recipient=?
+                            AND control_action='run_guidance_update'""",
+                       (owner['task_id'], run_id, owner['task_id']))
+            db.execute('''INSERT INTO messages(run_id,sender,recipient,body,control_action)
+                          VALUES(?,?,?,?,?)''',
+                       (run_id, task_id, owner['task_id'],
+                        'RUN_GUIDANCE_UPDATED (apply to current task):\n' +
+                        (guidance or '(Run-wide additional guidance cleared)'),
+                        'run_guidance_update'))
+        return {'run_id': run_id, 'graph_revision': expected_revision+1,
+                'guidance_revision': revision,
+                'notified_claimed_workers': db.execute(
+                    "SELECT COUNT(*) FROM slots WHERE run_id=? AND status='claimed'",
+                    (run_id,)).fetchone()[0]}
+
+
 def _reclaim_slot(db: sqlite3.Connection, run_id: str, slot: sqlite3.Row,
                   reason: str) -> dict[str, Any]:
     # Keep the old worker's worktree and reachable commit references untouched.
@@ -723,7 +872,8 @@ def reclaim(run_id: str, task_key: str, *, force: bool = False,
                 'reclaimable': True, 'reconcile_external_effects': True}
 
 def publish_task(run_id: str, task_id: str, tasks: dict[str, Any] | list[dict[str, Any]], *,
-                 lease_generation: int) -> dict[str, Any]:
+                 expected_revision: int, lease_generation: int | None = None,
+                 editor_session_id: str | None = None, connector: str | None = None) -> dict[str, Any]:
     # Publish one new task or an entire cross-dependent task pool atomically.
     task_id = _task(task_id)
     batch = [tasks] if isinstance(tasks, dict) else tasks
@@ -733,7 +883,9 @@ def publish_task(run_id: str, task_id: str, tasks: dict[str, Any] | list[dict[st
         run = _run(db, run_id)
         if run['state'] != 'open' or not run['planned']:
             raise RuntimeError('dynamic tasks require an open planned run')
-        _touch_owner(db, run_id, task_id, lease_generation)
+        _permit_graph_edit(db, run, task_id, lease_generation, editor_session_id, connector)
+        if run['graph_revision'] != expected_revision:
+            raise RuntimeError('Run graph changed; reload Run context before publishing')
         current = _stored_specs(db, run_id)
         validated = _task_specs(current + batch)
         new_tasks = validated[len(current):]
@@ -755,7 +907,9 @@ def publish_task(run_id: str, task_id: str, tasks: dict[str, Any] | list[dict[st
 
 def revise_task(run_id: str, task_id: str, task_key: str,
                 updates: dict[str, Any], *,
-                lease_generation: int, expected_revision: int) -> dict[str, Any]:
+                lease_generation: int | None = None, expected_revision: int,
+                editor_session_id: str | None = None,
+                connector: str | None = None) -> dict[str, Any]:
     task_id = _task(task_id)
     task_key = _identifier(task_key, 'task key', RUN_RE)
     editable = {'title','instructions','pool','depends_on','review_of','exclude_workers','isolation'}
@@ -767,7 +921,7 @@ def revise_task(run_id: str, task_id: str, task_key: str,
             raise RuntimeError('only an open planned run supports DAG changes')
         if run['graph_revision'] != expected_revision:
             raise RuntimeError('DAG revision has changed; reload task status')
-        _touch_owner(db, run_id, task_id, lease_generation)
+        _permit_graph_edit(db, run, task_id, lease_generation, editor_session_id, connector)
         current = _stored_specs(db, run_id)
         target = next((t for t in current if t['key'] == task_key), None)
         if target is None:
@@ -1217,7 +1371,8 @@ def _make_run(conn: sqlite3.Connection, identity: dict[str, str], *, goal: str, 
 def create_run(repo: str, target_branch: str, worktree_parent: str,
                tasks: list[dict[str, str]], *, strategy: str = 'detached',
                goal_key: str, run_id: str | None = None,
-               serial_tail: str | None = None) -> dict[str, Any]:
+               serial_tail: str | None = None,
+               guidance: str | None = None) -> dict[str, Any]:
     identity = _repo_identity(repo, target_branch)
     parent = Path(worktree_parent).expanduser().resolve(strict=True)
     if parent == Path(identity['repo']) or parent.is_relative_to(Path(identity['repo'])):
@@ -1225,6 +1380,8 @@ def create_run(repo: str, target_branch: str, worktree_parent: str,
     specs = _task_specs(tasks)
     if serial_tail is not None:
         serial_tail = _text(serial_tail, 'post-integration serial chain', 60000)
+    if guidance is not None:
+        guidance = _text(guidance, 'initial Run-wide objective and user decisions', 16000)
     with _connection(write=True) as db:
         run = _make_run(db, identity, goal=goal_key, strategy=strategy,
                         parent=parent, planned=True, run_id=run_id)
@@ -1237,9 +1394,13 @@ def create_run(repo: str, target_branch: str, worktree_parent: str,
         if serial_tail is not None:
             db.execute('INSERT INTO serial_tails(run_id,instructions) VALUES(?,?)',
                        (run, serial_tail))
+        if guidance:
+            db.execute('INSERT INTO run_guidance(run_id,body,revision) VALUES(?,?,1)',
+                       (run, guidance.strip()))
     return {'run_id': run, 'slots': len(specs), 'pools': sorted({t['pool'] for t in specs}), 'strategy': strategy,
             'target_branch': target_branch, 'base_commit': identity['base_commit'],
             'worktree_parent': str(parent), 'serial_tail_planned': serial_tail is not None,
+            'guidance_initialized': bool(guidance),
             'launch': 'use the identical run-id launch prompt in each fresh chat'}
 
 
@@ -1504,11 +1665,12 @@ def claim(run_id: str, task_id: str, *, worktree_parent: str,
     with _connection() as db:
         recovery = db.execute('SELECT * FROM reclaims WHERE run_id=? AND slot_number=? ORDER BY id DESC LIMIT 1',
                               (run_id,number)).fetchone()
+        instructions = _effective_instructions(db, run_id, slot['instructions'])
     return {'run_id': run_id, 'slot': number, 'task_id': task_id,
             'task_key': slot['task_key'] or f'task-{number}', 'pool': slot['pool_id'],
             'depends_on': json.loads(slot['depends_on']),
             'review_of': json.loads(slot['review_of']),
-            'title': slot['title'], 'instructions': slot['instructions'],
+            'title': slot['title'], 'instructions': instructions,
             'worktree': str(path), 'strategy': strategy, 'base_commit': base,
             'lease_generation': slot['lease_generation'],
             'isolation_spec': json.loads(slot['isolation_spec']),

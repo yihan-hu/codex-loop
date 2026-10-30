@@ -250,7 +250,7 @@ class AdaptiveCollaborationTest(unittest.TestCase):
                            {'key':'new-ready','pool':'later','title':'review',
                             'instructions':'review as soon as ready',
                             'exclude_workers':['publisher']},
-                           lease_generation=owner['lease_generation'])
+                           lease_generation=owner['lease_generation'],expected_revision=1)
             claimed=future.result(timeout=3)
         self.assertEqual(claimed['task_key'],'new-ready')
         self.assertEqual(claimed['pool'],'later')
@@ -993,7 +993,8 @@ class AdaptiveCollaborationTest(unittest.TestCase):
         review = c.publish_task(run, 'producer', {
             'key': 'check-A', 'pool': 'review', 'title': 'independent check',
             'instructions': 'check producer without self-review', 'review_of': ['A'],
-            'exclude_workers': ['worker3']}, lease_generation=owner['lease_generation'])
+            'exclude_workers': ['worker3']}, lease_generation=owner['lease_generation'],
+            expected_revision=1)
         self.assertEqual(review['graph_revision'], 2)
         changed = c.revise_task(run, 'producer', 'B',
             {'depends_on':['check-A'], 'exclude_workers':['worker1']},
@@ -1027,7 +1028,8 @@ class AdaptiveCollaborationTest(unittest.TestCase):
                 'depends_on':['A']},
                {'key':'Y','pool':'new-pool','title':'Y','instructions':'review X',
                 'review_of':['X']}]
-        result=c.publish_task(run,'publisher',batch,lease_generation=owner['lease_generation'])
+        result=c.publish_task(run,'publisher',batch,lease_generation=owner['lease_generation'],
+                              expected_revision=before)
         self.assertEqual(result['graph_revision'],before+1)
         self.assertEqual(result['published'],['X','Y'])
         self.assertEqual(c.status(run)['pools']['new-pool']['waiting'],2)
@@ -1035,7 +1037,7 @@ class AdaptiveCollaborationTest(unittest.TestCase):
             c.publish_task(run,'publisher',[
                 {'key':'P','title':'P','instructions':'P','depends_on':['Q']},
                 {'key':'Q','title':'Q','instructions':'Q','depends_on':['P']}],
-                lease_generation=owner['lease_generation'])
+                lease_generation=owner['lease_generation'],expected_revision=before+1)
         self.assertEqual(c.status(run)['graph_revision'],before+1)
         self.assertEqual(len(c.status(run)['slots']),3)
 

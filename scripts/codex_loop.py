@@ -1459,6 +1459,7 @@ def _cmd_collab(argv: list[str]) -> int:
     c.add_argument('--goal-key', required=True); c.add_argument('--worktree-parent', required=True)
     c.add_argument('--tasks-file', required=True)
     c.add_argument('--serial-tail-file', help='prewritten consecutive serial stages to auto-assign to the Integrator')
+    c.add_argument('--guidance-file', help='concise Run-wide objective and current user decisions')
     c.add_argument('--strategy', choices=['detached', 'branches'], default='detached')
     c.add_argument('--run-id')
     c = sub.add_parser('discover', help='show compatible open local runs for model review')
@@ -1476,12 +1477,28 @@ def _cmd_collab(argv: list[str]) -> int:
     c = sub.add_parser('heartbeat', help='record current worker tool activity and renew its lease')
     c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
     c.add_argument('--lease-generation', required=True, type=int)
-    c = sub.add_parser('publish', help='publish one new task and optionally a new local task pool')
+    c = sub.add_parser('context', help='read current Run-wide decisions before publishing tasks')
+    c.add_argument('--run-id', required=True)
+    c = sub.add_parser('editor-admit', help='authorize this Chat to edit a Run without claiming a Slot')
     c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
-    c.add_argument('--lease-generation', required=True, type=int); c.add_argument('--task-file', required=True)
+    c.add_argument('--session-id', required=True); c.add_argument('--dispatch-connector', required=True)
+    c.add_argument('--reason', required=True)
+    c.add_argument('--current-user-authorization-observed', action='store_true')
+    c = sub.add_parser('guidance-set', help='replace Run-wide current decisions and notify active Slots')
+    c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
+    c.add_argument('--guidance-file', required=True)
+    c.add_argument('--expected-revision', type=int, required=True)
+    c.add_argument('--lease-generation', type=int)
+    c.add_argument('--editor-session-id'); c.add_argument('--dispatch-connector')
+    c = sub.add_parser('publish', help='publish a new task/pool from a Worker or admitted Run Editor')
+    c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
+    c.add_argument('--lease-generation', type=int); c.add_argument('--task-file', required=True)
+    c.add_argument('--expected-revision', type=int, required=True)
+    c.add_argument('--editor-session-id'); c.add_argument('--dispatch-connector')
     c = sub.add_parser('revise', help='atomically revise an unclaimed task and its dependencies')
     c.add_argument('--run-id', required=True); c.add_argument('--task-id', required=True)
-    c.add_argument('--lease-generation', required=True, type=int)
+    c.add_argument('--lease-generation', type=int)
+    c.add_argument('--editor-session-id'); c.add_argument('--dispatch-connector')
     c.add_argument('--task-key', required=True); c.add_argument('--expected-revision', required=True, type=int)
     c.add_argument('--updates-file', required=True)
     c = sub.add_parser('checkpoint', help='record a verified, reachable intermediate Git commit')
@@ -1580,8 +1597,15 @@ def _cmd_collab(argv: list[str]) -> int:
             if not tail_source.is_file() or tail_source.stat().st_size > 60000:
                 raise ValueError('serial-tail-file must be a bounded UTF-8 text file')
             serial_tail = tail_source.read_text(encoding='utf-8')
+        guidance = None
+        if a.guidance_file:
+            guidance_source = Path(a.guidance_file)
+            if not guidance_source.is_file() or guidance_source.stat().st_size > 16000:
+                raise ValueError('Run guidance file must be bounded UTF-8 text')
+            guidance = guidance_source.read_text(encoding='utf-8')
         result=collab.create_run(a.repo,a.branch,a.worktree_parent,tasks,strategy=a.strategy,
-                                 goal_key=a.goal_key,run_id=a.run_id,serial_tail=serial_tail)
+                                 goal_key=a.goal_key,run_id=a.run_id,serial_tail=serial_tail,
+                                 guidance=guidance)
     elif action == 'discover':
         result=collab.discover(a.repo,a.branch)
     elif action == 'claim':
@@ -1596,17 +1620,34 @@ def _cmd_collab(argv: list[str]) -> int:
         result=collab.activity(a.task_id,interval_seconds=a.interval_seconds)
     elif action == 'heartbeat':
         result=collab.heartbeat(a.run_id,a.task_id,lease_generation=a.lease_generation)
+    elif action == 'context':
+        result=collab.run_context(a.run_id)
+    elif action == 'editor-admit':
+        result=collab.admit_run_editor(a.run_id,a.task_id,session_id=a.session_id,
+            connector=a.dispatch_connector,reason=a.reason,
+            current_user_authorization_observed=a.current_user_authorization_observed)
+    elif action == 'guidance-set':
+        source=Path(a.guidance_file)
+        if not source.is_file() or source.stat().st_size>16000:
+            raise ValueError('guidance file must be bounded UTF-8 text')
+        result=collab.set_run_guidance(a.run_id,a.task_id,source.read_text(encoding='utf-8'),
+            expected_revision=a.expected_revision,lease_generation=a.lease_generation,
+            editor_session_id=a.editor_session_id,connector=a.dispatch_connector)
     elif action in ('publish','revise'):
         source=Path(a.task_file if action=='publish' else a.updates_file)
         if not source.is_file() or source.stat().st_size>1024*128:
             raise ValueError('task/updates file must be bounded JSON')
         payload=json.loads(source.read_text(encoding='utf-8'))
         if action=='publish':
-            result=collab.publish_task(a.run_id,a.task_id,payload,lease_generation=a.lease_generation)
+            result=collab.publish_task(a.run_id,a.task_id,payload,
+                lease_generation=a.lease_generation,expected_revision=a.expected_revision,
+                editor_session_id=a.editor_session_id,connector=a.dispatch_connector)
         else:
             result=collab.revise_task(a.run_id,a.task_id,a.task_key,payload,
                                      lease_generation=a.lease_generation,
-                                     expected_revision=a.expected_revision)
+                                     expected_revision=a.expected_revision,
+                                     editor_session_id=a.editor_session_id,
+                                     connector=a.dispatch_connector)
     elif action == 'checkpoint':
         result=collab.checkpoint(a.run_id,a.task_id,lease_generation=a.lease_generation,
                                  commit_sha=a.commit_sha,note=a.note)
