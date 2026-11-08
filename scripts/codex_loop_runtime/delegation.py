@@ -295,6 +295,7 @@ def create_semantic_isolation(
     stage: str,
     input_sha256: str,
     instruction_sha256: str,
+    work_id: str | None = None,
     project_files: list[str] | None = None,
     facts: list[str] | None = None,
     criteria_refs: list[str] | None = None,
@@ -307,6 +308,8 @@ def create_semantic_isolation(
         "input_sha256": _clean_sha256(input_sha256, name="input_sha256"),
         "instruction_sha256": _clean_sha256(instruction_sha256, name="instruction_sha256"),
     }
+    if work_id is not None:
+        binding["work_id"] = _clean_text(work_id, limit=256, required=True)
     return create_isolation(
         root,
         cwd,
@@ -493,6 +496,7 @@ def finish_semantic_isolation(
             "isolation_id": str(isolation_id),
             "consumer": stored["consumer"],
             "stage": stored["stage"],
+            "work_id": stored["work_id"],
             "input_sha256": stored["input_sha256"],
             "instruction_sha256": stored["instruction_sha256"],
             "request_sha256": stored["request_sha256"],
@@ -514,6 +518,7 @@ def resolve_semantic_result(
     stage: str,
     input_sha256: str,
     instruction_sha256: str,
+    work_id: str | None = None,
 ) -> dict[str, Any]:
     store.ensure_active()
     sync_generation(root, store)
@@ -526,9 +531,26 @@ def resolve_semantic_result(
         "input_sha256": _clean_sha256(input_sha256, name="input_sha256"),
         "instruction_sha256": _clean_sha256(instruction_sha256, name="instruction_sha256"),
     }
-    for key, value in expected.items():
-        if str(item.get(key)) != value:
-            raise RuntimeError(f"semantic result {key} does not match the requested binding")
+    minted_work_id = item.get("work_id")
+    if minted_work_id is not None:
+        for key in ("consumer", "stage"):
+            if str(item.get(key)) != expected[key]:
+                raise RuntimeError(f"semantic result {key} does not match the requested binding")
+        if minted_work_id != work_id:
+            raise RuntimeError(
+                f"semantic result {semantic_result_id} was minted for work {minted_work_id}, "
+                f"requested for work {work_id or '<missing>'}"
+            )
+        binding_differences = [
+            {"field": key, "stored_value": str(item[key]), "requested_value": expected[key]}
+            for key in ("input_sha256", "instruction_sha256")
+            if str(item.get(key)) != expected[key]
+        ]
+    else:
+        for key, value in expected.items():
+            if str(item.get(key)) != value:
+                raise RuntimeError(f"semantic result {key} does not match the requested binding")
+        binding_differences = []
     if str(item.get("status")) != "finished" or not item.get("semantic_result_id"):
         raise RuntimeError("semantic result is not finished")
     if str(item.get("actual_executor")) != "logical_isolation":
@@ -553,6 +575,8 @@ def resolve_semantic_result(
         "isolation_id": str(item["isolation_id"]),
         "consumer": str(item["consumer"]),
         "stage": str(item["stage"]),
+        "work_id": minted_work_id,
+        "binding_differences": binding_differences,
         "input_sha256": str(item["input_sha256"]),
         "instruction_sha256": str(item["instruction_sha256"]),
         "request_sha256": str(item["request_sha256"]),

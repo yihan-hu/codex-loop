@@ -643,6 +643,7 @@ def cmd_semantic_work_enter(args: argparse.Namespace) -> None:
         stage=args.stage,
         input_sha256=args.input_sha256,
         instruction_sha256=args.instruction_sha256,
+        work_id=args.work_id,
         project_files=args.project_file or [],
         facts=args.fact or [],
         criteria_refs=args.criterion_ref or [],
@@ -671,6 +672,7 @@ def cmd_semantic_result(args: argparse.Namespace) -> None:
         stage=args.stage,
         input_sha256=args.input_sha256,
         instruction_sha256=args.instruction_sha256,
+        work_id=args.work_id,
     ))
 
 
@@ -739,9 +741,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("isolate-status"); _add_scope(p); p.set_defaults(func=cmd_isolate_status)
     p = sub.add_parser("isolate-finish"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.set_defaults(func=cmd_isolate_finish)
     p = sub.add_parser("isolate-abort"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_isolate_abort)
-    p = sub.add_parser("semantic-work-enter"); _add_scope(p); p.add_argument("--objective", required=True); p.add_argument("--consumer", required=True); p.add_argument("--stage", required=True); p.add_argument("--input-sha256", required=True); p.add_argument("--instruction-sha256", required=True); p.add_argument("--project-file", action="append"); p.add_argument("--fact", action="append"); p.add_argument("--criterion-ref", action="append"); p.set_defaults(func=cmd_semantic_work_enter)
+    p = sub.add_parser("semantic-work-enter"); _add_scope(p); p.add_argument("--objective", required=True); p.add_argument("--consumer", required=True); p.add_argument("--stage", required=True); p.add_argument("--input-sha256", required=True); p.add_argument("--instruction-sha256", required=True); p.add_argument("--work-id"); p.add_argument("--project-file", action="append"); p.add_argument("--fact", action="append"); p.add_argument("--criterion-ref", action="append"); p.set_defaults(func=cmd_semantic_work_enter)
     p = sub.add_parser("semantic-work-finish"); _add_scope(p); p.add_argument("--isolation-id", required=True); p.set_defaults(func=cmd_semantic_work_finish)
-    p = sub.add_parser("semantic-result"); _add_scope(p); p.add_argument("--semantic-result-id", required=True); p.add_argument("--consumer", required=True); p.add_argument("--stage", required=True); p.add_argument("--input-sha256", required=True); p.add_argument("--instruction-sha256", required=True); p.set_defaults(func=cmd_semantic_result)
+    p = sub.add_parser("semantic-result"); _add_scope(p); p.add_argument("--semantic-result-id", required=True); p.add_argument("--consumer", required=True); p.add_argument("--stage", required=True); p.add_argument("--input-sha256", required=True); p.add_argument("--instruction-sha256", required=True); p.add_argument("--work-id"); p.set_defaults(func=cmd_semantic_result)
     p = sub.add_parser("source-verify"); p.set_defaults(func=cmd_source_verify)
     p = sub.add_parser("_serve"); p.add_argument("--cwd", required=True); p.add_argument("--task-id", required=True); p.set_defaults(func=cmd_serve)
     return parser

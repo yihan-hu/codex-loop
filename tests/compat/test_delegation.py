@@ -98,6 +98,79 @@ class DelegationTests(unittest.TestCase):
             self.assertEqual(resolved['executor'], 'logical_isolation')
             self.assertEqual(resolved['result'], domain_result)
 
+    def test_semantic_result_work_id_preserves_identity_without_hash_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make(root)
+            p = create_semantic_isolation(
+                root, root, store, objective='evaluate evidence',
+                consumer='epi-prose', stage='evidence_check',
+                input_sha256='a' * 64, instruction_sha256='b' * 64,
+                work_id='attempt-20261108',
+            )
+            self.assertEqual(p['semantic_work']['work_id'], 'attempt-20261108')
+            finished = finish_semantic_isolation(root, root, store, p['isolation_id'], {'checks': []})
+            sid = finished['semantic_result']['semantic_result_id']
+            self.assertEqual(finished['semantic_result']['work_id'], 'attempt-20261108')
+            result = resolve_semantic_result(
+                root, store, sid, consumer='epi-prose', stage='evidence_check',
+                input_sha256='c' * 64, instruction_sha256='d' * 64,
+                work_id='attempt-20261108',
+            )
+            self.assertEqual(result['result'], {'checks': []})
+            self.assertEqual(
+                [(d['field'], d['stored_value'], d['requested_value']) for d in result['binding_differences']],
+                [('input_sha256', 'a' * 64, 'c' * 64),
+                 ('instruction_sha256', 'b' * 64, 'd' * 64)]
+            )
+            with self.assertRaisesRegex(RuntimeError, 'minted for work attempt-20261108, requested for work attempt-other'):
+                resolve_semantic_result(
+                    root, store, sid, consumer='epi-prose', stage='evidence_check',
+                    input_sha256='a' * 64, instruction_sha256='b' * 64, work_id='attempt-other'
+                )
+            with self.assertRaisesRegex(RuntimeError, 'semantic result stage'):
+                resolve_semantic_result(
+                    root, store, sid, consumer='epi-prose', stage='another-stage',
+                    input_sha256='a' * 64, instruction_sha256='b' * 64, work_id='attempt-20261108'
+                )
+
+    def test_old_semantic_result_without_work_id_keeps_legacy_binding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make(root)
+            p = create_semantic_isolation(
+                root, root, store, objective='legacy evidence',
+                consumer='epi-prose', stage='evidence_check',
+                input_sha256='a' * 64, instruction_sha256='b' * 64,
+            )
+            finished = finish_semantic_isolation(root, root, store, p['isolation_id'], {'checks': []})
+            sid = finished['semantic_result']['semantic_result_id']
+            self.assertIsNone(finished['semantic_result']['work_id'])
+            resolved = resolve_semantic_result(
+                root, store, sid, consumer='epi-prose', stage='evidence_check',
+                input_sha256='a' * 64, instruction_sha256='b' * 64,
+                work_id='new-consumer-work-id',
+            )
+            self.assertEqual(resolved['binding_differences'], [])
+            with self.assertRaisesRegex(RuntimeError, 'input_sha256 does not match'):
+                resolve_semantic_result(
+                    root, store, sid, consumer='epi-prose', stage='evidence_check',
+                    input_sha256='c' * 64, instruction_sha256='b' * 64,
+                )
+
+    def test_existing_semantic_work_database_migrates_work_id_without_losing_results(self):
+        import sqlite3
+        from codex_loop_runtime.state import SCHEMA, StateStore
+        with tempfile.TemporaryDirectory() as tmp:
+            dbpath = Path(tmp) / 'state.sqlite3'
+            original_schema = SCHEMA.replace('    work_id TEXT,\n', '')
+            with sqlite3.connect(dbpath) as db:
+                db.executescript(original_schema)
+            store = StateStore(dbpath)
+            with store.connect() as db:
+                columns = {row['name'] for row in db.execute('PRAGMA table_info(semantic_work)')}
+                self.assertIn('work_id', columns)
+
     def test_semantic_result_is_generation_bound_and_cannot_be_reused_after_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

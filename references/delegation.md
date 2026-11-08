@@ -46,9 +46,9 @@ semantic-work-enter
   -> semantic-result exact-binding check
 ```
 
-This is a specialization of the existing logical-isolation lifecycle, not a renamed executor or a second isolation system. `semantic-work-enter` fixes `role=semantic-worker`, `requested_executor=actual_executor=logical_isolation`, and binds the owning consumer, stage, exact semantic input SHA-256, governing instruction SHA-256, current effective user-request hash, and current generation. Generic `isolate-finish` is forbidden for these isolations. Only `semantic-work-finish` can mint the opaque `semantic_result_id`.
+This is a specialization of the existing logical-isolation lifecycle, not a renamed executor or a second isolation system. `semantic-work-enter` fixes `role=semantic-worker`, `requested_executor=actual_executor=logical_isolation`, and binds the owning consumer, stage, optional runtime-issued `--work-id`, current effective user-request hash and generation. Input and governing-instruction SHA-256 remain provenance. Generic `isolate-finish` is forbidden. Only `semantic-work-finish` mints `semantic_result_id`.
 
-`semantic-result` is the consumption boundary. The consumer must present the same consumer/stage/input/instruction identity. The runtime rejects a mismatched binding, a workspace change during isolation, or a result from an older generation or superseded user request. A domain runtime therefore cannot complete an authoritative semantic stage by writing a PASS JSON and submitting it through an ordinary artifact path; it must consume a current Codex Loop semantic result.
+`semantic-result` is the consumption boundary. When the result was minted with `work_id`, consumer/stage/work_id must match and any hash differences are returned as `binding_differences` (field, stored value, requested value), not used to reject the result. Results minted without work_id retain the exact consumer/stage/input/instruction comparison. Workspace changes, older generation and superseded user requests remain rejection conditions. A domain runtime therefore cannot complete an authoritative semantic stage by writing a PASS JSON and submitting it through an ordinary artifact path; it must consume a current Codex Loop semantic result.
 
 The `semantic-worker` logical-isolation worker itself must perform the semantic judgment. Scripts, deterministic loops, templates, copied verdicts, and prefilled PASS payloads may not manufacture the value passed to `semantic-work-finish`. Deterministic helpers may prepare source material or persist the already-produced result. As with all logical isolation, this is behavioral isolation rather than physical model-context proof; the authority guarantee is that the domain workflow has no parallel completion path outside the isolation.
 
@@ -81,14 +81,16 @@ python scripts/codex_loop.py isolate-abort --cwd REPO --task-id TASK \
 python scripts/codex_loop.py semantic-work-enter --cwd REPO --task-id TASK \
   --objective "perform B2 language review" \
   --consumer epi-prose --stage language-review-b2 \
-  --input-sha256 INPUT_SHA256 --instruction-sha256 INSTRUCTION_SHA256
+  --input-sha256 INPUT_SHA256 --instruction-sha256 INSTRUCTION_SHA256 \
+  --work-id RUNTIME_ATTEMPT_ID
 
 python scripts/codex_loop.py semantic-work-finish --cwd REPO --task-id TASK \
   --isolation-id ISO_ID < domain-result.json
 
 python scripts/codex_loop.py semantic-result --cwd REPO --task-id TASK \
   --semantic-result-id SEM_ID --consumer epi-prose --stage language-review-b2 \
-  --input-sha256 INPUT_SHA256 --instruction-sha256 INSTRUCTION_SHA256
+  --input-sha256 INPUT_SHA256 --instruction-sha256 INSTRUCTION_SHA256 \
+  --work-id RUNTIME_ATTEMPT_ID
 ```
 
 Use `--request-capability parallel_execution` or `background_execution` when a workflow explicitly prefers those capabilities. A native actual executor must receive explicit host-reported `--actual-capability` values; logical execution uses the fixed truthful capability set.

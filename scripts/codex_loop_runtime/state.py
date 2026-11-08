@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS semantic_work (
     isolation_id TEXT PRIMARY KEY,
     consumer TEXT NOT NULL,
     stage TEXT NOT NULL,
+    work_id TEXT,
     input_sha256 TEXT NOT NULL,
     instruction_sha256 TEXT NOT NULL,
     request_sha256 TEXT NOT NULL,
@@ -433,6 +434,8 @@ class StateStore:
         _ensure_private_dir(self.path.parent)
         with self.connect() as db:
             db.executescript(SCHEMA)
+            if "work_id" not in {row["name"] for row in db.execute("PRAGMA table_info(semantic_work)")}:
+                db.execute("ALTER TABLE semantic_work ADD COLUMN work_id TEXT")
             db.execute("DROP INDEX IF EXISTS external_non_idempotent_identity")
         _chmod(self.path, 0o600)
 
@@ -1165,11 +1168,15 @@ self, generation: int) -> dict[str, Any]:
             semantic_fields = {
                 "consumer": (scrub_persisted_text(semantic_work.get("consumer"), limit=256) or "").strip(),
                 "stage": (scrub_persisted_text(semantic_work.get("stage"), limit=512) or "").strip(),
+                "work_id": (scrub_persisted_text(semantic_work.get("work_id"), limit=256) or "").strip()
+                if semantic_work.get("work_id") is not None else None,
                 "input_sha256": (scrub_persisted_text(semantic_work.get("input_sha256"), limit=64) or "").strip(),
                 "instruction_sha256": (scrub_persisted_text(semantic_work.get("instruction_sha256"), limit=64) or "").strip(),
             }
-            if not all(semantic_fields.values()):
+            if not all(semantic_fields[key] for key in ("consumer", "stage", "input_sha256", "instruction_sha256")):
                 raise ValueError("semantic work consumer/stage/input/instruction identity must not be empty")
+            if semantic_work.get("work_id") is not None and not semantic_fields["work_id"]:
+                raise ValueError("semantic work work_id must not be empty when provided")
         request_sha256 = self.effective_request_sha256()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -1194,10 +1201,10 @@ self, generation: int) -> dict[str, Any]:
             )
             if semantic_fields is not None:
                 db.execute(
-                    "INSERT INTO semantic_work(isolation_id,consumer,stage,input_sha256,instruction_sha256,request_sha256,parent_generation,status) "
-                    "VALUES(?,?,?,?,?,?,?,'active')",
+                    "INSERT INTO semantic_work(isolation_id,consumer,stage,work_id,input_sha256,instruction_sha256,request_sha256,parent_generation,status) "
+                    "VALUES(?,?,?,?,?,?,?,?,'active')",
                     (
-                        str(isolation_id), semantic_fields["consumer"], semantic_fields["stage"],
+                        str(isolation_id), semantic_fields["consumer"], semantic_fields["stage"], semantic_fields["work_id"],
                         semantic_fields["input_sha256"], semantic_fields["instruction_sha256"],
                         request_sha256, int(parent_generation),
                     ),

@@ -347,6 +347,7 @@ def isolation_projection(facts: dict[str, Any], isolation: dict[str, Any]) -> di
         result["semantic_work"] = {
             "consumer": semantic.get("consumer"),
             "stage": semantic.get("stage"),
+            "work_id": semantic.get("work_id"),
             "input_sha256": semantic.get("input_sha256"),
             "instruction_sha256": semantic.get("instruction_sha256"),
             "request_sha256": semantic.get("request_sha256"),
