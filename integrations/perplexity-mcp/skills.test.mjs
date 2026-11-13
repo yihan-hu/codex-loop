@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,symlinkSync,rmSync,realpathSync} from 'node:fs';
+import {execSync,execFileSync} from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import {resource,invocation} from './skills.mjs';
+const temporary=realpathSync(mkdtempSync(path.join(os.tmpdir(),'perplexity-skills-')));
+try {
+ const root=path.join(temporary,'project'),skill=path.join(temporary,'skill');mkdirSync(root);mkdirSync(path.join(skill,'scripts'),{recursive:true});
+ writeFileSync(path.join(skill,'SKILL.md'),'甲😀乙\nComplete input.');
+ writeFileSync(path.join(skill,'scripts','probe.py'),'import sys,json\nprint(json.dumps(sys.argv[1:]))\n');
+ const config={localSkills:{test:{root:skill,python:execFileSync('which',['python3'],{encoding:'utf8'}).trim(),scripts:['probe.py']}}};
+ const task={root,conversation_scope:{allowed_files:['**'],allowed_skills:['test']}};
+ const first=resource(config,task,{location:'skill',skill:'test',path:'SKILL.md',limit:2});
+ const second=resource(config,task,{location:'skill',skill:'test',path:'SKILL.md',offset:first.next_offset,limit:100});
+ assert.equal(first.text+second.text,readFileSync(path.join(skill,'SKILL.md'),'utf8'));assert.equal(second.next_offset,null);
+ assert.throws(()=>resource(config,{...task,conversation_scope:{...task.conversation_scope,allowed_skills:[]}},{location:'skill',skill:'test',path:'SKILL.md'}));
+ symlinkSync(path.join(root,'outside'),path.join(skill,'escape'));
+ writeFileSync(path.join(root,'outside'),'must not be read through a Skill symlink');
+ assert.throws(()=>resource(config,task,{location:'skill',skill:'test',path:'escape'}));
+ config.localSkills.test.resource_links={escape:path.join(root,'outside')};
+ assert.equal(resource(config,task,{location:'skill',skill:'test',path:'escape'}).text,'must not be read through a Skill symlink');
+ const args=["x'; touch INJECTION #",'$(touch INJECTION)', '`touch INJECTION`','a\nb','😀'];
+ const request={skill:'test',script:'probe.py',arguments:args,request_id:'a'.repeat(160)};
+ const run=invocation(config,task,request);run.prepare();execSync(run.command,{cwd:root,shell:'/bin/zsh'});
+ assert.deepEqual(JSON.parse(readFileSync(path.join(root,run.output_path),'utf8')),args);assert(!existsSync(path.join(root,'INJECTION')));
+ assert.throws(()=>invocation(config,task,{...request,script:'../probe.py'}));
+ assert.throws(()=>invocation(config,task,{...request,script:'unregistered.py'}));
+ assert.throws(()=>invocation(config,{...task,conversation_scope:{...task.conversation_scope,allowed_files:['file.md']}},request));
+ const identity={...request,arguments:['--native-subagent-id','perplexity:actual','--state=state.json']};
+ assert.throws(()=>invocation(config,task,identity),/not issued/);
+ const bound={...task,native_actor_results:{'perplexity:actual':{state_path:path.join(root,'state.json')}}};
+ assert(invocation(config,bound,identity).command);
+ assert.throws(()=>invocation(config,bound,{...identity,arguments:['--native-subagent-id=perplexity:actual','--state=other.json']}),/another Skill state/);
+ console.log('PASS: explicit Skill grant, lossless Unicode pagination, symlink confinement, pinned entrypoint, literal argv (no shell interpolation), bounded output filename, whole-project scope required');
+} finally {rmSync(temporary,{recursive:true,force:true});}

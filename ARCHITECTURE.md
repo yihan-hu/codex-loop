@@ -272,4 +272,24 @@ Environment identifiers represent distinct filesystems. Native runtimes do not i
 
 ## Optional Perplexity Mac adapter
 
-`integrations/perplexity-mcp/` is a source-installed Mac adapter, not a ChatGPT runtime component. Its explicit local configuration selects the existing My Mac HTTP backend and Loop runtime; it neither restores nor edits the ChatGPT Drive Host Profile. `configure.py` creates private machine configuration and compiles the native Accessibility helper. `shortcut.py` stores explicit per-project scope and passes each short task to `conversation.py`; file and exact-command grants and configured bounds remain unchanged. The driver sends subsequent model tasks to the same Perplexity Q&A conversation and approves only current-task/current-round scoped requests. `server.mjs` enforces the conversation file/command grants even for read tools. `manage.py` owns only this adapter's authenticated loopback service and HTTPS tunnel. Actual model judgment stays in Perplexity; artifact existence/size/hash checks and canonical lifecycle closure stay local. This does not provide full Epi Prose role isolation or native Search Skill loading. The tutorial is packaged as a reference; optional Mac adapter source, machine config, credentials and state are not part of the consumer runtime ZIP.
+```mermaid
+flowchart LR
+  SHORT[Short task + saved project scope] --> DRIVER[Local native UI driver]
+  DRIVER --> PARENT[Perplexity Q&A parent]
+  DRIVER --> ACTOR[Independent Incognito role conversations]
+  PARENT --> MCP[Authenticated HTTPS MCP]
+  ACTOR --> MCP
+  MCP --> MAC[Existing My Mac backend]
+  MCP --> SKILL[Registered original Skill scripts + pinned Python]
+  MCP --> LOOP[One outer Codex Loop lifecycle]
+  MAC --> FILES[Authorized project files / operations]
+  SKILL --> FILES
+  DRIVER -->|Real identities and metadata only| PARENT
+  DRIVER -->|Actual artifacts and completion| LOOP
+```
+
+`integrations/perplexity-mcp/` is a source-installed Mac adapter, separate from the ChatGPT runtime and Drive Host Profile. `configure.py` creates private machine configuration and compiles the Accessibility helper. `shortcut.py` saves explicit project scopes and registers existing local Skill roots, original Python entrypoints and fixed source-fetch/extraction helpers. Existing external resource symlinks are pinned read-only at registration; arbitrary or retargeted links remain outside the grant. Explicit `@epi prose` activation loads the original installed instructions and needed resources through lossless paginated `skill_read`; `skill_run` pins the registered interpreter and literal argv. Trusted Skill code retains local-user privileges; this is not an OS sandbox.
+
+`conversation.py` owns one outer Loop task and advances actual Perplexity responses. It approves only current-task/current-round granted actions. `actors.py` creates independent Incognito conversations, passes full runtime packets/manifest references, preserves role-specific reuse and actual identities, and returns only paths/read receipts to the parent. B/T contexts remain distinct. Epi Prose's existing native backend accepts these actual host actors (historical flag `--codex-native`); no Codex model is invoked and no substitute scientific workflow is introduced. Original runtime finalizers own Current production. The bridge rejects native identities not issued by completed actors in this lifecycle.
+
+`server.mjs` enforces project grants including reads; `source_io.py` preserves public source bytes/provenance and extracts actual text. `manage.py` owns only this adapter's HTTP service and HTTPS tunnel. The client must remain available, and Incognito contexts may expire; missing contexts require truthful new identities. Actual tests cover local Skill loading/help, independent native context transport, and public-source extraction, not full manuscript production quality. Optional adapter source, machine config, credentials and state are excluded from the consumer runtime ZIP; the tutorial is packaged as a reference.

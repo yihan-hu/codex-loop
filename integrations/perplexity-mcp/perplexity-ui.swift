@@ -8,9 +8,13 @@ struct UIError: Error { let message:String }
 func attr(_ e:AXUIElement,_ key:String)->CFTypeRef? { var value:CFTypeRef?;return AXUIElementCopyAttributeValue(e,key as CFString,&value) == .success ? value:nil }
 func string(_ value:CFTypeRef?)->String {if let v=value as? NSAttributedString{return v.string};return value as? String ?? ""}
 func label(_ e:AXUIElement)->String {for key in ["AXDescription","AXAttributedDescription","AXTitle","AXValue","AXAttributedValue"] {let s=string(attr(e,key));if !s.isEmpty{return s}};return ""}
+func isConversationTab(_ e:AXUIElement)->Bool {
+ var names:CFArray?;AXUIElementCopyActionNames(e,&names)
+ return (names as? [String] ?? []).contains{$0.contains("关闭标签页") || $0.lowercased().contains("close tab")}
+}
 func descendants(_ root:AXUIElement)->[AXUIElement] {
- var result:[AXUIElement]=[],seen=Set<CFHashCode>()
- func walk(_ e:AXUIElement,_ depth:Int) {if depth>35 || result.count>=4000 || !seen.insert(CFHash(e)).inserted{return};result.append(e);for c in attr(e,"AXChildren") as? [AXUIElement] ?? [] {walk(c,depth+1)}}
+ var result:[AXUIElement]=[],seen:[CFHashCode:[AXUIElement]]=[:]
+ func walk(_ e:AXUIElement,_ depth:Int) {let hash=CFHash(e);if depth>35 || result.count>=4000 || (seen[hash] ?? []).contains(where:{CFEqual($0,e)}){return};seen[hash,default:[]].append(e);result.append(e);for c in attr(e,"AXChildren") as? [AXUIElement] ?? [] {walk(c,depth+1)}}
  walk(root,0);return result
 }
 func window()throws->AXUIElement {
@@ -66,11 +70,58 @@ func send(_ request:[String:Any])throws->[String:Any] {
  guard AXUIElementPerformAction(button,kAXPressAction as CFString) == .success else {throw UIError(message:"Native Send action was not confirmed; inspect the existing composer before retrying")}
  return ["sent":true]
 }
+func cleanSource(_ request:[String:Any])throws {
+ let state=try snapshot()
+ guard let marker=request["from_marker"] as? String,marker.hasPrefix("[PCL:"),bound(state,marker,false),!(state["busy"] as? Bool ?? true),(state["input"] as? String ?? "").isEmpty else {throw UIError(message:"Conversation switch refused: source is not the owned idle chat, or contains a user draft")}
+}
+func selectChat(_ request:[String:Any])throws->[String:Any] {
+ try cleanSource(request)
+ guard let marker=request["session_marker"] as? String,marker.hasPrefix("[PCL:") else {throw UIError(message:"Missing target actor marker")}
+ let all=descendants(try window())
+ guard let button=all.first(where:{string(attr($0,"AXRole"))=="AXButton" && isConversationTab($0) && label($0).hasPrefix(marker)}) else {throw UIError(message:"Owned actor tab is no longer available")}
+ guard AXUIElementPerformAction(button,kAXPressAction as CFString) == .success else {throw UIError(message:"Cannot select the owned actor tab")}
+ for _ in 0..<30 {Thread.sleep(forTimeInterval:0.1);let state=try snapshot();if bound(state,marker,false){return state}}
+ throw UIError(message:"Actor tab selection was not observed")
+}
+func newChat(_ request:[String:Any])throws->[String:Any] {
+ try cleanSource(request)
+ guard NSWorkspace.shared.runningApplications.contains(where:{$0.bundleIdentifier=="ai.perplexity.macv3"}),let connector=request["connector"] as? String else {throw UIError(message:"Missing Perplexity or connector")}
+ // This main-window action creates a new tab and preserves the parent tab.
+ // File > New conversation is a different action that opens a detached window.
+ guard let newTab=descendants(try window()).first(where:{string(attr($0,"AXRole"))=="AXButton" && !isConversationTab($0) && ["新建会话","New thread","New Thread"].contains(label($0))}) else {throw UIError(message:"The main-window New conversation button is unavailable")}
+ guard AXUIElementPerformAction(newTab,kAXPressAction as CFString) == .success else {throw UIError(message:"Cannot create the new actor tab")}
+ var empty=false
+ for _ in 0..<40 {Thread.sleep(forTimeInterval:0.1);let state=try snapshot();if (state["text"] as? String ?? "").isEmpty && (state["selected"] as? [String] ?? []).contains(where:{["新建会话","New thread","New Thread"].contains($0)}){empty=true;break}}
+ guard empty else {throw UIError(message:"A fresh empty Perplexity tab was not observed")}
+ var incognitoVerified=false
+ if request["incognito"] as? Bool == true {
+  // Separate account memory/search history as well as the visible thread context.
+  for _ in 0..<2 {
+   guard let toggle=descendants(try window()).first(where:{string(attr($0,"AXRole"))=="AXButton" && label($0)=="incognito-button"}) else {throw UIError(message:"The fresh actor's Incognito control is unavailable")}
+   guard AXUIElementPerformAction(toggle,kAXPressAction as CFString) == .success else {throw UIError(message:"Cannot activate an Incognito actor")}
+   for _ in 0..<12 {Thread.sleep(forTimeInterval:0.1);if descendants(try window()).contains(where:{label($0).contains("你已进入无痕模式") || label($0).contains("You're in Incognito")}){incognitoVerified=true;break}}
+   if incognitoVerified {break}
+  }
+  guard incognitoVerified else {throw UIError(message:"Incognito activation was not observed; no actor prompt was sent")}
+ }
+ let all=descendants(try window())
+ guard let more=all.first(where:{string(attr($0,"AXRole"))=="AXButton" && label($0)=="更多选项"}) else {throw UIError(message:"New-chat connector selector is unavailable")}
+ guard AXUIElementPerformAction(more,kAXPressAction as CFString) == .success else {throw UIError(message:"Cannot open the connector selector")}
+ for _ in 0..<30 {
+  Thread.sleep(forTimeInterval:0.1)
+  if let choice=descendants(try window()).first(where:{string(attr($0,"AXRole"))=="AXButton" && !isConversationTab($0) && label($0)==connector}) {
+   guard AXUIElementPerformAction(choice,kAXPressAction as CFString) == .success else {throw UIError(message:"Cannot select the registered connector")}
+   for _ in 0..<20 {Thread.sleep(forTimeInterval:0.1);var state=try snapshot();if (state["connectors"] as? [String] ?? []).contains(connector){state["incognito_verified"]=incognitoVerified;return state}}
+   break
+  }
+ }
+ throw UIError(message:"The intended connector was not observed in the new actor chat")
+}
 do {
  let mode=CommandLine.arguments.dropFirst().first ?? "snapshot"
  let result:[String:Any]
  if mode=="snapshot" {result=try snapshot()}
- else if mode=="send" {guard let input=try JSONSerialization.jsonObject(with:FileHandle.standardInput.readDataToEndOfFile()) as? [String:Any] else {throw UIError(message:"Expected a JSON request on stdin")};result=try send(input)}
- else {throw UIError(message:"Use snapshot or send")}
+ else if ["send","new","select"].contains(mode) {guard let input=try JSONSerialization.jsonObject(with:FileHandle.standardInput.readDataToEndOfFile()) as? [String:Any] else {throw UIError(message:"Expected a JSON request on stdin")};result=try mode=="send" ? send(input):mode=="new" ? newChat(input):selectChat(input)}
+ else {throw UIError(message:"Use snapshot, send, new or select")}
  print(String(data:try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]),encoding:.utf8)!)
 }catch {let message=(error as? UIError)?.message ?? error.localizedDescription;print(String(data:try! JSONSerialization.data(withJSONObject:["error":message]),encoding:.utf8)!);exit(1)}

@@ -26,10 +26,18 @@ with tempfile.TemporaryDirectory() as temporary:
     packet={'decision':'CONTINUE','summary':'A concrete model review found an issue','next_prompt':'Revise the actual artifact using that finding'}
     wrapped='PCL_RESULT_'+state['nonce']+'\n'+json.dumps(packet)+'\nPCL_END_'+state['nonce']
     assert driver.result_packet(wrapped,state['nonce'])==packet
+    prompt='[PCL_TURN:'+state['nonce']+']\n'+wrapped
+    pending={'messages':[prompt,'Still working'],'text':prompt+'\nStill working'}
+    assert driver.result_packet(driver.answer_text(pending,state['nonce']),state['nonce']) is None
+    completed={'messages':[prompt,'Actual assistant result:',wrapped],'text':prompt+'\n'+wrapped}
+    assert driver.result_packet(driver.answer_text(completed,state['nonce']),state['nonce'])==packet
     assert driver.result_packet(wrapped.replace('"','“'),state['nonce'])==packet
     assert driver.result_packet(wrapped,'c'*32) is None
     assert driver.result_packet('The file says DONE, but no current-round result exists',state['nonce']) is None
     assert driver.validate_artifacts(config)[0]['bytes']==8
+    try:driver.validate_artifacts(dict(config,required_files=[]),['missing.md'])
+    except ValueError:pass
+    else:raise AssertionError('Declared but nonexistent artifact was accepted')
     import shortcut
     before=json.dumps(config,sort_keys=True)
     short=shortcut.task_config(config,'@my mac /write Explain the difference and save allowed.md')
@@ -40,5 +48,10 @@ with tempfile.TemporaryDirectory() as temporary:
     for request in ['', '@my mac @epi prose /write Discussion']:
         try:shortcut.task_config(config,request)
         except ValueError:pass
-        else:raise AssertionError('Empty or unsupported full-skill invocation was accepted')
-print('PASS: task/round binding, exact command grants, path and symlink scope, no premature finish approval, nonce-specific model result, real artifact checks, saved-project short tasks preserve scope and reject unsupported Epi Prose')
+        else:raise AssertionError('Empty or ungranted Skill invocation was accepted')
+    if 'epi-prose' in driver.BRIDGE.get('localSkills',{}):
+        granted=dict(config,allowed_skills=['epi-prose'])
+        selected=shortcut.task_config(granted,'@my mac@epi prose /write Discussion')
+        assert selected['active_skill']=='epi-prose' and selected['skill_request']=='/write Discussion'
+        assert selected['allowed_files']==config['allowed_files']
+print('PASS: task/round scope, literal command grants, symlink confinement, nonce-specific assistant result, real files, short invocation requires explicit Skill grant')

@@ -6,30 +6,36 @@
 
 一次性保存项目目录和操作范围后：
 
-1. 在 Perplexity 新建空白普通问答，选中 **Codex Loop Mac Batch** 连接器。
+1. 在 Perplexity 新建空白普通问答，选中 **Codex Loop Mac Skills** 连接器。
 2. 双击接入目录的 **Write.command**。
 3. 输入一句任务，例如：
 
 ```text
-/write 写一段面向科研人员的英文说明，保存为 final.md
+@epi prose /help
+@epi prose /prepare
+@epi prose /write Discussion
 ```
 
-程序会把固定执行规则加进会话，并推动需要的后续审查和修订。授权范围内的确认由程序处理，不需要逐步手输 `yes`。目标或文件名变了可以直接写在短任务里；超出已保存文件/命令范围则停住，需由你修改项目配置。也接受 `@my mac /write …` 作为本地启动器的文字别名；**这不是 Perplexity 原生的 @mention**，也不是在普通输入框发送短句就已启动驱动器。
+也接受 `@my mac@epi prose /write Discussion`；`@my mac` 是本地启动器的文字别名。**把短句输入 Write.command，不是在 Perplexity 输入框单独发送它。** 启动器负责加载实际本地技能、建立生命周期并推动后续问答。普通 `/write …` 仍是通用写作；只有显式 `@epi prose` 才加载 Epi Prose。
 
 终端等价调用（在接入目录内）：
 
 ```sh
-python3 shortcut.py run '/write 写一段英文说明，保存为 final.md'
-python3 shortcut.py run --project paper '/revise 按 review.md 修改 final.md'
+python3 shortcut.py run '@epi prose /help'
+python3 shortcut.py run --project paper '@epi prose /write Discussion'
 ```
 
-### 与 `@My Mac @Epi Prose /write` 的区别
+### 本地技能接入的实际范围
 
-在已经安装对应技能的 ChatGPT/Codex 中，可以按那个产品实际提供的技能和连接器入口调用 Epi Prose。Perplexity 官方的 Skills 说明针对 **Computer**；不能因此推断普通问答会自动加载 ChatGPT 的技能，或把输入的 `@Epi Prose` 当作已安装。
+这个适配器读取本机登记的 Epi Prose 原始 `SKILL.md`、架构和按需资源，调用原始 Python 入口。安装中的 58 个顶层脚本均可登记；没有复制或删减技能知识库。Epi Prose 的 Interaction Intent、Composer、准备、生产、引文、审查和最终交付仍由原技能决定。短命令不代替项目材料和作者决定。
 
-**这里交付的是 Perplexity 普通问答的通用多轮文件写作入口，不是完整 Epi Prose 适配器。** 当前不实现其技能资源加载、独立上下文的角色边界和专门运行时生产路线。启动器对 `@Epi Prose` 明确报错，避免用普通写作循环冒充完整技能。短命令不能代替项目材料和科学决策；材料不足时模型应请求补充，不能编造研究事实。
+父会话调度；需要独立角色时，本地程序创建真正独立的 Perplexity 无痕会话。每个 actor 读完整规范 packet、manifest 分块和必读文件，保存真实结果；父会话只收身份、路径和读取记录，再调用原 runtime 的提交命令。B/T 不共用上下文，多视角依次完整执行，不冒称并行。原会话可按角色合同重用，失效则创建并记录新的真实身份。
 
-参考：[Perplexity Search 的 Spaces](https://www.perplexity.ai/en-GB/hub/products/search)、[Computer Skills 官方说明](https://www.perplexity.ai/en-GB/hub/academy/how-to-use-computer-skills)。Space 可保存指令，但不等于本机程序已被启动；本实现不依赖尚未验证的 Search 技能或 Slash 自动分发。
+Epi Prose 内层使用原有 native backend（参数历史名称 `--codex-native`），这里的执行者是 Perplexity 会话，并不启动 Codex 模型。外层始终是同一个 Codex Loop task_id。普通问答不是 Perplexity 原生 Skills 系统；本接入不依赖未验证的 Search Slash 自动分发。
+
+当前已实际验证完整技能入口读取、真实 `/help`、两名独立无痕 actor 的 MCP 读写与返回，以及公开 HTML/PDF 原文存档与本地文本提取。**尚未做真实论文的完整 Epi Prose 生产验收**，不能把连接测试解释为所有写作路线或科学质量已通过。默认演示项目是测试目录；正式论文需另存真实项目范围和材料。
+
+参考：[Perplexity 自定义远程连接器](https://www.perplexity.ai/help-center/en/articles/13915507-adding-custom-remote-connectors)、[无痕会话与记忆](https://www.perplexity.ai/uk/hub/blog/ai-memory)。
 
 ## 1. 理解各部分的职责
 
@@ -42,6 +48,11 @@ flowchart LR
   BRIDGE --> MAC[已有 My Mac HTTP 后端]
   BRIDGE --> LOOP[Mac 上的 Codex Loop runtime]
   MAC --> FILES[授权文件与受管理命令]
+  LOCAL -->|独立无痕会话与完整 packet| ACTOR[Perplexity 角色会话]
+  ACTOR -->|MCP 真实结果文件| FILES
+  ACTOR -->|身份、路径、读取记录| LOCAL
+  BRIDGE --> SKILL[登记的本地 Skill 与固定 Python]
+  SKILL --> FILES
   Q -->|可见阶段结论与下一步| LOCAL
   LOCAL -->|检查实际文件并收尾| LOOP
 ```
@@ -116,57 +127,74 @@ launchd 只管理这个接入的 HTTP 和隧道两个服务，不重启原 My Ma
 
 在客户端的插件/连接器设置中添加自定义远程 MCP（具体菜单名可能随版本变化）：
 
-- 名称：**Codex Loop Mac Batch**。
+- 名称：**Codex Loop Mac Skills**。
 - MCP URL：上一节返回的完整 `https://…/mcp`。
 - 认证：独立 API key/Bearer；若界面提供自定义请求头，使用 `Authorization: Bearer <独立密钥>`。
 - 从本机私有文件安全地复制密钥到该认证框，保存后收起认证设置；不要贴进聊天或截图。
 
-本机密钥位置是 `~/Library/Application Support/PerplexityCodexLoop/state/https-api-key`。连接成功后应发现 12 个工具。普通问答输入框「更多选项 → 连接器」里还需要选中它；只安装而没有选中，并不代表当前会话可调用。
+本机密钥位置是 `~/Library/Application Support/PerplexityCodexLoop/state/https-api-key`。连接成功后应发现 14 个工具，其中包括 `skill_read`、`skill_run`。普通问答输入框「更多选项 → 连接器」里还需要选中它；只安装而没有选中，并不代表当前会话可调用。
 
-若旧连接器缓存了 11 个工具目录，可重新登记这个新名称，避免误以为服务缺少 `loop_submit`。服务升级无需到处创建重复连接器，先核对实际工具目录。
+若旧连接器缓存了 12 个工具目录，可重新登记 **Codex Loop Mac Skills**，避免误以为服务缺少技能工具。服务升级无需到处创建重复连接器，先核对实际工具目录。
 
 参考：[Perplexity 自定义远程连接器](https://www.perplexity.ai/help-center/en/articles/13915507-adding-custom-remote-connectors)。
 
-## 6. 一次性保存项目，后面只写任务
+## 6. 登记本地技能并保存项目
 
-编辑第 3 步生成的 `project-example.json`。例如：
+先登记现有 Skill 的真实安装目录和已经验证可用的 Python。登记不会下载安装另一套 Epi Prose：
+
+```sh
+python3 shortcut.py register-skill epi-prose \
+  '/absolute/path/to/installed/epi-prose' \
+  --python '/absolute/path/to/skill-venv/bin/python'
+```
+
+目录应有 `SKILL.md`、`ARCHITECTURE.md`、`scripts/`。安装中原有的外部资料符号链接会在登记时固定其实际目标，作为只读资源；改向后需重新由本机登记，模型不能自行扩大资源范围。解释器保留虚拟环境路径，不替换成脱离环境的系统 Python。按 Epi Prose 自身说明验证 spaCy、英文模型、pypdf 等所需依赖；缺少依赖应修复原环境，不能拿通用写作绕过。登记后重启本接入的 HTTP 进程使登记生效；已加载且源码路径不变时：
+
+```sh
+launchctl kickstart -k "gui/$(id -u)/local.yihan.perplexity-codex-loop.http"
+```
+
+编辑私有项目 JSON，例如 `paper.json`：
 
 ```json
 {
-  "workspace": "/absolute/path/to/authorized-project",
+  "workspace": "/absolute/path/to/authorized-paper-project",
   "goal": "项目范围模板；每次运行由用户短任务替换目标",
-  "allowed_files": ["Plan.md", "draft.md", "review.md", "final.md"],
-  "required_files": ["final.md"],
+  "connector": "Codex Loop Mac Skills",
+  "allowed_files": ["**"],
   "allowed_commands": [],
-  "max_rounds": 12,
+  "allowed_skills": ["epi-prose"],
+  "required_files": [],
+  "max_rounds": 512,
+  "max_actors": 256,
   "min_rounds": 1,
   "round_timeout_seconds": 900,
-  "max_approvals_per_round": 16
+  "max_approvals_per_round": 32
 }
 ```
 
-`workspace` 必须是已有目录。`allowed_files` 是允许读取和修改的相对文件；`required_files` 是完成前必须实际存在的交付物。把任务用到的输入材料也加入范围。`dir/**` 表示目录内文件，`**` 表示整个项目，按真实授权选择，不默认扩大。显式允许 shell 时，`allowed_commands` 必须列出完整精确字符串；它不是 OS 沙箱，命令仍有当前用户权限。常规写作保持空列表即可。
+完整 Skill 会在项目内创建准备状态、运行目录和产物，因此运行入口要求明确授权整个项目 `allowed_files: ["**"]`。`required_files` 可填本次必须实际存在的交付物相对路径；不确定最终路线时可保持空列表，由原 runtime 负责科学交付，外层仍核对模型声明的产物。
 
-保存为项目 `paper`，并设为默认：
+登记的代码是受信任的本地程序，拥有当前 Mac 用户的进程权限。项目文件范围和固定 argv 是桥接约束，**不是操作系统沙箱**。`allowed_commands: []` 禁止另起任意 shell，但不会把受信任 Skill 代码的内部行为变成文件沙箱。
+
+保存一次，之后只输入短任务：
 
 ```sh
-python3 shortcut.py save paper \
-  "$HOME/Library/Application Support/PerplexityCodexLoop/state/project-example.json" \
-  --default
+python3 shortcut.py save paper '/absolute/path/to/private/paper.json' --default
 python3 shortcut.py list
 ```
 
-保存的是这次你审阅过的本地范围，不是对未来任何 Mac 路径的全局授权。新任务只替换目标，不更改文件或命令白名单。可以保存多个项目，调用时用 `--project NAME`；`Write.command` 使用默认项目并在提问前显示它。
+还可登记别的 Python Skill，并使用 `/skill:名称 用户请求`；这只提供相同的本地资源和入口接入，不能宣称未做宿主适配的 Skill 已验证全部功能。项目配置保存在本机私有 state，不提交 Git。
 
-然后按教程开头的一句话调用。不要把不同项目共用一个过宽的默认目录。项目配置只保存在本机私有状态目录，不提交 Git。
+宿主另有两个固定 I/O 入口：`skill_run(script="@fetch", arguments=[公开URL, 项目原文路径])` 保存真实原文字节和来源记录，支持时提取文本；`@extract` 从项目内现有 PDF/DOCX 提取真实文本。原文下载只放到 `.epi-prose/literature-sources/`、`.epi-prose/plan-literature/`、`plan-literature/` 或 `.perplexity-sources/`。随后用 `skill_read` 完整分页读取文本。付费墙、扫描 PDF 无正文或网络失败必须如实处理，不生成假全文。这些入口不改变 Epi Prose 的来源准入标准。
 
 ## 7. 多轮执行、状态与恢复
 
 启动返回 `run_id`、`task_id`、进程号和状态文件。固定协议由代码直接注入，用户不必每次写它。每轮由 Perplexity 真实完成阶段工作，再返回带随机轮次标记的 `CONTINUE`、`DONE` 或 `NEEDS_USER`；本地程序读取可见回答，发送模型提出的具体下一步。始终使用同一个 Codex Loop task_id。
 
-自动 `yes` 只允许绑定会话、同任务、同轮的授权写入/编辑、精确白名单命令和检查点。新任务、提前收尾、其他文件及新增命令不会被自动批准。即使读操作不弹窗，也受到 MCP 桥接端同一文件范围的约束；符号链接不能绕开授权。一次只允许一个驱动器使用客户端。
+自动 `yes` 只允许绑定会话、同任务、同轮的授权写入/编辑、固定 Skill 入口、精确白名单命令、同任务操作查询和检查点。新任务、提前收尾、其他文件及新增命令不会被自动批准。即使读操作不弹窗，也受到 MCP 桥接端同一文件范围的约束；符号链接不能绕开授权。一次只允许一个驱动器使用客户端。
 
-运行期间保持原会话选中，输入框不要放自己的草稿。切换会话、模型超时、超出轮数/批准次数、出现陌生确认或用户决策时会停在 `needs_attention`，不会伪报完成。
+运行期间让程序拥有 Perplexity 当前窗口；它会在父会话与自己的角色标签间切换，输入框不要放自己的草稿。切换会话、模型超时、超出轮数/批准次数、出现陌生确认或用户决策时会停在 `needs_attention`，不会伪报完成。
 
 在接入目录执行（替换 RUN_ID）：
 
@@ -174,13 +202,16 @@ python3 shortcut.py list
 python3 conversation.py status RUN_ID
 python3 conversation.py pause RUN_ID
 python3 conversation.py resume RUN_ID
+python3 conversation.py resume RUN_ID --instruction '作者对当前问题的实际答复'
 python3 conversation.py cancel RUN_ID
 ```
 
 - `pause` 阻止后续发送，不能撤回已经发出的消息和动作。
 - `resume` 在前台继续同一个已暂停任务；先选回 `[PCL:RUN_ID]` 开头的原标签。恢复原会话/连接后才继续，不重新创建任务。
 - 进程崩溃但状态仍为 running 时，确认旧进程已结束、原会话仍存在后，使用 `python3 conversation.py run RUN_ID` 接续观察。
-- `cancel` 停止生命周期及受管理命令。若需改变目标或权限，当前版本应取消旧运行，更新项目配置，在新空白会话启动。恢复命令不接受新目标。
+- `cancel` 停止生命周期及受管理命令。若需改变目标或权限，当前版本应取消旧运行，更新项目配置，在新空白会话启动。`--instruction` 仅传递你实际写下的续接答复并保存到原生命周期，不增加文件或命令权限。
+
+无痕角色的客户端会话有产品规定的有效期，不能保证原 UI 上下文永久存在；本地记录仍保留。恢复时若原角色会话已失效，按原技能合同报告并使用新身份。
 
 逐轮可见回答、配置、状态和事件记录在 `~/Library/Application Support/PerplexityCodexLoop/state/conversations/RUN_ID/`；不会读取隐藏推理。最终先核对所需文件的实际存在、大小与 SHA-256，再尝试 canonical runtime 收尾。`PASS` 证明这些操作验收完成，不能独立证明科学或语义正确。
 
@@ -190,6 +221,8 @@ python3 conversation.py cancel RUN_ID
 
 ```sh
 python3 check-conversation.py
+python3 check-actors.py
+node skills.test.mjs
 node check-http.mjs
 ```
 
@@ -202,14 +235,14 @@ node check-http.mjs
 | 现象 | 处理 |
 | --- | --- |
 | 普通问答每步要求 yes | 单纯把工具权限设为“允许”仍可能被宿主确认；使用本教程驱动器，只批准已配置范围 |
-| 输入 @Epi Prose 后并没有加载技能 | 这不是普通问答已支持的技能路由；完整技能继续用已安装它的 ChatGPT/Codex |
+| 输入 @Epi Prose 后并没有加载技能 | 在 Write.command 中输入；确认已经 register-skill、项目 allowed_skills 授权及 Skills 连接器选中 |
 | 检测不到会话/输入框 | 检查 Accessibility 授权、Perplexity 主窗口与当前版本；不盲目自动按键 |
 | 连接器已安装但程序拒绝启动 | 在空白问答的输入框中选中正确连接器，清空用户草稿 |
 | 写入/读取不在授权范围 | 修改自己审阅的项目配置并重新保存；模型不能自行扩大授权 |
 | 隧道显示新域名但暂时无法解析 | 检查 DNS 生效及 HTTPS 状态；脚本的 DoH 检查保留 TLS 校验，不使用跳过证书验证 |
 | 重启后 URL 不同 | 把新的 MCP URL 更新到 Perplexity 原连接器 |
 | 写操作结果不明 | 查询原 task/operation；复用原 request_id，不换 ID 盲重试 |
-| 需要后台持续运行 | 电脑需唤醒且会话可用；本驱动器不会自动唤醒 Mac 或启动新聊天 |
+| 需要后台持续运行 | 电脑需唤醒且会话可用；本驱动器不会自动唤醒 Mac；初始父聊天由你打开，受管理角色聊天由程序创建 |
 
 ## 9. 只需要一次确定性批量操作时
 

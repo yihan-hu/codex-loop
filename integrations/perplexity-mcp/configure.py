@@ -50,6 +50,8 @@ def main():
               'stateDirectory': str(state), 'defaultWorkspace': str(root), 'backendTempDirectory': tempfile.gettempdir()+'/',
               'httpAuthFile': str(key), 'httpPort': args.port, 'node': str(pathlib.Path(args.node).resolve()),
               'cloudflared': str(pathlib.Path(args.cloudflared).resolve())}
+    if (HERE/'config.json').exists():
+        config['localSkills']=json.loads((HERE/'config.json').read_text()).get('localSkills',{})
     target = HERE/'config.json'; target.write_text(json.dumps(config, indent=2)+'\n'); target.chmod(0o600)
     example = {'workspace': str(root), 'goal': 'Project scope template; shortcut.py supplies each actual user task',
                'allowed_files': ['draft.md', 'review.md', 'final.md'], 'required_files': ['final.md'],

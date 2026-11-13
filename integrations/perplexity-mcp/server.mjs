@@ -7,6 +7,7 @@ import {randomUUID, createHash, timingSafeEqual} from 'node:crypto';
 import http from 'node:http';
 import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
+import {resource as skillResource,invocation as skillInvocation} from './skills.mjs';
 
 const config = JSON.parse(readFileSync(new URL('./config.json', import.meta.url)));
 const require = createRequire(path.join(config.myMacDirectory, 'package.json'));
@@ -32,7 +33,7 @@ const taskField = str('Exact task_id returned by loop_start. Keep it across foll
 const requestField = str('Fresh stable identifier for this operation. Reuse exactly on retries; never retry an uncertain action with a new identifier.', {minLength:8,maxLength:160});
 function tool(name, description, properties={}, required=[], readOnly=false) {
  return {name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},
-  annotations:{readOnlyHint:readOnly,destructiveHint:['loop_submit','loop_update','mac_write','mac_edit','mac_command','mac_process'].includes(name),idempotentHint:readOnly,openWorldHint:['loop_submit','mac_command'].includes(name)}};
+  annotations:{readOnlyHint:readOnly,destructiveHint:['skill_run','loop_submit','loop_update','mac_write','mac_edit','mac_command','mac_process'].includes(name),idempotentHint:readOnly,openWorldHint:['skill_run','loop_submit','mac_command'].includes(name)}};
 }
 const stepSchema=(action,properties,required=[])=>({type:'object',properties:{action:{const:action},title:str('Short description of this approved step',{minLength:1,maxLength:300}),...properties},required:['action','title',...required],additionalProperties:false});
 const batchStepSchema={oneOf:[
@@ -44,6 +45,8 @@ const batchStepSchema={oneOf:[
  stepSchema('command',{command:str('Exact shell command to approve and execute',{minLength:1,maxLength:16000}),validation:{type:'boolean',description:'Records actual terminal exit code as a validation check'},max_seconds:{type:'integer',minimum:1,maximum:86400,description:'Maximum command duration; default 900 seconds'}},['command']),
 ]};
 const tools = [
+ tool('skill_read','Read complete current local Skill instructions/resources or authorized project text, with explicit character pagination. For an explicitly selected local skill, start with SKILL.md and ARCHITECTURE.md, then only required references. Do not claim to have read beyond next_offset. Reading a registered Skill does not grant shell or another project.',{task_id:taskField,location:{type:'string',enum:['skill','workspace']},skill:str('Locally registered Skill name, required for location=skill'),path:str('Path within the selected Skill or current project'),offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:100000}},['task_id','location','path'],true),
+ tool('skill_run','Run a production entrypoint of a locally registered and explicitly granted Skill, using its pinned Python interpreter and literal argv (no arbitrary shell or python -c). Code is trusted and has current Mac-user privileges; it is not an OS sandbox. Reuse request_id on retries. Returns the ordinary command operation plus output_path. Poll the same operation with mac_process, then read the COMPLETE output_path using skill_read(location=workspace). For Epi Prose use its actual runtime, never substitute host prose for production.',{task_id:taskField,skill:str('Explicitly granted registered Skill'),script:str('Registered relative Python script, or pinned host I/O helper @fetch [public URL,destination] / @extract [source,destination]'),arguments:{type:'array',items:{type:'string'},maxItems:150},request_id:requestField},['task_id','skill','script','arguments','request_id']),
  tool('loop_submit','PREFERRED for a complete Mac task: submit the full explicit steps in ONE approval. This local background runner creates the Codex Loop task, executes the approved steps, observes existing commands, records verification, and finishes the lifecycle without further Perplexity write-tool calls. All actions/commands must be visible in this manifest and honor workspace instructions. This is a deterministic plan executor, not a local reasoning model. Stops on failure/unknown/timeout, without rollback. Mutating batches require verify_file or a validation command after changes. Returns batch_id/task_id immediately; use read-only loop_status(batch_id) for results. Reuse request_id on retries.',{
   objective:str('Complete user objective and acceptance criteria',{minLength:1,maxLength:16000}),workspace:str('Absolute existing directory authorized for this entire batch'),request_id:requestField,
   steps:{type:'array',minItems:1,maxItems:32,items:batchStepSchema}},['objective','request_id','steps']),
@@ -92,12 +95,13 @@ function saveOp(o) {db.prepare('INSERT INTO operations VALUES(?,?,?,?) ON CONFLI
 function operations(t) {return db.prepare('SELECT payload FROM operations WHERE task_id=? ORDER BY rowid').all(t.id).map(r=>JSON.parse(r.payload));}
 function conversationScope(t,name,a) {
  const grants=t.conversation_scope;if(!grants)return;
- if(name==='mac_command'&&!grants.allowed_commands.includes(a.command))throw Error('This command is outside the conversation task grant');
+ if(name==='mac_command'&&!a._registeredSkill&&!grants.allowed_commands.includes(a.command))throw Error('This command is outside the conversation task grant');
  if(!['mac_read','mac_list','mac_write','mac_edit'].includes(name))return;
  checkBatchPath(t.root,a.path??'.');
  let candidate=filePath(t,a.path??'.'),suffix=[];
  while(true){try{candidate=path.join(realpathSync(candidate),...suffix);break;}catch(e){if(e.code!=='ENOENT'&&e.code!=='ENOTDIR')throw e;suffix.unshift(path.basename(candidate));candidate=path.dirname(candidate);}}
  const relative=path.relative(t.root,candidate).split(path.sep).join('/');
+ if(grants.runtime_owned_skill==='epi-prose'&&['mac_write','mac_edit'].includes(name)&&/[^/]+_Current\.md$/.test(relative))throw Error('Epi Prose Current prose is owned by its runtime; use the original Skill delivery command');
  if(!grants.allowed_files.some(g=>g==='**'||relative===g||g.endsWith('/**')&&relative.startsWith(g.slice(0,-2))))throw Error('File is outside the conversation task grant');
 }
 function saveBatch(b) {b.updated_at=new Date().toISOString();db.prepare('INSERT INTO batches VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload').run(b.id,b.request_id,JSON.stringify(b));}
@@ -222,6 +226,12 @@ async function handle(name,a) {
  if(name==='loop_status'&&!a.task_id) return {tasks:db.prepare('SELECT payload FROM tasks ORDER BY rowid DESC LIMIT 15').all().map(r=>{const t=JSON.parse(r.payload);return {task_id:t.id,workspace:t.root,objective:t.objective,created_at:t.created_at};}),batches:db.prepare('SELECT payload FROM batches ORDER BY rowid DESC LIMIT 15').all().map(r=>{const b=JSON.parse(r.payload);return {batch_id:b.id,task_id:b.task_id,state:b.state,objective:b.objective};}),rule:'Select only a task explicitly associated with the user request; a connector connection is not a chat identity.'};
  const t=loadTask(a.task_id);
  conversationScope(t,name,a);
+ if(name==='skill_read'){await active(t);return skillResource(config,t,a);}
+ if(name==='skill_run'){
+  await active(t);const invocation=skillInvocation(config,t,a);invocation.prepare();
+  const operation=await handle('mac_command',{task_id:t.id,command:invocation.command,request_id:a.request_id,_registeredSkill:true});
+  return {...operation,output_path:invocation.output_path,read_output:'After terminal observation, read the entire output file with skill_read(location=workspace), following next_offset.'};
+ }
  if(name==='loop_status')return status(t);
  if(name==='loop_resume') {
   const runtime=await cli(['resume',...scope(t)]);await grant(t);

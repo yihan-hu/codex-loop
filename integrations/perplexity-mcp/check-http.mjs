@@ -24,7 +24,8 @@ for(const base of [`http://127.0.0.1:${config.httpPort}`,connection.mcp_url.repl
  const client=new Client({name:'http-verification',version:'1.0'});
  try {
   await client.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp'),{requestInit:{headers:{Authorization:'Bearer '+key}}}));
-  assert.equal((await client.listTools()).tools.length,12);
+  const discovered=(await client.listTools()).tools.map(t=>t.name);
+  for(const name of ['loop_submit','loop_start','mac_read','skill_read','skill_run'])assert(discovered.includes(name));
   const state=await client.callTool({name:'loop_status',arguments:{}});assert(!state.isError);assert.match(state.content[0].text,/tasks/);
  }finally{await client.close();}
  proof.checks.push(`${base.startsWith('https')?'HTTPS tunnel':'Loopback HTTP'}: missing/wrong key denied; authenticated MCP discovery and real task-state tool pass`);
