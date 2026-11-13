@@ -31,6 +31,8 @@ See `references/consumer-onboarding.md` for the staged setup checklist and exact
 
 ## What it can do
 
+**Using Perplexity ordinary Q&A on a Mac?** The optional [Perplexity → Mac / Codex Loop tutorial](references/perplexity-mcp-tutorial.md) covers the verified authenticated HTTPS setup, a local multi-round conversation driver, scoped automatic confirmations, and saved project settings so daily tasks can be as short as `/write …` in the provided launcher. All model reasoning stays in Perplexity. This is a separate adapter, not a claim that Perplexity Search loads ChatGPT Skills or provides the full Epi Prose production runtime. Source and launchers are in [integrations/perplexity-mcp](integrations/perplexity-mcp/).
+
 Use Codex Loop for objectives such as:
 
 - staged research or analysis that moves from evidence gathering to synthesis, drafting, and audit;

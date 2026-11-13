@@ -33,6 +33,15 @@ flowchart TD
   ROUTEGATE --> ACCESS
   ROUTEGATE -. missing or stale grant .-> REPAIR
   MCP -. first-time setup only .-> GUIDE[Local MCP setup tutorial]
+  PU[Explicit optional Perplexity Q&A adapter] --> PP[Locally saved project scope + short task]
+  PP --> PD[Native Mac conversation driver]
+  PD --> PQ[Perplexity subscription Q&A model]
+  PQ --> PH[Authenticated HTTPS MCP bridge]
+  PH --> PM[Existing My Mac HTTP backend]
+  PH --> PL[Explicitly configured local Loop runtime]
+  PQ -->|Visible current-round result| PD
+  PD -->|Actual artifact check + lifecycle finish| PL
+  PU -. setup and limits .-> PG[Perplexity MCP tutorial]
   ROUTE --> DISPATCH[route-check uses snapshot and current task permissions]
   DISPATCH --> LR[Same connector: selected computer runtime cache]
   OBS -->|temporary transport failure| REPAIR[Same-chat scoped technical recovery]
@@ -260,3 +269,7 @@ Host Profile recovery is independent of task resume. The host Drive connector ow
 Local lifecycle dispatch has its own `local_lifecycle` route check, including bootstrap and resume. The host supplies the actual owning connector before dispatch; mismatches fail. This validates caller-provided identity, not interception of arbitrary host tool calls. Initialization recovery stays on the selected connector; only explicit user transition can change a pinned transport.
 
 Environment identifiers represent distinct filesystems. Native runtimes do not independently restore or read Host Profile preferences. Missing or unreachable Drive profile blocks admission; no local/default preference fallback exists. Workspace project lookups read the route snapshot, and permissions remain separately scoped to this conversation. Project path changes take effect in a new conversation.
+
+## Optional Perplexity Mac adapter
+
+`integrations/perplexity-mcp/` is a source-installed Mac adapter, not a ChatGPT runtime component. Its explicit local configuration selects the existing My Mac HTTP backend and Loop runtime; it neither restores nor edits the ChatGPT Drive Host Profile. `configure.py` creates private machine configuration and compiles the native Accessibility helper. `shortcut.py` stores explicit per-project scope and passes each short task to `conversation.py`; file and exact-command grants and configured bounds remain unchanged. The driver sends subsequent model tasks to the same Perplexity Q&A conversation and approves only current-task/current-round scoped requests. `server.mjs` enforces the conversation file/command grants even for read tools. `manage.py` owns only this adapter's authenticated loopback service and HTTPS tunnel. Actual model judgment stays in Perplexity; artifact existence/size/hash checks and canonical lifecycle closure stay local. This does not provide full Epi Prose role isolation or native Search Skill loading. The tutorial is packaged as a reference; optional Mac adapter source, machine config, credentials and state are not part of the consumer runtime ZIP.

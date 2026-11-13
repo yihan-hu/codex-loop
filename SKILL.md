@@ -254,6 +254,7 @@ Detailed references:
 - Web/Local routing: `references/interaction-routing.md`;
 - Local connector priority, manual overrides, and saved execution defaults: `references/local-connections.md`;
 - First-time local MCP/Tunnel setup and real file/shell verification: `references/local-mcp-tutorial.md`;
+- Perplexity ordinary Q&A on Mac, authenticated HTTPS MCP, bounded local conversation driving and saved-project short tasks: `references/perplexity-mcp-tutorial.md`. This optional source-installed adapter is separate from the ChatGPT Host Profile path; do not infer native Search Skill loading or full Epi Prose support;
 - publication: `references/publication-router.md`, then the selected publication reference;
 - Web -> Local transfer: `references/web-to-local-handoff.md`;
 - workspace grants: `references/workspace-registry.md`;

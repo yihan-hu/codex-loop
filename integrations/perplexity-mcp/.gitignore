@@ -1,0 +1,3 @@
+config.json
+verification*.json
+__pycache__/
